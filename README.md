@@ -9,6 +9,8 @@ Selecting a crew seat in the vehicle designer shows a
 
 ## Build
 
+BepInEx 6 (IL2CPP) plugin. Build copies `madiUtil.dll` to `BepInEx/plugins`.
+
 ```powershell
 dotnet build .\src\madiUtil\madiUtil.csproj --configuration Release `
   -p:SprocketGameRoot="<Sprocket Location>"

@@ -1,29 +1,20 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppProperties;
-using Il2CppSprocket.UI;
-using Il2CppSprocket.Vehicles.CrewSystems;
-using Il2CppSprocket.Vehicles.CrewSystems.Editor;
-using MelonLoader;
-
-[assembly: MelonInfo(typeof(MadiUtil.Main), "madiUtil", "26.10.1", "madi")]
-[assembly: MelonGame("HD", "Sprocket")]
-
-[assembly: AssemblyMetadata("Sprocket.Mod.Id", "madi.madiutil")]
-[assembly: AssemblyMetadata("Sprocket.Mod.DisplayName", "madiUtil")]
-[assembly: AssemblyMetadata("Sprocket.Mod.Description", "Adds an editable base efficiency field to the crew seat edit pane.")]
-[assembly: AssemblyMetadata("Sprocket.Mod.Authors", "madi")]
-[assembly: AssemblyMetadata("Sprocket.Mod.Repository", "madisavage/madiUtil")]
-[assembly: AssemblyMetadata("Sprocket.Mod.Category", "gameplay")]
-[assembly: AssemblyMetadata("Sprocket.Mod.License", "GPL-3.0-only")]
+using Properties;
+using Sprocket.UI;
+using Sprocket.Vehicles.CrewSystems;
+using Sprocket.Vehicles.CrewSystems.Editor;
 
 namespace MadiUtil
 {
-    // MelonLoader applies every [HarmonyPatch] in the assembly on load.
-    public sealed class Main : MelonMod
+    [BepInPlugin("madi.madiutil", "madiUtil", "26.10.1")]
+    public sealed class Plugin : BasePlugin
     {
+        // BepInEx doesn't auto-apply patches like MelonLoader does.
+        public override void Load() => new Harmony("madi.madiutil").PatchAll();
     }
 
     [HarmonyPatch(typeof(CrewSeatEditor), "OnGUI")]
