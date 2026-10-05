@@ -1,0 +1,38 @@
+{
+  "$schema": "https://sprocketmods.furryaxw.top/schemas/sprocket-mod.schema.json",
+  "schema_version": 2,
+  "id": "madi.madiutil",
+  "name": "madiUtil",
+  "authors": ["madi"],
+  "repository": "madisavage/madiUtil",
+  "license": "GPL-3.0-only",
+  "kind": "modfile",
+  "display_name": {
+    "en": "madiUtil"
+  },
+  "description": {
+    "en": "Adds an editable base efficiency field to the crew seat edit pane."
+  },
+  "release": {
+    "include_prerelease": false,
+    "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
+    "assets": {
+      "include": ["madiUtil.dll"],
+      "exclude": []
+    }
+  },
+  "dependencies": [],
+  "recommendations": [],
+  "install": {
+    "files": [
+      {
+        "match": "*.dll",
+        "type": "melonloader:mod"
+      }
+    ],
+    "scan_dlls": true,
+    "exclude": []
+  },
+  "category": "gameplay",
+  "tags": ["crew", "designer"]
+}
