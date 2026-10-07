@@ -18,8 +18,11 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Core.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.CrewDesigner.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.LayingDriveDesigner.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Properties.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Crew.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
     <!-- Exports public Nullable*Attribute stubs; the alias hides them so the
          compiler synthesizes its own. -->
     <Reference Include="$(BepInEx)/interop/UnityEngine.CoreModule.dll" Private="false" Aliases="UnityCoreModule" />

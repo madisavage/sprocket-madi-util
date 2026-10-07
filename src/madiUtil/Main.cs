@@ -4,16 +4,17 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Properties;
+using Sprocket.Blueprints;
 using Sprocket.UI;
 using Sprocket.Vehicles.CrewSystems;
 using Sprocket.Vehicles.CrewSystems.Editor;
+using Sprocket.Vehicles.Weapons;
 
 namespace MadiUtil
 {
-    [BepInPlugin("madi.madiutil", "madiUtil", "26.10.1")]
+    [BepInPlugin("madi.madiutil", "madiUtil", "26.10.2")]
     public sealed class Plugin : BasePlugin
     {
-        // BepInEx doesn't auto-apply patches like MelonLoader does.
         public override void Load() => new Harmony("madi.madiutil").PatchAll();
     }
 
@@ -44,6 +45,48 @@ namespace MadiUtil
             }
 
             drawer.Float(property);
+        }
+    }
+
+    [HarmonyPatch(typeof(LayingDriveEditor), "OnGUI")]
+    internal static class LayingDriveEditorOnGuiPatch
+    {
+        // Axis, Torque multiplier; One Key:Value pair for each axis
+        private static readonly Dictionary<IntPtr, FloatProperty> properties = new();
+
+        private static void Postfix(LayingDriveEditor __instance, IGUILayout __0)
+        {
+            BlueprintSlot<LayingDriveBlueprint>? slot = __instance.Component?.BlueprintSlot;
+            LayingDriveBlueprint? blueprint = slot?.Blueprint;
+            IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
+            if (slot == null || blueprint == null || drawer == null)
+                return;
+
+            drawer.Float(GetProperty(slot, blueprint.Elevation, "Elevation torque multiplier"));
+            drawer.Float(GetProperty(slot, blueprint.Azimuth, "Azimuth torque multiplier"));
+        }
+
+        private static FloatProperty GetProperty(BlueprintSlot<LayingDriveBlueprint> slot, LayingDriveBlueprint.Axis axis, string name)
+        {
+            // Initialize Property when not Existing
+            if (!properties.TryGetValue(axis.Pointer, out FloatProperty? property))
+            {
+                property = new FloatProperty(
+                    name,
+                    (Func<float>)(() => axis.TorqueMultiplier),
+                    (Action<float>)(value =>
+                    {
+                        axis.TorqueMultiplier = value;
+                        slot.MarkModified();
+                    }),
+                    "Laying drive axis torque multiplier.");
+                property.Min = 0f;
+                property.Max = 100f;
+                property.Step = 0.25f;
+                properties[axis.Pointer] = property;
+            }
+
+            return property;
         }
     }
 }
