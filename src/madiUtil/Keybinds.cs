@@ -16,18 +16,30 @@ using UnityAction = UnityCoreModule::UnityEngine.Events.UnityAction;
 
 namespace MadiUtil
 {
-    // Keys live in the config's [Keybinds] section as text ("Ctrl+S") and can be
-    // rebound from a "madiUtil" tab in the game's Settings screen.
+    /// <summary>
+    /// Configurable keybinds. Each bind is stored as text (for example "Ctrl+S")
+    /// in the <c>[Keybinds]</c> section of the plugin config and can be rebound
+    /// from a "madiUtil" tab in the game's Settings screen.
+    /// </summary>
     [HarmonyPatch]
     internal static class Keybinds
     {
+        /// <summary>A registered keybind and the config entry holding its key.</summary>
         private sealed record Bind(string Name, ConfigEntry<string> Entry, Action OnPressed);
 
         private static readonly List<Bind> binds = new();
-        private static readonly List<UnityAction> callbacks = new(); // the game holds these while the page shows
+        private static readonly List<UnityAction> callbacks = new(); // keeps button callbacks alive while the tab shows
         private static readonly Key[] modifiers = { Key.LeftCtrl, Key.RightCtrl, Key.LeftShift, Key.RightShift, Key.LeftAlt, Key.RightAlt, Key.LeftMeta, Key.RightMeta, Key.ContextMenu };
         private static Bind? capturing;
 
+        /// <summary>
+        /// Registers a keybind. The first registration also starts the per-frame
+        /// key polling and enables the Settings tab.
+        /// </summary>
+        /// <param name="plugin">The plugin whose config file stores the key.</param>
+        /// <param name="name">Shown in the Settings tab and used as the config key; keep it stable.</param>
+        /// <param name="defaultKey">Default key, such as "S", "F9" or "Ctrl+S".</param>
+        /// <param name="onPressed">Called on the frame the key is pressed.</param>
         public static void Register(BasePlugin plugin, string name, string defaultKey, Action onPressed)
         {
             if (binds.Count == 0)
@@ -38,6 +50,10 @@ namespace MadiUtil
             binds.Add(new Bind(name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S or F9, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
         }
 
+        /// <summary>
+        /// Called every frame by <see cref="KeybindPoller"/>. Fires each bind
+        /// whose key was pressed this frame. Paused while a key is being rebound.
+        /// </summary>
         internal static void Poll()
         {
             if (capturing != null || Keyboard.current is not { } keys)
@@ -47,6 +63,10 @@ namespace MadiUtil
                     bind.OnPressed();
         }
 
+        /// <summary>
+        /// Whether the key in <paramref name="text"/> was pressed this frame.
+        /// Ctrl, Shift and Alt must match exactly, so "S" doesn't also fire on Ctrl+S.
+        /// </summary>
         private static bool Pressed(Keyboard keys, string text)
         {
             (Key key, bool ctrl, bool shift, bool alt) = Parse(text);
@@ -54,6 +74,11 @@ namespace MadiUtil
                 && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
         }
 
+        /// <summary>
+        /// Parses text such as "Ctrl+Shift+S" into a key and modifiers. Names
+        /// follow the Input System <see cref="Key"/> enum, case-insensitive.
+        /// Unknown names or empty text give <see cref="Key.None"/>.
+        /// </summary>
         private static (Key Key, bool Ctrl, bool Shift, bool Alt) Parse(string text)
         {
             Key key = Key.None;
@@ -68,6 +93,12 @@ namespace MadiUtil
             return (key, ctrl, shift, alt);
         }
 
+        /// <summary>
+        /// Called every frame while the Settings tab is shown. If a bind is being
+        /// rebound, waits for a key: Esc cancels, Backspace unbinds, and any other
+        /// key (with the modifiers held) becomes the new binding.
+        /// </summary>
+        /// <param name="page">The Settings tab to redraw when rebinding finishes.</param>
         internal static void Capture(KeybindsMenu page)
         {
             if (capturing == null || Keyboard.current is not { } keys)
@@ -94,6 +125,12 @@ namespace MadiUtil
             page.GUIRepaint = true;
         }
 
+        /// <summary>
+        /// Draws the Settings tab: a row per bind with its name and a button
+        /// showing its key. Clicking the button starts rebinding.
+        /// </summary>
+        /// <param name="page">The Settings tab being drawn.</param>
+        /// <param name="layout">The layout the game is drawing the tab into.</param>
         internal static void Draw(KeybindsMenu page, IGUILayout layout)
         {
             callbacks.Clear();
@@ -117,8 +154,13 @@ namespace MadiUtil
             ui.ColumnCount = 1;
         }
 
+        /// <summary>Cancels any rebind in progress.</summary>
         internal static void StopCapture() => capturing = null;
 
+        /// <summary>
+        /// Runs before the Settings screen builds its tabs and appends our tab
+        /// once. Skipped when no keybinds are registered.
+        /// </summary>
         [HarmonyPrefix, HarmonyPatch(typeof(SettingsMenu), nameof(SettingsMenu.SetupMenuButtons))]
         private static void AddSettingsTab(SettingsMenu __instance)
         {
@@ -137,10 +179,17 @@ namespace MadiUtil
         }
     }
 
+    /// <summary>
+    /// The "madiUtil" tab in the game's Settings screen. Registered with the
+    /// IL2CPP runtime so the game can treat it like its own tabs. Changes save
+    /// immediately, so Apply does nothing.
+    /// </summary>
     public sealed class KeybindsMenu : SettingsSubMenu
     {
+        /// <summary>Wraps an existing native instance; used by Il2CppInterop.</summary>
         public KeybindsMenu(IntPtr ptr) : base(ptr) { }
 
+        /// <summary>Creates a new tab with its native counterpart.</summary>
         public KeybindsMenu() : base(ClassInjector.DerivedConstructorPointer<KeybindsMenu>())
         {
             ClassInjector.DerivedConstructorBody(this);
@@ -154,8 +203,12 @@ namespace MadiUtil
         public override void Cancel() => Keybinds.StopCapture();
     }
 
+    /// <summary>
+    /// Component added to the plugin's object to call <see cref="Keybinds.Poll"/> every frame.
+    /// </summary>
     internal sealed class KeybindPoller : MonoBehaviour
     {
+        /// <summary>Wraps an existing native instance; used by Il2CppInterop.</summary>
         public KeybindPoller(IntPtr ptr) : base(ptr) { }
 
         private void Update() => Keybinds.Poll();
