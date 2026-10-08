@@ -69,10 +69,12 @@ namespace MadiUtil
                     "Base efficiency",
                     (Func<float>)(() => blueprint.BaseEfficiency),
                     (Action<float>)(value => blueprint.BaseEfficiency = value),
-                    "Crew member base efficiency multiplier.");
-                property.Min = 0f;
-                property.Max = 100f;
-                property.Step = 0.25f;
+                    "Crew member base efficiency multiplier.")
+                {
+                    Min = 0f,
+                    Max = 100f,
+                    Step = 0.25f
+                };
                 properties[blueprint.Pointer] = property;
             }
 
@@ -129,10 +131,12 @@ namespace MadiUtil
                         axis.TorqueMultiplier = value;
                         slot.MarkModified();
                     }),
-                    "Laying drive axis torque multiplier.");
-                property.Min = 0f;
-                property.Max = 100f;
-                property.Step = 0.25f;
+                    "Laying drive axis torque multiplier.")
+                {
+                    Min = 0f,
+                    Max = 100f,
+                    Step = 0.25f
+                };
                 properties[axis.Pointer] = property;
             }
 
