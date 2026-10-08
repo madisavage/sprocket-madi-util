@@ -1,3 +1,5 @@
+extern alias UnityCoreModule;
+
 using System;
 using System.Collections.Generic;
 using BepInEx;
@@ -6,16 +8,29 @@ using HarmonyLib;
 using Properties;
 using Sprocket.Blueprints;
 using Sprocket.UI;
+using Sprocket.VehicleDesigner;
 using Sprocket.Vehicles.CrewSystems;
 using Sprocket.Vehicles.CrewSystems.Editor;
 using Sprocket.Vehicles.Weapons;
+using Object = UnityCoreModule::UnityEngine.Object;
 
 namespace MadiUtil
 {
     [BepInPlugin("madi.madiutil", "madiUtil", "26.10.2")]
     public sealed class Plugin : BasePlugin
     {
-        public override void Load() => new Harmony("madi.madiutil").PatchAll();
+        public override void Load()
+        {
+            new Harmony("madi.madiutil").PatchAll();
+            Keybinds.Register(this, "Save vehicle", "Ctrl+S", SaveVehicle);
+        }
+
+        private static void SaveVehicle()
+        {
+            VehicleDesignerCore? designer = Object.FindObjectOfType<VehicleDesignerCore>();
+            if (designer != null && designer.DesignIOPossible)
+                designer.RequestSave();
+        }
     }
 
     [HarmonyPatch(typeof(CrewSeatEditor), "OnGUI")]
