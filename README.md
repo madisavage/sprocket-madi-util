@@ -16,7 +16,7 @@ Download the DLLs from the latest release and put them in `BepInEx/plugins`. Alw
 
 Adds a **MadiLib** tab to the game's Settings screen, shown once any plugin uses it. Changes there save at once.
 
-For plugin authors (reference `MadiLib.dll`, declare `[BepInDependency("madi.madilib")]`):
+For plugin authors (reference `MadiLib.dll`, declare `[BepInDependency("madi.madilib", ">=<version built against>")]`; plugins in this repo use `">=" + ModInfo.Version`):
 - `Keybinds.Register(plugin, name, defaultKey, onPressed)` adds a rebindable key, such as `"Ctrl+S"`, stored in the plugin's own config under `[Keybinds]`.
 - `SettingsTab.AddSection(header, entries...)` draws config entries: a slider for a `float` (range from an `AcceptableValueRange<float>`, step from a `Step` tag in its `ConfigDescription`), a toggle for a `bool`.
 - `SettingsTab.AddSection(Action<IGUIElementDrawer>)` draws anything else.
@@ -56,4 +56,16 @@ dotnet build .\sprocket-madi.sln --configuration Release `
   -p:SprocketGameRoot="<Sprocket Location>"
 ```
 
-`SprocketGameRoot` defaults to the `SPROCKET_GAME_ROOT` environment variable, then to the folder above this repo. For a release, upload every plugin's `bin/Release/net6.0/<name>.dll`.
+`SprocketGameRoot` defaults to the `SPROCKET_GAME_ROOT` environment variable, then to the folder above this repo.
+
+## Release
+
+1. Set `<Version>` in `Directory.Build.props`. Every plugin's `[BepInPlugin]` version and DLL file version come from it (through a generated `ModInfo.Version`).
+2. Build in Release.
+3. Publish a GitHub release tagged with that version (SemVer, such as `26.10.12`; a leading `v` is fine) and upload all three `bin/Release/net6.0/<name>.dll` files.
+
+Every plugin shares the release tag as its version.
+
+## Mod manager registry
+
+`registry/mods/madisavage/` holds this repo's entries for the [SprocketModManager registry](https://github.com/furryaxw/SprocketModManager/blob/registry/CONTRIBUTING.en.md). They mirror the registry's own paths: copy them into `mods/madisavage/` on its `registry` branch and open a pull request. The registry reads versions and DLLs from this repo's releases, so only update the entries when their metadata changes. Dependencies on MadiLib accept any version (`"version": "*"`); the plugins themselves refuse to load against a MadiLib older than they are, so the entries don't change per release. If a MadiLib release breaks older plugins, add a dependency rule with a `when` for the plugin versions that need the new MadiLib.

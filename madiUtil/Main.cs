@@ -21,8 +21,8 @@ namespace MadiUtil
     /// BepInEx entry point. Applies every Harmony patch in this assembly and
     /// registers keybinds with MadiLib.
     /// </summary>
-    [BepInPlugin("madi.madiutil", "madiUtil", "26.10.12")]
-    [BepInDependency("madi.madilib")]
+    [BepInPlugin("madi.madiutil", "madiUtil", ModInfo.Version)]
+    [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
     public sealed class Plugin : BasePlugin
     {
         public override void Load()

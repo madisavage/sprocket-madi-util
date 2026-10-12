@@ -26,8 +26,8 @@ namespace StagedAmmo
     /// into the closest ready rack with room, taking as long as the game's
     /// loader rules say that carry takes, times <see cref="ReRackTimeMultiplier"/>.
     /// </summary>
-    [BepInPlugin("madi.stagedammo", "stagedAmmo", "26.10.1")]
-    [BepInDependency("madi.madilib")]
+    [BepInPlugin("madi.stagedammo", "stagedAmmo", ModInfo.Version)]
+    [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
     public sealed class Plugin : BasePlugin
     {
         internal static ConfigEntry<float> ReadyDistance = null!;

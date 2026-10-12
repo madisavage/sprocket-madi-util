@@ -11,7 +11,7 @@ namespace MadiLib
     /// HUD drawing, and sets up the "MadiLib" Settings tab. Plugins using it declare
     /// <c>[BepInDependency("madi.madilib")]</c> so this loads first.
     /// </summary>
-    [BepInPlugin("madi.madilib", "MadiLib", "26.10.12")]
+    [BepInPlugin("madi.madilib", "MadiLib", ModInfo.Version)]
     public sealed class Plugin : BasePlugin
     {
         internal static ManualLogSource Logger = null!;
