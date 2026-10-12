@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
+using MadiLib;
 using Properties;
 using Sprocket.Blueprints;
 using Sprocket.UI;
@@ -18,9 +19,10 @@ namespace MadiUtil
 {
     /// <summary>
     /// BepInEx entry point. Applies every Harmony patch in this assembly and
-    /// registers keybinds.
+    /// registers keybinds with MadiLib.
     /// </summary>
-    [BepInPlugin("madi.madiutil", "madiUtil", "26.10.2")]
+    [BepInPlugin("madi.madiutil", "madiUtil", "26.10.12")]
+    [BepInDependency("madi.madilib")]
     public sealed class Plugin : BasePlugin
     {
         public override void Load()

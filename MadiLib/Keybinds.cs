@@ -4,25 +4,20 @@ using System;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
-using HarmonyLib;
 using Il2CppInterop.Runtime;
-using Il2CppInterop.Runtime.Injection;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using Sprocket.SettingConfiguration;
 using Sprocket.UI;
 using UnityEngine.InputSystem;
 using MonoBehaviour = UnityCoreModule::UnityEngine.MonoBehaviour;
 using UnityAction = UnityCoreModule::UnityEngine.Events.UnityAction;
 
-namespace MadiUtil
+namespace MadiLib
 {
     /// <summary>
     /// Configurable keybinds. Each bind is stored as text (for example "Ctrl+S")
-    /// in the <c>[Keybinds]</c> section of the plugin config and can be rebound
-    /// from a "madiUtil" tab in the game's Settings screen.
+    /// in the <c>[Keybinds]</c> section of the registering plugin's config and
+    /// can be rebound from the "MadiLib" tab in the game's Settings screen.
     /// </summary>
-    [HarmonyPatch]
-    internal static class Keybinds
+    public static class Keybinds
     {
         /// <summary>A registered keybind and the config entry holding its key.</summary>
         private sealed record Bind(string Name, ConfigEntry<string> Entry, Action OnPressed);
@@ -32,23 +27,18 @@ namespace MadiUtil
         private static readonly Key[] modifiers = { Key.LeftCtrl, Key.RightCtrl, Key.LeftShift, Key.RightShift, Key.LeftAlt, Key.RightAlt, Key.LeftMeta, Key.RightMeta, Key.ContextMenu };
         private static Bind? capturing;
 
-        /// <summary>
-        /// Registers a keybind. The first registration also starts the per-frame
-        /// key polling and enables the Settings tab.
-        /// </summary>
+        /// <summary>Registers a keybind and shows it in the Settings tab.</summary>
         /// <param name="plugin">The plugin whose config file stores the key.</param>
         /// <param name="name">Shown in the Settings tab and used as the config key; keep it stable.</param>
         /// <param name="defaultKey">Default key, such as "S", "F9" or "Ctrl+S".</param>
         /// <param name="onPressed">Called on the frame the key is pressed.</param>
         public static void Register(BasePlugin plugin, string name, string defaultKey, Action onPressed)
         {
-            if (binds.Count == 0)
-            {
-                plugin.AddComponent<KeybindPoller>();
-                ClassInjector.RegisterTypeInIl2Cpp<KeybindsMenu>();
-            }
             binds.Add(new Bind(name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S or F9, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
         }
+
+        /// <summary>Whether any keybinds are registered.</summary>
+        internal static bool Any => binds.Count > 0;
 
         /// <summary>
         /// Called every frame by <see cref="KeybindPoller"/>. Fires each bind
@@ -99,7 +89,7 @@ namespace MadiUtil
         /// key (with the modifiers held) becomes the new binding.
         /// </summary>
         /// <param name="page">The Settings tab to redraw when rebinding finishes.</param>
-        internal static void Capture(KeybindsMenu page)
+        internal static void Capture(MadiLibMenu page)
         {
             if (capturing == null || Keyboard.current is not { } keys)
                 return;
@@ -126,15 +116,16 @@ namespace MadiUtil
         }
 
         /// <summary>
-        /// Draws the Settings tab: a row per bind with its name and a button
-        /// showing its key. Clicking the button starts rebinding.
+        /// Draws the keybinds section of the Settings tab: a row per bind with
+        /// its name and a button showing its key. Clicking the button starts
+        /// rebinding. Draws nothing when no keybinds are registered.
         /// </summary>
         /// <param name="page">The Settings tab being drawn.</param>
-        /// <param name="layout">The layout the game is drawing the tab into.</param>
-        internal static void Draw(KeybindsMenu page, IGUILayout layout)
+        /// <param name="ui">The drawer for the tab.</param>
+        internal static void Draw(MadiLibMenu page, IGUIElementDrawer ui)
         {
             callbacks.Clear();
-            if (layout.TryCast<IGUIElementDrawer>() is not { } ui)
+            if (binds.Count == 0)
                 return;
 
             ui.Header("Keybinds");
@@ -156,51 +147,6 @@ namespace MadiUtil
 
         /// <summary>Cancels any rebind in progress.</summary>
         internal static void StopCapture() => capturing = null;
-
-        /// <summary>
-        /// Runs before the Settings screen builds its tabs and appends our tab
-        /// once. Skipped when no keybinds are registered.
-        /// </summary>
-        [HarmonyPrefix, HarmonyPatch(typeof(SettingsMenu), nameof(SettingsMenu.SetupMenuButtons))]
-        private static void AddSettingsTab(SettingsMenu __instance)
-        {
-            Il2CppReferenceArray<SettingsSubMenu>? menus = __instance.subMenus;
-            if (binds.Count == 0 || menus == null)
-                return;
-            foreach (SettingsSubMenu menu in menus)
-                if (menu?.TryCast<KeybindsMenu>() != null)
-                    return;
-
-            var more = new Il2CppReferenceArray<SettingsSubMenu>(menus.Length + 1);
-            for (int i = 0; i < menus.Length; i++)
-                more[i] = menus[i];
-            more[menus.Length] = new KeybindsMenu();
-            __instance.subMenus = more;
-        }
-    }
-
-    /// <summary>
-    /// The "madiUtil" tab in the game's Settings screen. Registered with the
-    /// IL2CPP runtime so the game can treat it like its own tabs. Changes save
-    /// immediately, so Apply does nothing.
-    /// </summary>
-    public sealed class KeybindsMenu : SettingsSubMenu
-    {
-        /// <summary>Wraps an existing native instance; used by Il2CppInterop.</summary>
-        public KeybindsMenu(IntPtr ptr) : base(ptr) { }
-
-        /// <summary>Creates a new tab with its native counterpart.</summary>
-        public KeybindsMenu() : base(ClassInjector.DerivedConstructorPointer<KeybindsMenu>())
-        {
-            ClassInjector.DerivedConstructorBody(this);
-            MenuName = "madiUtil";
-        }
-
-        public override void DisplayGUI(IGUILayout layout) => Keybinds.Draw(this, layout);
-        public override void Update() => Keybinds.Capture(this);
-        public override void ClearGUI() => Keybinds.StopCapture();
-        public override void Apply() { }
-        public override void Cancel() => Keybinds.StopCapture();
     }
 
     /// <summary>
