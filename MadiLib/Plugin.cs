@@ -16,6 +16,7 @@ namespace MadiLib
     {
         internal static ManualLogSource Logger = null!;
 
+        /// <summary>Starts keybind polling and HUD drawing, and registers the Settings tab.</summary>
         public override void Load()
         {
             Logger = Log;

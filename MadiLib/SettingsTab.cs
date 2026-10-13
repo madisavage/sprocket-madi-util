@@ -140,10 +140,15 @@ namespace MadiLib
             MenuName = "MadiLib";
         }
 
+        /// <summary>Draws the keybinds and each plugin's section.</summary>
         public override void DisplayGUI(IGUILayout layout) => SettingsTab.Draw(this, layout);
+        /// <summary>Listens for a key while a keybind is being rebound.</summary>
         public override void Update() => Keybinds.Capture(this);
+        /// <summary>Stops rebinding when the tab closes.</summary>
         public override void ClearGUI() => Keybinds.StopCapture();
+        /// <summary>Does nothing: changes already saved.</summary>
         public override void Apply() { }
+        /// <summary>Stops rebinding.</summary>
         public override void Cancel() => Keybinds.StopCapture();
     }
 }

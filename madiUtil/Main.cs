@@ -1,7 +1,6 @@
 extern alias UnityCoreModule;
 
 using System;
-using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
@@ -49,8 +48,8 @@ namespace MadiUtil
     [HarmonyPatch(typeof(CrewSeatEditor), "OnGUI")]
     internal static class CrewSeatEditorOnGuiPatch
     {
-        // Int, Base Efficiency; One Key:Value pair for each seat
-        private static readonly Dictionary<IntPtr, FloatProperty> properties = new();
+        // Seat blueprint, Base efficiency; one entry for each seat
+        private static readonly ObjectCache<FloatProperty> properties = new();
 
         /// <summary>
         /// Runs after the game draws the crew seat panel and appends the slider,
@@ -64,23 +63,16 @@ namespace MadiUtil
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
             if (blueprint == null || drawer == null)
                 return;
-            // Initialize Property when not Existing
-            if (!properties.TryGetValue(blueprint.Pointer, out FloatProperty? property))
+            drawer.Float(properties.Get(blueprint, () => new FloatProperty(
+                "Base efficiency",
+                (Func<float>)(() => blueprint.BaseEfficiency),
+                (Action<float>)(value => blueprint.BaseEfficiency = value),
+                "Crew member base efficiency multiplier.")
             {
-                property = new FloatProperty(
-                    "Base efficiency",
-                    (Func<float>)(() => blueprint.BaseEfficiency),
-                    (Action<float>)(value => blueprint.BaseEfficiency = value),
-                    "Crew member base efficiency multiplier.")
-                {
-                    Min = 0f,
-                    Max = 100f,
-                    Step = 0.25f
-                };
-                properties[blueprint.Pointer] = property;
-            }
-
-            drawer.Float(property);
+                Min = 0f,
+                Max = 100f,
+                Step = 0.25f
+            }));
         }
     }
 
@@ -91,8 +83,8 @@ namespace MadiUtil
     [HarmonyPatch(typeof(LayingDriveEditor), "OnGUI")]
     internal static class LayingDriveEditorOnGuiPatch
     {
-        // Axis, Torque multiplier; One Key:Value pair for each axis
-        private static readonly Dictionary<IntPtr, FloatProperty> properties = new();
+        // Axis, Torque multiplier; one entry for each axis
+        private static readonly ObjectCache<FloatProperty> properties = new();
 
         /// <summary>
         /// Runs after the game draws the laying drive panel and appends one
@@ -120,29 +112,20 @@ namespace MadiUtil
         /// <param name="slot">The blueprint slot that owns the axis.</param>
         /// <param name="axis">The elevation or azimuth axis to edit.</param>
         /// <param name="name">The slider label.</param>
-        private static FloatProperty GetProperty(BlueprintSlot<LayingDriveBlueprint> slot, LayingDriveBlueprint.Axis axis, string name)
-        {
-            // Initialize Property when not Existing
-            if (!properties.TryGetValue(axis.Pointer, out FloatProperty? property))
-            {
-                property = new FloatProperty(
-                    name,
-                    (Func<float>)(() => axis.TorqueMultiplier),
-                    (Action<float>)(value =>
-                    {
-                        axis.TorqueMultiplier = value;
-                        slot.MarkModified();
-                    }),
-                    "Laying drive axis torque multiplier.")
+        private static FloatProperty GetProperty(BlueprintSlot<LayingDriveBlueprint> slot, LayingDriveBlueprint.Axis axis, string name) =>
+            properties.Get(axis, () => new FloatProperty(
+                name,
+                (Func<float>)(() => axis.TorqueMultiplier),
+                (Action<float>)(value =>
                 {
-                    Min = 0f,
-                    Max = 100f,
-                    Step = 0.25f
-                };
-                properties[axis.Pointer] = property;
-            }
-
-            return property;
-        }
+                    axis.TorqueMultiplier = value;
+                    slot.MarkModified();
+                }),
+                "Laying drive axis torque multiplier.")
+            {
+                Min = 0f,
+                Max = 100f,
+                Step = 0.25f
+            });
     }
 }
