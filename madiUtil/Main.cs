@@ -7,6 +7,7 @@ using HarmonyLib;
 using MadiLib;
 using Properties;
 using Sprocket.Blueprints;
+using Sprocket.SettingConfiguration;
 using Sprocket.UI;
 using Sprocket.VehicleDesigner;
 using Sprocket.Vehicles.CrewSystems;
@@ -28,7 +29,27 @@ namespace MadiUtil
         {
             new Harmony("madi.madiutil").PatchAll();
             Keybinds.Register(this, "Save vehicle", "Ctrl+S", SaveVehicle);
+            SettingsTab.AddSection(ui =>
+            {
+                ui.Header("madiUtil");
+                ui.Bool(unlockEras);
+            });
         }
+
+        // The game's own setting, which its Settings screen doesn't show. Edits the
+        // open Settings screen's working profile, which Apply and Accept save.
+        private static readonly BoolProperty unlockEras = new(
+            "Unlock scenario eras",
+            (Func<bool>)(() => EditedSettings()?.UnlockScenarioEras ?? false),
+            (Action<bool>)(value =>
+            {
+                if (EditedSettings() is { } general)
+                    general.UnlockScenarioEras = value;
+            }),
+            "Lets scenarios use vehicles from any era.");
+
+        /// <summary>The general settings the open Settings screen is editing.</summary>
+        private static Sprocket.GeneralSettings? EditedSettings() => Object.FindObjectOfType<SettingsMenu>()?.editProfile?.General;
 
         /// <summary>
         /// Saves the vehicle open in the designer, the same as its save button.

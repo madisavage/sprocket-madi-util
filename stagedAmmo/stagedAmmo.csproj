@@ -8,6 +8,7 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.AmmoRackDesigner.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.CrewTasks.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.DamageModelFramework.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Cannons.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Weapons.dll" Private="false" />

@@ -12,7 +12,7 @@
         "en": "Staged Ammo"
     },
     "description": {
-        "en": "Loaders only draw from ready racks near the breech. While free, a living loader re-racks shells inward from stowage, timed by the game's loader rules and crew efficiency, with a HUD readout."
+        "en": "Loaders only draw from ready racks near the breech. While free, a living loader re-racks shells inward from stowage, timed by the game's loader rules and crew efficiency, with a HUD readout. Autoloader racks load the gun without a loader, at a per-rack speed, while the loader keeps them stocked."
     },
     "release": {
         "include_prerelease": false,
