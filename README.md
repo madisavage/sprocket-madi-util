@@ -9,6 +9,7 @@ BepInEx 6 (IL2CPP) plugins for Sprocket, plus the library they share.
 | `stagedAmmo/` | `stagedAmmo.dll` | Ready racks, stowage, re-racking and autoloaders. |
 | `subcaliber/` | `subcaliber.dll` | Discarding sabot rounds: a projectile narrower than the gun. |
 | `composite/` | `composite.dll` | Pseudo-composite armour: stack selected faces into thin plates. |
+| `stabilizer/` | `stabilizer.dll` | Naive gun stabilization for traverse motors and laying drives. |
 
 ## Install
 
@@ -93,6 +94,15 @@ Pseudo-composite armour: a stack of thin plates. In a freeform compartment's edi
 - **Stack selected faces**: copies the selected faces (and their mirrors, with mirror on) into the stack, in the same compartment. One undo reverts it.
 
 Copies of adjacent faces share corners, so a selected surface stacks as connected surfaces. Settings reset each session.
+
+## stabilizer
+
+Naive gun stabilization. Tick **Stabilizer** in a traverse motor's or laying drive's edit panel. Each step, a stabilized drive turns back by however far the hull turned around its axes, so the gun holds its direction in the world; the drive then aims as usual, at its normal speed and torque. Elevation stays within the drive's limits.
+
+- A traverse motor stabilizes its turret's traverse; a laying drive stabilizes its elevation and azimuth.
+- Once ticked, **Stabilizer speed limit** (0–100 km/h) switches it off while the vehicle is faster than that; 0 keeps it on at any speed.
+- Both are saved in the drive's name, as **[stab]** or **[stab 30]** for 30 km/h. The game saves drive names in the vehicle file but doesn't show them, so the setting travels with shared vehicles.
+- A box in the bottom-left corner shows your vehicle's stabilized drives and whether each is on, or off for being over its speed limit, such as `Stabilizer: traverse on, elevation off (over 40 km/h)`. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.
 
 ## Build
 

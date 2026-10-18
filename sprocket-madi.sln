@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "subcaliber", "subcaliber\su
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "composite", "composite\composite.csproj", "{2F2EEC4C-C29D-4F0E-A2C4-DBEC21199FDE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "stabilizer", "stabilizer\stabilizer.csproj", "{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,18 @@ Global
 		{2F2EEC4C-C29D-4F0E-A2C4-DBEC21199FDE}.Release|x64.Build.0 = Release|Any CPU
 		{2F2EEC4C-C29D-4F0E-A2C4-DBEC21199FDE}.Release|x86.ActiveCfg = Release|Any CPU
 		{2F2EEC4C-C29D-4F0E-A2C4-DBEC21199FDE}.Release|x86.Build.0 = Release|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Debug|x64.Build.0 = Debug|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Debug|x86.Build.0 = Debug|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Release|x64.ActiveCfg = Release|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Release|x64.Build.0 = Release|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Release|x86.ActiveCfg = Release|Any CPU
+		{0B2544B9-20D2-4BA4-87F9-2C5D758F987F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

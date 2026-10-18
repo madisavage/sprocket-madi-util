@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MadiLib/MadiLib.csproj" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.LayingDriveDesigner.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Motors.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Cannons.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Weapons.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.WeaponFramework.dll" Private="false" />
+  </ItemGroup>
+
+</Project>
