@@ -15,6 +15,10 @@ using Properties;
 using Sprocket.MeshEditing;
 using Sprocket.PlateMesh;
 using Sprocket.UI;
+using Sprocket.VehicleDesigner.Access;
+using Sprocket.Vehicles;
+using Sprocket.Vehicles.Operations;
+using Sprocket.Vehicles.PlateStructures;
 using Sprocket.Vehicles.PlateStructures.Design;
 using UnityAction = UnityCoreModule::UnityEngine.Events.UnityAction;
 using Vector3 = System.Numerics.Vector3;
@@ -23,8 +27,8 @@ namespace Composite
 {
     /// <summary>
     /// BepInEx entry point. Adds a Composite section to the freeform
-    /// compartment editor that turns the selected faces into a stack of thin
-    /// plates.
+    /// compartment editor that stacks thin plates behind the selected faces,
+    /// in new add-ons.
     /// </summary>
     [BepInPlugin("madi.composite", "composite", ModInfo.Version)]
     [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
@@ -41,8 +45,8 @@ namespace Composite
 
     /// <summary>
     /// Adds the Composite section to the freeform editor panel: layer count,
-    /// layer thickness, gap, direction, and a button that stacks the selected
-    /// faces as one undoable edit.
+    /// layer thickness, gap, add-on count, direction, and a button that stacks
+    /// copies of the selected faces in new add-ons as one undoable edit.
     /// </summary>
     [HarmonyPatch(typeof(FreeformPlateStructureEditor), nameof(FreeformPlateStructureEditor.OnEditGUI))]
     internal static class FreeformEditGuiPatch
@@ -51,12 +55,13 @@ namespace Composite
         private static float layers = 5f;
         private static float thickness = 10f;
         private static float gap = 5f;
+        private static float addons = 1f;
         private static bool inward = true;
         // Index into axisNames; 0 stacks along the face normals.
         private static int axis = 2;
         private static readonly string[] axisNames = { "Face normals", "X", "Y", "Z" };
 
-        private static FloatProperty? layersProperty, thicknessProperty, gapProperty;
+        private static FloatProperty? layersProperty, thicknessProperty, gapProperty, addonsProperty;
 
         // Keeps the button's native callback alive between redraws.
         private static UnityAction? onStack;
@@ -78,13 +83,13 @@ namespace Composite
                 "Layers",
                 (Func<float>)(() => layers),
                 (Action<float>)(value => layers = value),
-                "Plates in the stack, counting the selected faces.")
-            { Min = 2f, Max = 50f, Step = 1f };
+                "Plates added behind the selected faces.")
+            { Min = 1f, Max = 50f, Step = 1f };
             thicknessProperty ??= new FloatProperty(
                 "Layer thickness",
                 (Func<float>)(() => thickness),
                 (Action<float>)(value => thickness = value),
-                "Thickness of every plate in the stack, in mm. The selected faces are set to it too.")
+                "Thickness of every added plate, in mm. The selected faces keep theirs.")
             { Min = 1f, Max = 500f, Step = 1f };
             gapProperty ??= new FloatProperty(
                 "Gap",
@@ -92,20 +97,27 @@ namespace Composite
                 (Action<float>)(value => gap = value),
                 "Air gap between plates, in mm.")
             { Min = 0f, Max = 500f, Step = 1f };
+            addonsProperty ??= new FloatProperty(
+                "Add-ons",
+                (Func<float>)(() => addons),
+                (Action<float>)(value => addons = value),
+                "Add-ons the plates alternate between, nearest first: with 3, plates 1 and 4 go in the first, 2 and 5 in the second, 3 and 6 in the third, so each can have its own material.")
+            { Min = 1f, Max = 10f, Step = 1f };
             onStack ??= DelegateSupport.ConvertDelegate<UnityAction>(new Action(() => { if (editor != null) Stack(editor); }))!;
 
             drawer.Float(layersProperty);
             drawer.Float(thicknessProperty);
             drawer.Float(gapProperty);
+            drawer.Float(addonsProperty);
             EditorGui.Dropdown(drawer, "Axis", axisNames, axis, i => axis = i,
                 "Direction the plates stack in. Along X, Y or Z every plate is the same shape, moved along that world axis; the gap is still measured square to the plates.");
             drawer.ToggleField("Stack inward", inward, (Action<bool>)(value => inward = value),
-                "Off: new plates go out, the side the faces face. On: they go in.");
-            var tooltip = new UITooltip("Stack selected faces", "Copies the selected faces into a stack of plates. Undo reverts it.");
+                "On: new plates go behind the faces. Off: they go out, the side the faces face.");
+            var tooltip = new UITooltip("Stack selected faces", "Stacks copies of the selected faces behind them in new add-ons on this compartment, split as Add-ons says, so each can have its own material. The selected faces are left as they are. Undo removes them.");
             drawer.Button("Stack selected faces", onStack, ref tooltip);
         }
 
-        /// <summary>Stacks the selected faces of <paramref name="editor"/>'s mesh as one undoable edit.</summary>
+        /// <summary>Stacks copies of the selected faces of <paramref name="editor"/>'s mesh in a new add-on.</summary>
         private static void Stack(FreeformPlateStructureEditor editor)
         {
             PlateStructureEditOperations operations = editor.operations;
@@ -133,34 +145,118 @@ namespace Composite
                 var local = meshEditor.context.WorldToMesh.MultiplyVector(world);
                 direction = Vector3.Normalize(new Vector3(local.x, local.y, local.z));
             }
-            MeshBlueprint after;
+            // Inward, the first copy clears the faces' own thickness (they thicken inward); outward, its own.
+            ushort own = faces.Keys.Max(f => before.serializedFaces[f].thicknesses.Max());
+            float start = (inward ? own : thickness) + gap;
+            var plates = new List<MeshBlueprint>();
             try
             {
-                after = Stacked(before, faces, (int)layers, thickness, gap, inward, direction);
+                MeshBlueprint stack = Stacked(before, faces, (int)layers + 1, thickness, gap, inward, direction, start);
+                // Copy k's faces follow the source faces, faces.Count per copy; copy k goes in add-on k % count.
+                int count = Math.Min((int)addons, (int)layers), n = before.serializedFaces.Length;
+                for (int a = 0; a < count; a++)
+                    plates.Add(Pick(stack, Enumerable.Range(0, (int)layers).Where(k => k % count == a)
+                        .SelectMany(k => Enumerable.Range(n + k * faces.Count, faces.Count))));
             }
             catch (InvalidOperationException e)
             {
                 operations.NotifyError(e.Message);
                 return;
             }
-            StructureEdit edit = operations.CreateEdit("Stack composite", StructureEditOperationOptions.None);
-            edit.execute = (Func<MeshOperatorContext, ExecutionResult>)(_ =>
+            try
             {
-                try
-                {
-                    Load(mesh, after);
-                    return ExecutionResult.Executed;
-                }
-                catch (Exception e)
-                {
-                    Plugin.Logger.LogError($"Couldn't stack the faces: {e}");
-                    Load(mesh, before);
-                    operations.NotifyError("Couldn't stack the faces; see the BepInEx log.");
-                    return ExecutionResult.Cancelled;
-                }
-            });
-            edit.revert = (Action<MeshOperatorContext>)(_ => Load(mesh, before));
-            operations.Execute(edit, operations.GetNewGroupID());
+                // One group, so one undo removes every add-on.
+                int group = editor.Gateway.Editor.VehicleOperations.GetNewGroupID();
+                foreach (MeshBlueprint addon in plates)
+                    AddAddon(editor, addon, group);
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogError($"Couldn't add the stacked plates as an add-on: {e}");
+                operations.NotifyError("Couldn't add the stacked plates as an add-on; see the BepInEx log.");
+            }
+        }
+
+        // The game's "Addon Structures" part, from Parts/addonPlateStructurePart.json.
+        private const string AddonGuid = "8f8a9d20-eb45-482e-b149-014c964c4e2c";
+
+        /// <summary>
+        /// Adds an add-on structure shaped as <paramref name="plates"/> on
+        /// <paramref name="editor"/>'s compartment, at its origin so the mesh
+        /// lines up, in vehicle-op group <paramref name="group"/>.
+        /// </summary>
+        private static void AddAddon(PlateStructureEditor editor, MeshBlueprint plates, int group)
+        {
+            IVehicleOperationCreator ops = editor.Gateway.Editor.VehicleOperations;
+            VehicleObject compartment = editor.Component.vehicleObject;
+            InstantiateObject made = ops.Instantiate(AddonGuid, group);
+            Plugin.Logger.LogInfo($"Add-on instantiated: state {made.state}, {made.instances?.Length ?? 0} instance(s).");
+            if (made.instances == null || made.instances.Length == 0 || made.instances[0]?.Object is not { } addon)
+                throw new InvalidOperationException($"the game made no add-on (state {made.state})");
+
+            ops.SetParent(compartment.GetReference(), new Il2CppReferenceArray<ISoftVehicleObject>(new[] { addon.GetReference() }), group);
+            addon.VehicleTransform.ZeroLocalTransform();
+
+            PlateStructure structure = addon.behaviours.Select(c => c?.TryCast<PlateStructure>()).FirstOrDefault(c => c != null)
+                ?? throw new InvalidOperationException("the new add-on has no plate structure");
+            // ponytail: assumes a new add-on gets its own mesh; logged so a shared default shape shows up
+            int sharing = Each(compartment.Vehicle.ObjectReader.Items)
+                .SelectMany(o => o?.behaviours ?? (IEnumerable<VehicleComponent>)Array.Empty<VehicleComponent>())
+                .Count(c => c?.TryCast<PlateStructure>()?.Mesh?.Pointer == structure.Mesh.Pointer);
+            Plugin.Logger.LogInfo($"Add-on mesh used by {sharing} structure(s).");
+            if (sharing > 1)
+                throw new InvalidOperationException("the new add-on shares its shape with other parts");
+            Load(structure.Mesh.EditMesh, plates);
+        }
+
+        private static IEnumerable<T> Each<T>(Il2CppSystem.Collections.Generic.IReadOnlyList<T> list)
+        {
+            int count = list.Cast<Il2CppSystem.Collections.Generic.IReadOnlyCollection<T>>().Count;
+            for (int i = 0; i < count; i++)
+                yield return list[i];
+        }
+
+        /// <summary>
+        /// The faces of <paramref name="mesh"/> at <paramref name="indices"/>,
+        /// as a mesh of their own: only their vertices and edges, renumbered.
+        /// </summary>
+        internal static MeshBlueprint Pick(MeshBlueprint mesh, IEnumerable<int> indices)
+        {
+            var faces = indices.Select(f => mesh.serializedFaces[f]).ToList();
+            var vertices = new Dictionary<int, int>();
+            var positions = new List<float>();
+            foreach (var face in faces)
+                foreach (int v in face.vertices)
+                    if (!vertices.ContainsKey(v))
+                    {
+                        vertices[v] = positions.Count / 3;
+                        positions.AddRange(new[] { mesh.vertexPositions[3 * v], mesh.vertexPositions[3 * v + 1], mesh.vertexPositions[3 * v + 2] });
+                    }
+            // Edge 0 reads as "no thicken edge", so edges no corner thickens along go first.
+            // ponytail: if every edge is a thicken edge, the one at 0 is lost; never seen on a stack of copies
+            var thickening = faces.SelectMany(f => f.thickenEdgeIndicies).Where(e => e != NoEdge).Select(e => (int)e).ToHashSet();
+            var kept = Enumerable.Range(0, mesh.serializedEdges.Length / 2)
+                .Where(e => vertices.ContainsKey(mesh.serializedEdges[2 * e]) && vertices.ContainsKey(mesh.serializedEdges[2 * e + 1]))
+                .OrderBy(e => thickening.Contains(e))
+                .ToList();
+            var edgeMap = new Dictionary<int, ushort>();
+            var edges = new List<int>();
+            var edgeFlags = new List<MeshBlueprint.SerializedEdgeFlags>();
+            foreach (int e in kept)
+            {
+                edgeMap[e] = (ushort)(edges.Count / 2);
+                edges.Add(vertices[mesh.serializedEdges[2 * e]]);
+                edges.Add(vertices[mesh.serializedEdges[2 * e + 1]]);
+                edgeFlags.Add(mesh.serializedEdgeFlags[e]);
+            }
+            var faceArray = new Il2CppReferenceArray<MeshBlueprint.SerializedFace>(faces.Count);
+            for (int i = 0; i < faces.Count; i++)
+            {
+                var copy = Copy(faces[i], v => vertices[v], e => e == NoEdge ? NoEdge : edgeMap[e], faces[i].thicknesses[0], keepEdges: false);
+                copy.thicknesses = faces[i].thicknesses.ToArray();
+                faceArray[i] = copy;
+            }
+            return new MeshBlueprint(positions.ToArray(), edges.ToArray(), edgeFlags.ToArray(), faceArray);
         }
 
         private static void Load(EditMesh mesh, MeshBlueprint blueprint)
@@ -178,7 +274,8 @@ namespace Composite
         /// <paramref name="source"/> with the faces in <paramref name="faces"/>
         /// (index to normal) set to <paramref name="thickness"/> mm and
         /// <paramref name="layers"/> - 1 copies of them stacked along their
-        /// normals, <paramref name="gap"/> mm apart.
+        /// normals, <paramref name="gap"/> mm apart, the first <paramref name="start"/> mm
+        /// from the faces (one thickness plus the gap if left out).
         /// </summary>
         /// <remarks>
         /// Each copy keeps the faces' winding, so it thickens the same way as
@@ -191,7 +288,7 @@ namespace Composite
         /// so the mean face keeps its spacing.
         /// </remarks>
         /// <exception cref="InvalidOperationException">The axis lies along the faces.</exception>
-        internal static MeshBlueprint Stacked(MeshBlueprint source, IReadOnlyDictionary<int, Vector3> faces, int layers, float thickness, float gap, bool inward, Vector3? axis)
+        internal static MeshBlueprint Stacked(MeshBlueprint source, IReadOnlyDictionary<int, Vector3> faces, int layers, float thickness, float gap, bool inward, Vector3? axis, float? start = null)
         {
             var positions = source.vertexPositions.ToList();
             var edges = source.serializedEdges.ToList();
@@ -225,14 +322,15 @@ namespace Composite
             });
 
             var result = serialized.Select((face, f) => faces.ContainsKey(f) ? Copy(face, v => v, _ => NoEdge, mm, keepEdges: true) : face).ToList();
-            float pitch = (inward ? -1f : 1f) * (thickness + gap) / 1000f;
+            float sign = inward ? -1f : 1f;
+            float pitch = thickness + gap, first = start ?? pitch;
             for (int layer = 1; layer < layers; layer++)
             {
                 var vertexMap = new Dictionary<int, int>();
                 foreach (var (v, direction) in directions)
                 {
                     vertexMap[v] = positions.Count / 3;
-                    Vector3 p = new Vector3(positions[3 * v], positions[3 * v + 1], positions[3 * v + 2]) + direction * pitch * layer;
+                    Vector3 p = new Vector3(positions[3 * v], positions[3 * v + 1], positions[3 * v + 2]) + direction * sign * (first + pitch * (layer - 1)) / 1000f;
                     positions.AddRange(new[] { p.X, p.Y, p.Z });
                 }
                 var edgeMap = new Dictionary<int, int>();
