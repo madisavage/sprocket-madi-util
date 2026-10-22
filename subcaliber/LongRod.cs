@@ -16,21 +16,35 @@ using Sprocket.DamageModelling;
 namespace Subcaliber
 {
     /// <summary>
-    /// Long-rod penetrators (at least <see cref="MinCalibers"/> long) penetrate
-    /// by the Lanz-Odermatt perforation equation instead of the game's de Marre,
-    /// and spall more.
+    /// Subcaliber penetrators penetrate by a blend of the game's de Marre and
+    /// the Lanz-Odermatt long-rod equation, going from all de Marre at
+    /// <see cref="BlendStart"/> calibers long to all Lanz-Odermatt at
+    /// <see cref="BlendEnd"/>. Long rods (at least <see cref="MinCalibers"/>)
+    /// also spall more.
     /// </summary>
     /// <remarks>
     /// The game's penetration is de Marre, <c>100 (√m v / ((d/100)^0.75 K))^1.43</c>
     /// mm, per plate with the penetrator's speed at that plate. On impact, the
     /// penetrator constant <c>K</c> is replaced by the one that makes de Marre
-    /// give Lanz-Odermatt's penetration at the impact speed; everything after
-    /// (obliquity, plates, spall) is still the game's.
+    /// give the blend at the impact speed; everything after (obliquity,
+    /// plates, spall) is still the game's. De Marre overrates small fast
+    /// penetrators (about 1.5x for real APDS, 2-3x for APFSDS) and
+    /// Lanz-Odermatt underrates stubby ones (about 0.75x for APDS); real APDS,
+    /// at 3-4 calibers, falls between them. See tools/penetration.py.
     /// </remarks>
     internal static class LongRod
     {
-        /// <summary>Shortest penetrator, in calibers, the equation holds for.</summary>
-        internal const float MinCalibers = 4f;
+        /// <summary>Length, in calibers, below which penetration is all de Marre.</summary>
+        internal const float BlendStart = 0f;
+
+        /// <summary>Length, in calibers, from which penetration is all Lanz-Odermatt.</summary>
+        internal const float BlendEnd = 8f;
+
+        /// <summary>Shortest penetrator, in calibers, that spalls as a long rod.</summary>
+        internal const float MinCalibers = 8f;
+
+        /// <summary>Set once a hit's penetrator constant is replaced, so nested entry points leave it.</summary>
+        internal static bool Hitting;
 
         internal static ConfigEntry<float> TargetHardness = null!;
         internal static ConfigEntry<float> SpallMultiplier = null!;
@@ -86,19 +100,45 @@ namespace Subcaliber
         }
 
         /// <summary>
+        /// Penetration (mm, at normal) of a penetrator <paramref name="calibers"/>
+        /// long, <paramref name="diameter"/> mm wide and <paramref name="mass"/>
+        /// kg, of <paramref name="material"/>, at <paramref name="speed"/> m/s
+        /// from a gun with <paramref name="penetratorConstant"/>: de Marre
+        /// blended into Lanz-Odermatt by length.
+        /// </summary>
+        internal static float Penetration(float calibers, float diameter, float mass, string material, float speed, float penetratorConstant)
+        {
+            float deMarre = DeMarre(diameter, mass, speed, penetratorConstant);
+            float t = Math.Clamp((calibers - BlendStart) / (BlendEnd - BlendStart), 0f, 1f);
+            return t > 0f && LanzOdermatt(calibers, diameter, material, speed) is { } lanzOdermatt
+                ? deMarre + (lanzOdermatt - deMarre) * t
+                : deMarre;
+        }
+
+        /// <summary>
+        /// The game's penetration (mm) for a projectile of <paramref name="diameter"/>
+        /// mm and <paramref name="mass"/> kg at <paramref name="speed"/> m/s.
+        /// </summary>
+        /// <remarks>
+        /// De Marre, as the game's combat code computes it (constants read from
+        /// GameAssembly): <c>100 (√m v / ((d/100)^0.75 K))^1.43</c>. The game's
+        /// own <c>ShellProfile.GetPenetration</c> assumes a steel 3-caliber mass.
+        /// </remarks>
+        internal static float DeMarre(float diameter, float mass, float speed, float penetratorConstant) =>
+            100f * MathF.Pow(MathF.Sqrt(mass) * speed / (MathF.Pow(diameter * 0.01f, 0.75f) * penetratorConstant), 1.43f);
+
+        /// <summary>
         /// Lanz-Odermatt penetration (mm of armour at <see cref="TargetHardness"/>,
         /// at normal) of a penetrator <paramref name="calibers"/> long and
         /// <paramref name="diameter"/> mm wide, of <paramref name="material"/>,
-        /// at <paramref name="speed"/> m/s; null outside the equation's range.
+        /// at <paramref name="speed"/> m/s; null below the equation's speed range.
         /// </summary>
         /// <remarks>
         /// <c>P/L = a / tanh(b0 + b1 L/D) √(ρp/ρt) e^(−s²/v²)</c>, ρ in kg/m³, v
         /// in km/s. Obliquity (<c>cos^m θ</c>) is left to the game.
         /// </remarks>
-        internal static float? Penetration(float calibers, float diameter, string material, float speed)
+        private static float? LanzOdermatt(float calibers, float diameter, string material, float speed)
         {
-            if (calibers < MinCalibers)
-                return null;
             Coefficients c = materials.TryGetValue(material, out Coefficients? found) ? found : Coefficients.Tungsten;
             float density = Plugin.Materials.TryGetValue(material, out float d) ? d : Plugin.SteelDensity;
             float bhn = TargetHardness.Value;
@@ -113,25 +153,26 @@ namespace Subcaliber
         }
 
         /// <summary>
-        /// On a combat impact, gives a long rod the penetrator constant that
-        /// makes the game's de Marre equal Lanz-Odermatt at the impact speed,
-        /// and marks the hit for <see cref="SpallDetour"/>. Leaves anything
-        /// else alone, and is idempotent.
+        /// On a combat impact, gives a subcaliber penetrator the penetrator
+        /// constant that makes the game's de Marre equal <see cref="Penetration"/>
+        /// at the impact speed, and marks a long rod's hit for
+        /// <see cref="SpallDetour"/>. Leaves anything else alone, and only acts
+        /// once per hit (until <see cref="Hitting"/> is cleared).
         /// </summary>
         internal static void Hit(ref PenetratorInfo penetrator)
         {
             PenetratorInfo p = penetrator;
-            if (!Rods.TryGetValue((p.Mass, p.Diameter), out var rod))
+            if (Hitting || !Rods.TryGetValue((p.Mass, p.Diameter), out var rod))
                 return;
+            Hitting = true;
             float diameter = p.Diameter * 1000f;
             float speed = p.Velocity.magnitude;
-            if (Penetration(rod.Calibers, diameter, rod.Material, speed) is not { } penetration)
-                return;
+            float penetration = Penetration(rod.Calibers, diameter, p.Mass, rod.Material, speed, p.PenetratorConstant);
             // de Marre solved for K: P = 100 (√m v / ((d/100)^0.75 K))^1.43
             float k = MathF.Sqrt(p.Mass) * speed / (MathF.Pow(diameter * 0.01f, 0.75f) * MathF.Pow(penetration / 100f, 1f / 1.43f));
             ushort constant = (ushort)Math.Clamp(MathF.Round(k), 1f, ushort.MaxValue);
             penetrator = new PenetratorInfo(p.Mass, p.Diameter, p.Density, p.MaxNormalizationAngle, constant, p.Position, p.Velocity);
-            SpallDetour.LongRod = true;
+            SpallDetour.LongRod = rod.Calibers >= MinCalibers;
         }
     }
 

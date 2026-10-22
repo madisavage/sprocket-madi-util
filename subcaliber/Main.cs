@@ -48,6 +48,7 @@ namespace Subcaliber
         internal const float SteelDensity = 7850f;
 
         internal static ConfigEntry<float> MaxVelocity = null!;
+        internal static ConfigEntry<float> PropellantDensity = null!;
 
         // Per shell type, keyed by projectile GUID
         internal static KeyedConfig<float> Diameters = null!;
@@ -64,8 +65,11 @@ namespace Subcaliber
             MaxVelocity = Config.Bind("Muzzle velocity", "Max muzzle velocity", 2200f, new ConfigDescription(
                 "Muzzle velocity in m/s that rounds approach but never pass, as powder gas can only push so fast. Rounds well below it are barely changed.",
                 new AcceptableValueRange<float>(1000f, 4000f), new Step(50f)));
+            PropellantDensity = Config.Bind("Muzzle velocity", "Propellant density", 800f, new ConfigDescription(
+                "Charge mass per volume of case, in kg/m³. Pushing its own gas slows light projectiles: full-bore rounds are unchanged, a light sabot round loses a lot. 0 is the game's, no charge mass.",
+                new AcceptableValueRange<float>(0f, 2000f), new Step(50f)));
             LongRod.Load(Config, Log);
-            SettingsTab.AddSection("Subcaliber", MaxVelocity, LongRod.TargetHardness, LongRod.SpallMultiplier);
+            SettingsTab.AddSection("Subcaliber", MaxVelocity, PropellantDensity, LongRod.TargetHardness, LongRod.SpallMultiplier);
 
             string path = Path.Combine(Paths.ConfigPath, "madi.subcaliber.materials.json");
             if (!File.Exists(path))
@@ -349,22 +353,9 @@ namespace Subcaliber
             Penetrator p = Penetrator(gun, shell);
             float fullBore = ShellProperties.GetProjectileMass(gun.Caliber);
             float velocity = gun.MuzzleVelocity * VelocityRatio(gun, p.Launch);
-            float penetration = LongRod.Penetration(p.Calibers, gun.Caliber * p.Ratio, Plugin.MaterialNames[Guid(shell)], velocity)
-                ?? Penetration(gun.Caliber * p.Ratio, fullBore * p.Mass, velocity, gun.PenetratorConstant);
+            float penetration = LongRod.Penetration(p.Calibers, gun.Caliber * p.Ratio, fullBore * p.Mass, Plugin.MaterialNames[Guid(shell)], velocity, gun.PenetratorConstant);
             return (velocity, penetration, fullBore * p.Mass, fullBore * p.Sabot);
         }
-
-        /// <summary>
-        /// The game's penetration (mm) for a projectile of <paramref name="diameter"/>
-        /// mm and <paramref name="mass"/> kg at <paramref name="speed"/> m/s.
-        /// </summary>
-        /// <remarks>
-        /// De Marre, as the game's combat code computes it (constants read from
-        /// GameAssembly): <c>100 (√m v / ((d/100)^0.75 K))^1.43</c>. The game's
-        /// own <c>ShellProfile.GetPenetration</c> assumes a steel 3-caliber mass.
-        /// </remarks>
-        private static float Penetration(float diameter, float mass, float speed, float penetratorConstant) =>
-            100f * MathF.Pow(MathF.Sqrt(mass) * speed / (MathF.Pow(diameter * 0.01f, 0.75f) * penetratorConstant), 1.43f);
 
         private static string Guid(ShellSlotBlueprint shell) => shell.generatedProjectileBlueprint[0].ProjectileTypeGuid.ToString();
 
@@ -502,25 +493,38 @@ namespace Subcaliber
         }
 
         /// <summary>Ends a long rod's hit; the innermost entry point runs the simulation and ends first.</summary>
-        private static void Postfix() => SpallDetour.LongRod = false;
+        private static void Postfix() => SpallDetour.LongRod = LongRod.Hitting = false;
     }
 
     /// <summary>
-    /// Caps muzzle velocity softly at <see cref="Plugin.MaxVelocity"/>: the
-    /// game's goes as <c>1/√mass</c> with no ceiling, so a light sabot round
-    /// would leave faster than powder gas can push it.
+    /// Slows light projectiles by the charge's own mass, then caps muzzle
+    /// velocity softly at <see cref="Plugin.MaxVelocity"/>. The game's
+    /// velocity goes as <c>1/√mass</c>, as if the charge's energy all went
+    /// into the projectile, so a light sabot round would leave far faster
+    /// than powder gas can push it.
     /// </summary>
     /// <remarks>
-    /// <c>v / (1 + (v/vmax)⁸)^⅛</c>: under about 0.75 vmax a round loses well
-    /// under 1%, and no round passes vmax. Every muzzle velocity the game
-    /// works out, in combat, the designer and Dynamic Gun Sight, comes from here.
+    /// Charge mass, by the Lagrange approximation: a third of the charge
+    /// moves at projectile speed, so <c>v ∝ 1/√(M + C/3)</c>. Scaled so the
+    /// game's full-bore projectile (3 calibers long) is unchanged:
+    /// <c>v √((1 + C/3M₃) / (1 + C/3M))</c>, with the charge taken as the
+    /// case's length at bore width, at <see cref="Plugin.PropellantDensity"/>.
+    /// Cap: <c>v / (1 + (v/vmax)⁸)^⅛</c>; under about 0.75 vmax a round loses
+    /// well under 1%, and no round passes vmax. Every muzzle velocity the
+    /// game works out, in combat, the designer and Dynamic Gun Sight, comes
+    /// from here.
     /// </remarks>
     [HarmonyPatch(typeof(ShellProperties), nameof(ShellProperties.CalculateFireInfo), typeof(float), typeof(float), typeof(float), typeof(float), typeof(uint))]
     internal static class VelocityCapPatch
     {
-        private static void Postfix(ref FireInfo __result)
+        /// <param name="__1">Caliber, mm.</param>
+        /// <param name="__2">Projectile length, mm, as a full-bore steel projectile of its mass.</param>
+        /// <param name="__3">Case length, mm.</param>
+        private static void Postfix(float __1, float __2, float __3, ref FireInfo __result)
         {
-            float v = __result.MuzzleVelocity;
+            // Charge mass over a third, in mm of full-bore steel projectile
+            float charge = __3 * Plugin.PropellantDensity.Value / Plugin.SteelDensity / 3f;
+            float v = __result.MuzzleVelocity * MathF.Sqrt((1f + charge / (3f * __1)) / (1f + charge / __2));
             __result.MuzzleVelocity = v / MathF.Pow(1f + MathF.Pow(v / Plugin.MaxVelocity.Value, 8f), 0.125f);
         }
     }
