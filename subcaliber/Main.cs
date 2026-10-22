@@ -47,22 +47,25 @@ namespace Subcaliber
     {
         internal const float SteelDensity = 7850f;
 
-        internal static ConfigEntry<float> SabotDensity = null!;
+        internal static ConfigEntry<float> MaxVelocity = null!;
 
         // Per shell type, keyed by projectile GUID
         internal static KeyedConfig<float> Diameters = null!;
         internal static KeyedConfig<float> Lengths = null!;
         internal static KeyedConfig<string> MaterialNames = null!;
+        internal static KeyedConfig<float> SabotCoverages = null!;
+        internal static KeyedConfig<float> SabotDensities = null!;
 
         /// <summary>Penetrator materials and their densities (kg/m³), in file order.</summary>
         internal static Dictionary<string, float> Materials = new();
 
         public override void Load()
         {
-            SabotDensity = Config.Bind("Sabot", "Sabot density", 0.35f, new ConfigDescription(
-                "Sabot density relative to steel (aluminium is about 0.35). The sabot fills the bore around the penetrator, along its length, and is discarded at the muzzle.",
-                new AcceptableValueRange<float>(0f, 1f), new Step(0.05f)));
-            SettingsTab.AddSection("Subcaliber", SabotDensity);
+            MaxVelocity = Config.Bind("Muzzle velocity", "Max muzzle velocity", 2200f, new ConfigDescription(
+                "Muzzle velocity in m/s that rounds approach but never pass, as powder gas can only push so fast. Rounds well below it are barely changed.",
+                new AcceptableValueRange<float>(1000f, 4000f), new Step(50f)));
+            LongRod.Load(Config, Log);
+            SettingsTab.AddSection("Subcaliber", MaxVelocity, LongRod.TargetHardness, LongRod.SpallMultiplier);
 
             string path = Path.Combine(Paths.ConfigPath, "madi.subcaliber.materials.json");
             if (!File.Exists(path))
@@ -85,6 +88,8 @@ namespace Subcaliber
             Diameters = new KeyedConfig<float>(Config, "Projectile diameter", 0f, "Projectile diameter in mm; 0 fires full-bore.");
             Lengths = new KeyedConfig<float>(Config, "Penetrator length", 3f, "Penetrator length in calibers of its own diameter.");
             MaterialNames = new KeyedConfig<string>(Config, "Penetrator material", "Steel", "Penetrator material, from madi.subcaliber.materials.json.");
+            SabotDensities = new KeyedConfig<float>(Config, "Sabot density", 0.35f, "Sabot density relative to steel (aluminium is about 0.35).");
+            SabotCoverages = new KeyedConfig<float>(Config, "Sabot coverage", 1f, "Fraction of the penetrator's length the sabot covers; 1 is all of it.");
             new Harmony("madi.subcaliber").PatchAll();
         }
 
@@ -96,23 +101,25 @@ namespace Subcaliber
                 diameter > 0f ? Math.Min(diameter / caliber, 1f) : 1f,
                 Lengths[guid],
                 Materials.TryGetValue(MaterialNames[guid], out float density) ? density / SteelDensity : 1f,
-                SabotDensity.Value);
+                SabotDensities[guid],
+                SabotCoverages[guid]);
         }
     }
 
     /// <summary>
     /// A penetrator: <see cref="Ratio"/> of the caliber wide, <see cref="Calibers"/>
     /// of its own diameter long, <see cref="Density"/> times steel's density, in
-    /// a sabot of <see cref="SabotDensity"/> times steel's. Masses are relative to
-    /// the game's full-bore projectile (steel, 3 calibers).
+    /// a sabot of <see cref="SabotDensity"/> times steel's covering
+    /// <see cref="SabotCoverage"/> of its length. Masses are relative to the
+    /// game's full-bore projectile (steel, 3 calibers).
     /// </summary>
-    internal readonly record struct Penetrator(float Ratio, float Calibers, float Density, float SabotDensity)
+    internal readonly record struct Penetrator(float Ratio, float Calibers, float Density, float SabotDensity, float SabotCoverage)
     {
         /// <summary>Penetrator mass.</summary>
         public float Mass => Ratio * Ratio * Ratio * Calibers / 3f * Density;
 
-        /// <summary>Sabot mass: the bore around the penetrator, along its length.</summary>
-        public float Sabot => SabotDensity * Ratio * (1f - Ratio * Ratio) * Calibers / 3f;
+        /// <summary>Sabot mass: the bore around the penetrator, along <see cref="SabotCoverage"/> of its length.</summary>
+        public float Sabot => SabotDensity * Ratio * (1f - Ratio * Ratio) * Calibers * SabotCoverage / 3f;
 
         /// <summary>Everything the charge pushes, as the length of a full-bore steel projectile that heavy.</summary>
         public float Launch => Mass + Sabot;
@@ -168,6 +175,8 @@ namespace Subcaliber
             definition.dragConstant = game.Drag * p.Ratio * p.Ratio * dragCurve.Evaluate(game.Diameter * p.Ratio * 1000f) / dragCurve.Evaluate(game.Diameter * 1000f);
             definition.Diameter = game.Diameter * (launch ? 1f : p.Ratio);
             definition.Length = game.Length * (launch ? p.Launch : p.Length);
+            if (!launch)
+                LongRod.Rods[(definition.Mass, definition.Diameter)] = (p.Calibers, Plugin.MaterialNames[definition.Guid.ToString()]);
         }
     }
 
@@ -222,8 +231,8 @@ namespace Subcaliber
     [HarmonyPatch(typeof(CannonEditor), nameof(CannonEditor.OnGUI))]
     internal static class CannonEditorOnGuiPatch
     {
-        // Shell slot, (Diameter, Length, Readouts); one entry for each shell slot
-        private static readonly ObjectCache<(FloatProperty Diameter, FloatProperty Length, StringProperty[] Readouts)> properties = new();
+        // Shell slot, (Diameter, Length, SabotCoverage, SabotDensity, Readouts); one entry for each shell slot
+        private static readonly ObjectCache<(FloatProperty Diameter, FloatProperty Length, FloatProperty SabotCoverage, FloatProperty SabotDensity, StringProperty[] Readouts)> properties = new();
 
         /// <summary>
         /// Runs after the game draws the cannon panel and appends the controls
@@ -270,6 +279,26 @@ namespace Subcaliber
                         Max = 30f,
                         Step = 0.5f
                     },
+                    new FloatProperty(
+                        "Sabot coverage",
+                        (Func<float>)(() => Penetrator(gun, shell).SabotCoverage),
+                        (Action<float>)(value => Set(shell, Plugin.SabotCoverages, value, readouts)),
+                        "Fraction of the penetrator's length the sabot covers. 1 is all of it, as an APDS pot sabot; a long rod's saddle sabot grips about a quarter to a third.")
+                    {
+                        Min = 0.05f,
+                        Max = 1f,
+                        Step = 0.05f
+                    },
+                    new FloatProperty(
+                        "Sabot density",
+                        (Func<float>)(() => Penetrator(gun, shell).SabotDensity),
+                        (Action<float>)(value => Set(shell, Plugin.SabotDensities, value, readouts)),
+                        "Sabot density relative to steel (aluminium is about 0.35). The sabot is discarded at the muzzle.")
+                    {
+                        Min = 0f,
+                        Max = 1f,
+                        Step = 0.05f
+                    },
                     readouts);
             });
             if (!EditorGui.Section(drawer, "subcaliber.cannon", "Penetrator", __instance.RequestRedraw))
@@ -277,6 +306,8 @@ namespace Subcaliber
             set.Diameter.Max = gun.Caliber;
             drawer.Float(set.Diameter);
             drawer.Float(set.Length);
+            drawer.Float(set.SabotCoverage);
+            drawer.Float(set.SabotDensity);
 
             MaterialDropdown(drawer, Plugin.MaterialNames[Guid(shell)], name => Set(shell, Plugin.MaterialNames, name, set.Readouts));
 
@@ -318,7 +349,9 @@ namespace Subcaliber
             Penetrator p = Penetrator(gun, shell);
             float fullBore = ShellProperties.GetProjectileMass(gun.Caliber);
             float velocity = gun.MuzzleVelocity * VelocityRatio(gun, p.Launch);
-            return (velocity, Penetration(gun.Caliber * p.Ratio, fullBore * p.Mass, velocity, gun.PenetratorConstant), fullBore * p.Mass, fullBore * p.Sabot);
+            float penetration = LongRod.Penetration(p.Calibers, gun.Caliber * p.Ratio, Plugin.MaterialNames[Guid(shell)], velocity)
+                ?? Penetration(gun.Caliber * p.Ratio, fullBore * p.Mass, velocity, gun.PenetratorConstant);
+            return (velocity, penetration, fullBore * p.Mass, fullBore * p.Sabot);
         }
 
         /// <summary>
@@ -436,9 +469,10 @@ namespace Subcaliber
 
     /// <summary>
     /// Scales the armour view's simulated penetrator; see
-    /// <see cref="ArmourOverlayConfigDrawPatch"/>. The structure is patched on
-    /// every entry point the simulator may call; the first one to run consumes
-    /// the flag, so the shot is scaled once.
+    /// <see cref="ArmourOverlayConfigDrawPatch"/>. In combat, hands each hit to
+    /// <see cref="LongRod.Hit"/>. The structure is patched on every entry point
+    /// the simulator may call; the first one to run consumes the flag, so the
+    /// shot is scaled once.
     /// </summary>
     [HarmonyPatch]
     internal static class PenetratePatch
@@ -453,13 +487,41 @@ namespace Subcaliber
         private static void Prefix(ref PenetratorInfo __0)
         {
             if (!ArmourSimulationPatch.Simulating)
+            {
+                LongRod.Hit(ref __0);
                 return;
+            }
             ArmourSimulationPatch.Simulating = false;
+            // The armour view's penetration is whatever the panel asks for; a long rod only spalls more
+            SpallDetour.LongRod = ArmourOverlayConfigDrawPatch.Calibers >= LongRod.MinCalibers;
             float k = ArmourOverlayConfigDrawPatch.MassScale;
             if (k == 1f)
                 return;
             PenetratorInfo p = __0;
             __0 = new PenetratorInfo(p.Mass * k, p.Diameter, p.Density, p.MaxNormalizationAngle, p.PenetratorConstant, p.Position, p.Velocity / MathF.Sqrt(k));
+        }
+
+        /// <summary>Ends a long rod's hit; the innermost entry point runs the simulation and ends first.</summary>
+        private static void Postfix() => SpallDetour.LongRod = false;
+    }
+
+    /// <summary>
+    /// Caps muzzle velocity softly at <see cref="Plugin.MaxVelocity"/>: the
+    /// game's goes as <c>1/√mass</c> with no ceiling, so a light sabot round
+    /// would leave faster than powder gas can push it.
+    /// </summary>
+    /// <remarks>
+    /// <c>v / (1 + (v/vmax)⁸)^⅛</c>: under about 0.75 vmax a round loses well
+    /// under 1%, and no round passes vmax. Every muzzle velocity the game
+    /// works out, in combat, the designer and Dynamic Gun Sight, comes from here.
+    /// </remarks>
+    [HarmonyPatch(typeof(ShellProperties), nameof(ShellProperties.CalculateFireInfo), typeof(float), typeof(float), typeof(float), typeof(float), typeof(uint))]
+    internal static class VelocityCapPatch
+    {
+        private static void Postfix(ref FireInfo __result)
+        {
+            float v = __result.MuzzleVelocity;
+            __result.MuzzleVelocity = v / MathF.Pow(1f + MathF.Pow(v / Plugin.MaxVelocity.Value, 8f), 0.125f);
         }
     }
 }
