@@ -199,7 +199,6 @@ namespace Composite
 
             PlateStructure structure = addon.behaviours.Select(c => c?.TryCast<PlateStructure>()).FirstOrDefault(c => c != null)
                 ?? throw new InvalidOperationException("the new add-on has no plate structure");
-            // ponytail: assumes a new add-on gets its own mesh; logged so a shared default shape shows up
             int sharing = Each(compartment.Vehicle.ObjectReader.Items)
                 .SelectMany(o => o?.behaviours ?? (IEnumerable<VehicleComponent>)Array.Empty<VehicleComponent>())
                 .Count(c => c?.TryCast<PlateStructure>()?.Mesh?.Pointer == structure.Mesh.Pointer);
@@ -233,7 +232,6 @@ namespace Composite
                         positions.AddRange(new[] { mesh.vertexPositions[3 * v], mesh.vertexPositions[3 * v + 1], mesh.vertexPositions[3 * v + 2] });
                     }
             // Edge 0 reads as "no thicken edge", so edges no corner thickens along go first.
-            // ponytail: if every edge is a thicken edge, the one at 0 is lost; never seen on a stack of copies
             var thickening = faces.SelectMany(f => f.thickenEdgeIndicies).Where(e => e != NoEdge).Select(e => (int)e).ToHashSet();
             var kept = Enumerable.Range(0, mesh.serializedEdges.Length / 2)
                 .Where(e => vertices.ContainsKey(mesh.serializedEdges[2 * e]) && vertices.ContainsKey(mesh.serializedEdges[2 * e + 1]))

@@ -148,7 +148,7 @@ namespace ArmourMaterial
             ("Spall factor", m => Missing(m.Spall), true),
             ("Density", m => m.Density, true),
             ("Cost", m => m.Cost, true),
-            ("Invented", m => m.Date, false), // ponytail: "yyyy.mm.dd" sorts as a string
+            ("Invented", m => m.Date, false),
             ("Name", m => m.Name, false),
         };
 

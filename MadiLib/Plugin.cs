@@ -41,7 +41,6 @@ namespace MadiLib
     {
         private static void Prefix(ScrollRect __instance)
         {
-            // ponytail: matched by name; the game's dropdowns scroll TMP's list template, "Template", directly.
             if (__instance.name == "Template")
                 __instance.scrollSensitivity = Plugin.ScrollSensitivity.Value;
         }
