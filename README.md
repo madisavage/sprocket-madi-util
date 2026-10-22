@@ -40,6 +40,20 @@ Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth tor
 ### Unlock scenario eras
 **Unlock scenario eras** on the MadiLib tab toggles the `UnlockScenarioEras` setting, which was removed from the cheats menu. On, scenarios accept vehicles from any era. 
 
+### Era and material editor
+`tools/techedit.py` is a Qt app for the game's `StreamingAssets/Eras` and `StreamingAssets/Technology` folders. Run it with `uv run tools/techedit.py` (uv installs PySide6); pass the game folder if the repo isn't inside it.
+
+- A timeline of eras (greyed when not playable) with every armour material under its invention date. Ctrl+wheel zooms; click to jump to the entry.
+- **Eras**: create, copy, delete and edit file name, name, start date, playable and the medium/heavy vehicle masses.
+  Below the form, every technology in the selected era (dated from its start up to the next era's) with its properties: edit file, type and date in place (a new date can move it to another era), edit, rename, add and remove properties, and copy or delete technologies.
+- **Materials**: a sortable table of every tech with an `rhaFactor`. Edit cells in place; a blank optional cell removes the key. New copies the selected material.
+- **Save all** (Ctrl+S) writes changed files. Deleting renames the file to `.json.bak`.
+
+`uv run tools/techedit.py --check` round-trips every file through the writer.
+
+### Penetration plot
+`tools/penetration.py` plots real rounds' penetration against the game's de Marre, Lanz-Odermatt and subcaliber's blend of the two, and sweeps a rod's length in a 105 mm gun against the full-bore round. Run it with `uv run tools/penetration.py` (uv installs matplotlib), or pass a file name to save a PNG. The rounds' figures are rough; replace them in its `ROUNDS` list with sourced values. Keep its `BLEND` in step with `LongRod.BlendStart` and `BlendEnd`.
+
 ## stagedAmmo
 
 Staged ammunition. The loader only takes shells from **ready racks**, racks close to the gun's breech. Racks farther away are **stowage**; over time, crew move shells from stowage into the ready racks.
@@ -74,8 +88,9 @@ How it works:
 
 - The cartridge stays full-bore: same charge, case and rack size.
 - The sabot fills the bore around the penetrator, along **Sabot coverage** of its length, at **Sabot density** times steel's. Muzzle velocity comes from the game's interior ballistics with the full-bore charge pushing penetrator plus sabot. The sabot is discarded at the muzzle.
+- The charge has to push its own gas too: about a third of its mass moves at projectile speed, so light projectiles leave slower than the game's formula says. Charge mass is the case's length at bore width times **Propellant density** (default 800 kg/m³; 0 turns it off). Scaled so a full-bore 3-caliber projectile is unchanged; a light sabot round can lose 30–40% (a 25 mm, 3.5-caliber DU rod in a 105 mm gun with a 600 mm case keeps about 0.68 of the game's velocity).
 - Every muzzle velocity is softly capped at **Max muzzle velocity** (default 2200 m/s): `v / (1 + (v/max)⁸)^⅛`. Rounds under about three quarters of it lose well under 1%; none pass it.
-- In flight the penetrator drags at its own diameter and hits with its own diameter and mass. Penetration is the game's de Marre formula, so length and density help through mass only (as √mass), except for long rods (below).
+- In flight the penetrator drags at its own diameter and hits with its own diameter and mass. Penetration blends the game's de Marre formula into the Lanz-Odermatt long-rod equation by length (below).
 
 The armour view's penetration simulator also gets a **Penetrator** section with **Penetrator length** and **Material**. Set **Calibre** to the penetrator's diameter and **Penetration** as usual; These make very small changes to the penetration characteristics.
 
@@ -87,18 +102,19 @@ The game's own designer readouts and the gunner's sight range marks still use th
 
 ### Long rods
 
-A penetrator 4 calibers or longer is a long rod: it penetrates by the Lanz-Odermatt perforation equation instead of de Marre, so length, material and target hardness count, not only mass.
+A subcaliber penetrator's penetration is a straight blend of the game's de Marre and the Lanz-Odermatt perforation equation by length: all de Marre at 0 calibers, half each at 4, all Lanz-Odermatt at 8 calibers or longer. De Marre gives small fast penetrators far too much (about 1.5x real APDS, 2–3x real APFSDS) and Lanz-Odermatt gives stubby ones too little (about 0.75x real APDS), so APDS-length rounds land between them (the L7's L52 APDS comes out about 360 mm against a real 300 or so); `tools/penetration.py` plots all three against real rounds. With Lanz-Odermatt, length, material and target hardness count, not only mass. A penetrator 8 calibers or longer is a long rod and spalls more.
 
-- On impact, the game's penetrator constant is swapped for the one that makes its de Marre give Lanz-Odermatt's penetration at the impact speed. Obliquity, multiple plates, spall and damage are still the game's; through stacked plates, penetration falls off with speed as de Marre does.
-- Below the equation's minimum speed for the material, the game's penetration applies.
-- The cannon panel's **Sabot penetration** readout shows the long-rod value.
-- **Spall multiplier** (0–3, default 1.25) scales each spall burst a long rod makes. The game's burst is a fixed number of fragments; the whole part of the multiplier repeats it (2 is two bursts), and the rest adds one burst of that fraction of the mass (1.25 is a normal burst plus a quarter-mass one). 0 is no spall. The armour view's simulator uses it too when its **Penetrator length** is 4 calibers or more.
+- On impact, the game's penetrator constant is swapped for the one that makes its de Marre give the blended penetration at the impact speed. Obliquity, multiple plates, spall and damage are still the game's; through stacked plates, penetration falls off with speed as de Marre does.
+- Below Lanz-Odermatt's minimum speed for the material, the game's penetration applies.
+- The cannon panel's **Sabot penetration** readout shows the blended value.
+- At a fixed speed the blend dips slightly from about 4 to 8 calibers, where de Marre's share falls faster than Lanz-Odermatt rises: at 2000 m/s a 25 mm DU rod loses up to about 60 mm there. Shorter rods also leave faster, which offsets some of it.
+- **Spall multiplier** (0–3, default 1.25) scales each spall burst a long rod makes. The game's burst is a fixed number of fragments; the whole part of the multiplier repeats it (2 is two bursts), and the rest adds one burst of that fraction of the mass (1.25 is a normal burst plus a quarter-mass one). 0 is no spall. The armour view's simulator uses it too when its **Penetrator length** is 8 calibers or more.
 - **Target hardness** is the Brinell hardness long rods are rated against (default 260, rolled armour).
 - Coefficients per material are in `BepInEx/config/madi.subcaliber.longrod.json`, keyed by material name: `A`, `C0`, `C1` (tungsten and DU form) or `A`, `C0`, `K`, `N`, `Hardness` (steel form, used when `K` isn't 0). Materials missing from it use tungsten's.
 
 The armour view's simulator fires at whatever **Penetration** you enter, so enter the long-rod value from the cannon panel (with **Calibre**, **Penetrator length** and **Material** matching the rod) and it behaves as combat does.
 
-**Max muzzle velocity**, **Target hardness** and **Spall multiplier** are on the MadiLib tab, and in `BepInEx/config/madi.subcaliber.cfg` under `[Muzzle velocity]` and `[Long rod]`.
+**Max muzzle velocity**, **Propellant density**, **Target hardness** and **Spall multiplier** are on the MadiLib tab, and in `BepInEx/config/madi.subcaliber.cfg` under `[Muzzle velocity]` and `[Long rod]`.
 
 With Dynamic Gun Sight (`SprocketDynamicSight.dll`) installed, its range marks use the penetrator: the muzzle velocity it predicts before a shot is the sabot round's, and its drag uses the penetrator's diameter and mass. It caches rounds until the scene changes, so after changing a shell's penetrator settings, change scene before trusting the marks.
 
