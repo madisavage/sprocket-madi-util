@@ -1,25 +1,25 @@
 {
     "$schema": "../../schemas/sprocket-mod.schema.json",
     "schema_version": 3,
-    "id": "madisavage.subcaliber",
-    "name": "subcaliber",
+    "id": "madisavage.armour-material",
+    "name": "armourMaterial",
     "authors": [
         "madisavage"
     ],
     "repository": "madisavage/sprocket-madi-util",
     "license": "GPL-3.0-only",
     "display_name": {
-        "en": "Subcaliber"
+        "en": "Armour Material"
     },
     "description": {
-        "en": "Discarding sabot rounds: set a projectile diameter below the gun's caliber. The full-bore charge pushes the lighter projectile faster, and it flies and penetrates at its own diameter."
+        "en": "Pick any armour material from the game's Technology folder for a plate structure in the vehicle designer, sorted by protection, hardness, spall, density, cost or date, with the selected material's numbers shown."
     },
     "release": {
         "include_prerelease": false,
         "version_pattern": "^v?([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$",
         "assets": {
             "include": [
-                "subcaliber.dll"
+                "armourMaterial.dll"
             ],
             "exclude": []
         }
@@ -30,7 +30,9 @@
             "version": "*"
         }
     ],
-    "recommendations": [],
+    "recommendations": [
+        "hans21223.sprocket-quality-of-life"
+    ],
     "featured": false,
     "install": {
         "files": [
@@ -42,10 +44,9 @@
         "scan_dlls": false,
         "exclude": []
     },
-    "category": "gameplay",
+    "category": "utility",
     "tags": [
-        "ammunition",
-        "ballistics",
-        "cannons"
+        "armour",
+        "vehicle-designer"
     ]
 }
