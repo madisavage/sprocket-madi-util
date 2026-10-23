@@ -51,12 +51,16 @@ namespace Stabilizer
         internal static BepInEx.Logging.ManualLogSource Logger = null!;
         internal static ConfigEntry<bool> ShowIndicator = null!;
 
+        /// <summary>Whether the player's stabilizers are on; the keybind flips it. Other vehicles' always are.</summary>
+        internal static bool PlayerEnabled = true;
+
         public override void Load()
         {
             Logger = Log;
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show whether your vehicle's stabilizers are on.");
             SettingsTab.AddSection("Stabilizer", ShowIndicator);
             Hud.AddPanel(Indicator);
+            Keybinds.Register(this, "Toggle stabilizers", "Alt+S", () => PlayerEnabled = !PlayerEnabled);
             new Harmony("madi.stabilizer").PatchAll();
         }
 
@@ -73,8 +77,13 @@ namespace Stabilizer
             foreach (var (part, name, speed, limit, seen) in Drives.Status.Values)
                 if (now - seen < 1f && part != null && PlayerVehicle.Contains(part))
                     parts.Add(limit > 0f && speed > limit ? $"{name} off (over {limit:0} km/h)" : $"{name} on");
-            return parts.Count == 0 ? null : "Stabilizer: " + string.Join(", ", parts);
+            if (parts.Count == 0)
+                return null;
+            return PlayerEnabled ? "Stabilizer: " + string.Join(", ", parts) : "Stabilizer: off";
         }
+
+        /// <summary>Whether <paramref name="part"/>'s drive should stabilize: always, unless the player switched theirs off.</summary>
+        internal static bool Enabled(Transform part) => PlayerEnabled || !PlayerVehicle.Contains(part);
 
         /// <summary>
         /// The speed limit (km/h, 0 for none) in <paramref name="blueprint"/>'s
@@ -339,6 +348,11 @@ namespace Stabilizer
             if (turret?.parent == null || !Drives.Stabilized.TryGetValue(__instance.Pointer, out float limit))
                 return;
             Drives.Turrets[__instance.Pointer] = (__instance, Time.realtimeSinceStartup);
+            if (!Plugin.Enabled(turret))
+            {
+                Drives.Status[__instance.Pointer] = (turret, "traverse", 0f, limit, Time.realtimeSinceStartup);
+                return;
+            }
             float speed = Axes.Stabilize(__instance.physicsHandle, turret, turret.parent.TransformDirection(__instance.axis), limit, 1f);
             Drives.Status[__instance.Pointer] = (turret, "traverse", speed, limit, Time.realtimeSinceStartup);
             // The drive only applies its angle to the model while it's moving; keep model and angle together
@@ -358,11 +372,16 @@ namespace Stabilizer
             if (trunnions?.parent == null || !Drives.Stabilized.TryGetValue(__instance.Pointer, out float limit))
                 return;
             float speed = 0f;
+            string name = __instance.AzimuthLocked ? "elevation" : __instance.ElevationLocked ? "gun azimuth" : "gun";
+            if (!Plugin.Enabled(trunnions))
+            {
+                Drives.Status[__instance.Pointer] = (trunnions, name, speed, limit, Time.realtimeSinceStartup);
+                return;
+            }
             if (!__instance.ElevationLocked)
                 speed = Axes.Stabilize(__instance.elevationHandle, trunnions, trunnions.right, limit, -1f);
             if (!__instance.AzimuthLocked)
                 speed = Axes.Stabilize(__instance.azimuthHandle, trunnions, trunnions.parent.rotation * __instance.zeroLocalRot * Vector3.up, limit, 1f);
-            string name = __instance.AzimuthLocked ? "elevation" : __instance.ElevationLocked ? "gun azimuth" : "gun";
             Drives.Status[__instance.Pointer] = (trunnions, name, speed, limit, Time.realtimeSinceStartup);
             // The drive only applies its angles to the model while it's moving; keep model and angles together
             __instance.Apply();
