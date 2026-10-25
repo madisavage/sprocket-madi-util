@@ -229,6 +229,23 @@ namespace Subcaliber
     }
 
     /// <summary>
+    /// Gives the cannon the sabot round's muzzle velocity, which the gunner
+    /// AI leads and drops its shots by. The game caches the full-bore
+    /// shell's on the cannon when it is built.
+    /// </summary>
+    [HarmonyPatch(typeof(Cannon), nameof(Cannon.Build))]
+    internal static class CannonBuildPatch
+    {
+        private static void Postfix(Cannon __instance)
+        {
+            if (__instance.Blueprint is not { } gun || __instance.ShellBlueprint is not { } shell)
+                return;
+            Penetrator p = Plugin.Penetrator(CannonEditorOnGuiPatch.Guid(shell), gun.Caliber);
+            __instance.muzzleVelocity = gun.MuzzleVelocity * CannonEditorOnGuiPatch.VelocityRatio(gun, p.Launch);
+        }
+    }
+
+    /// <summary>
     /// Adds penetrator diameter, length and material, and the resulting round's
     /// performance, to the cannon editor panel.
     /// </summary>
@@ -357,14 +374,14 @@ namespace Subcaliber
             return (velocity, penetration, fullBore * p.Mass, fullBore * p.Sabot);
         }
 
-        private static string Guid(ShellSlotBlueprint shell) => shell.generatedProjectileBlueprint[0].ProjectileTypeGuid.ToString();
+        internal static string Guid(ShellSlotBlueprint shell) => shell.generatedProjectileBlueprint[0].ProjectileTypeGuid.ToString();
 
         /// <summary>
         /// Muzzle velocity of a projectile <paramref name="length"/> times the
         /// full-bore length over a full-bore projectile's, from the game's
         /// interior ballistics.
         /// </summary>
-        private static float VelocityRatio(CannonBlueprint gun, float length)
+        internal static float VelocityRatio(CannonBlueprint gun, float length)
         {
             float caliber = gun.Caliber;
             float Velocity(float l) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * l, gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
