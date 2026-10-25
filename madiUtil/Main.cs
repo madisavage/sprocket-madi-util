@@ -84,7 +84,7 @@ namespace MadiUtil
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
             if (blueprint == null || drawer == null)
                 return;
-            drawer.Float(properties.Get(blueprint, () => new FloatProperty(
+            FloatProperty efficiency = properties.Get(blueprint, () => new FloatProperty(
                 "Base efficiency",
                 (Func<float>)(() => blueprint.BaseEfficiency),
                 (Action<float>)(value => blueprint.BaseEfficiency = value),
@@ -93,7 +93,8 @@ namespace MadiUtil
                 Min = 0f,
                 Max = 100f,
                 Step = 0.25f
-            }));
+            });
+            drawer.Float(efficiency);
         }
     }
 
@@ -121,8 +122,10 @@ namespace MadiUtil
             if (slot == null || blueprint == null || drawer == null)
                 return;
 
-            drawer.Float(GetProperty(slot, blueprint.Elevation, "Elevation torque multiplier"));
-            drawer.Float(GetProperty(slot, blueprint.Azimuth, "Azimuth torque multiplier"));
+            FloatProperty elevation = GetProperty(slot, blueprint.Elevation, "Elevation torque multiplier");
+            FloatProperty azimuth = GetProperty(slot, blueprint.Azimuth, "Azimuth torque multiplier");
+            drawer.Float(elevation);
+            drawer.Float(azimuth);
         }
 
         /// <summary>

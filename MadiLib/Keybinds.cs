@@ -6,6 +6,8 @@ using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
 using Sprocket.UI;
+using TMPro;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using MonoBehaviour = UnityCoreModule::UnityEngine.MonoBehaviour;
 using UnityAction = UnityCoreModule::UnityEngine.Events.UnityAction;
@@ -42,15 +44,23 @@ namespace MadiLib
 
         /// <summary>
         /// Called every frame by <see cref="KeybindPoller"/>. Fires each bind
-        /// whose key was pressed this frame. Paused while a key is being rebound.
+        /// whose key was pressed this frame. Paused while a key is being rebound
+        /// or the player is typing in a text field.
         /// </summary>
         internal static void Poll()
         {
-            if (capturing != null || Keyboard.current is not { } keys)
+            if (capturing != null || Keyboard.current is not { } keys || Typing())
                 return;
             foreach (Bind bind in binds)
                 if (Pressed(keys, bind.Entry.Value))
                     bind.OnPressed();
+        }
+
+        /// <summary>Whether a text field has focus, as the game's UI text fields (TextMeshPro) do while typed in.</summary>
+        internal static bool Typing()
+        {
+            var selected = EventSystem.current?.currentSelectedGameObject;
+            return selected != null && selected.GetComponent<TMP_InputField>() is { } field && field.isFocused;
         }
 
         /// <summary>

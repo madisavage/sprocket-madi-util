@@ -139,7 +139,8 @@ Naive gun stabilization. Tick **Stabilizer** in a traverse motor's or laying dri
 - A traverse motor stabilizes its turret's traverse; a laying drive stabilizes its elevation and azimuth.
 - Once ticked, **Stabilizer speed limit** (0–100 km/h) switches it off while the vehicle is faster than that; 0 keeps it on at any speed.
 - Both are saved in the drive's name, as **[stab]** or **[stab 30]** for 30 km/h. The game saves drive names in the vehicle file but doesn't show them, so the setting travels with shared vehicles.
-- A box in the bottom-left corner shows your vehicle's stabilized drives and whether each is on, or off for being over its speed limit, such as `Stabilizer: traverse on, elevation off (over 40 km/h)`. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.
+- **Toggle stabilizers** (default Alt+S) switches your vehicle's stabilizers off and back on; other vehicles' stay on. Rebind it on the MadiLib tab.
+- A box in the bottom-left corner shows your vehicle's stabilized drives and whether each is on, or off for being over its speed limit, such as `Stabilizer: traverse on, elevation off (over 40 km/h)`, or `Stabilizer: off` when toggled off. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.
 
 ## armourMaterial
 
