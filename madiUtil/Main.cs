@@ -91,7 +91,10 @@ namespace MadiUtil
                 "Crew member base efficiency multiplier.")
             {
                 Min = 0f,
-                Max = 100f,
+                Max = 1000f,
+                SoftMin = 0f,
+                SoftMax = 100f,
+                UseSoftLimits = true,
                 Step = 0.25f
             });
             drawer.Float(efficiency);
@@ -148,7 +151,10 @@ namespace MadiUtil
                 "Laying drive axis torque multiplier.")
             {
                 Min = 0f,
-                Max = 100f,
+                Max = 1000f,
+                SoftMin = 0f,
+                SoftMax = 100f,
+                UseSoftLimits = true,
                 Step = 0.25f
             });
     }

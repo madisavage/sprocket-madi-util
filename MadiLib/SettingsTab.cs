@@ -37,8 +37,9 @@ namespace MadiLib
         /// Adds a section with <paramref name="header"/> and one control per
         /// entry, labelled with its config key and described by its config
         /// description. A float entry gets a slider, limited by an
-        /// <see cref="AcceptableValueRange{T}"/> and stepped by a <see cref="Step"/>
-        /// tag when its description has them; a bool entry gets a toggle.
+        /// <see cref="AcceptableValueRange{T}"/>, ended early by a <see cref="SoftMax"/>
+        /// tag and stepped by a <see cref="Step"/> tag when its description has
+        /// them; a bool entry gets a toggle.
         /// </summary>
         public static void AddSection(string header, params ConfigEntryBase[] entries) => AddSection(ui =>
         {
@@ -66,6 +67,12 @@ namespace MadiLib
             {
                 property.Min = range.MinValue;
                 property.Max = range.MaxValue;
+            }
+            if (entry.Description.Tags?.OfType<SoftMax>().FirstOrDefault() is { } softMax)
+            {
+                property.SoftMin = property.Min;
+                property.SoftMax = softMax.Value;
+                property.UseSoftLimits = true;
             }
             if (entry.Description.Tags?.OfType<Step>().FirstOrDefault() is { } step)
                 property.Step = step.Value;
@@ -122,6 +129,13 @@ namespace MadiLib
     /// Pass it in the <see cref="ConfigDescription"/> tags.
     /// </summary>
     public sealed record Step(float Value);
+
+    /// <summary>
+    /// Slider end for a float setting drawn by <see cref="SettingsTab.AddSection(string, ConfigEntryBase[])"/>,
+    /// like the game's own sliders: typed values may go past it, up to the
+    /// <see cref="AcceptableValueRange{T}"/> maximum. Pass it in the <see cref="ConfigDescription"/> tags.
+    /// </summary>
+    public sealed record SoftMax(float Value);
 
     /// <summary>
     /// The "MadiLib" tab in the game's Settings screen. Registered with the

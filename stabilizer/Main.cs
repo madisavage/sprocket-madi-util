@@ -139,7 +139,10 @@ namespace Stabilizer
                 "Above this speed (km/h) the stabilizer switches off; 0 keeps it on at any speed.")
             {
                 Min = 0f,
-                Max = 100f,
+                Max = 1000f,
+                SoftMin = 0f,
+                SoftMax = 100f,
+                UseSoftLimits = true,
                 Step = 1f
             }));
         }

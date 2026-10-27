@@ -68,7 +68,7 @@ namespace Subcaliber
                 new AcceptableValueRange<float>(150f, 500f), new Step(10f)));
             SpallMultiplier = config.Bind("Long rod", "Spall multiplier", 1.25f, new ConfigDescription(
                 "Scales each spall burst a long rod makes: 2 is two of the game's bursts, 1.25 is one and a quarter-mass one. 1 is the game's, 0 none.",
-                new AcceptableValueRange<float>(0f, 3f), new Step(0.05f)));
+                new AcceptableValueRange<float>(0f, 30f), new SoftMax(3f), new Step(0.05f)));
             SpallMultiplier.SettingChanged += (_, _) => ArmourSimulationPatch.Resimulate();
 
             string path = Path.Combine(Paths.ConfigPath, "madi.subcaliber.longrod.json");

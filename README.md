@@ -20,7 +20,7 @@ Download the DLLs from the latest release and put them in `BepInEx/plugins`. Alw
 
 Adds a **MadiLib** tab to the game's Settings screen, shown once any plugin uses it. Changes there save at once.
 
-**Scroll speed** (1–30, default 7) sets how far a mouse wheel step scrolls an open dropdown list, for every dropdown in the game. 7 matches the edit panel; the game's dropdowns use 0.05, a fraction of a pixel per step. It's on the MadiLib tab, and in `BepInEx/config/madi.madilib.cfg` under `[Dropdowns]`.
+**Scroll speed** (slider 1–30, type up to 300; default 7) sets how far a mouse wheel step scrolls an open dropdown list, for every dropdown in the game. 7 matches the edit panel; the game's dropdowns use 0.05, a fraction of a pixel per step. It's on the MadiLib tab, and in `BepInEx/config/madi.madilib.cfg` under `[Dropdowns]`.
 
 For plugin authors: `MadiLib.dll` has keybinds, Settings tab sections, HUD panels, the player's vehicle, editor panel controls (collapsible sections, dropdowns, live readouts), a per-object cache and per-key config. See the [API reference](docs/MadiLib.md); the same docs ship as `MadiLib.xml` for your editor.
 
@@ -29,10 +29,10 @@ For plugin authors: `MadiLib.dll` has keybinds, Settings tab sections, HUD panel
 Utilities because file editing tanks on Linux is really annoying, you will not catch me navigating to `/home/madi/.steam/steam/steamapps/compatdata/1674170/pfx/drive_c/users/steamuser/Documents/My Games/Sprocket/Factions/Default/Blueprints/Vehicles`.
 
 ### Efficiency
-Selecting a crew seat in the vehicle designer shows a **Base efficiency** slider (0–100, step 0.25) in the edit pane. The slider reads and writes `CrewSeatBlueprint.BaseEfficiency`.
+Selecting a crew seat in the vehicle designer shows a **Base efficiency** slider (0–100, type up to 1000; step 0.25) in the edit pane. The slider reads and writes `CrewSeatBlueprint.BaseEfficiency`.
 
 ### Laying drive torque
-Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth torque multiplier** sliders (0–100, step 0.25). They read and write `LayingDriveBlueprint.Elevation.TorqueMultiplier` and `LayingDriveBlueprint.Azimuth.TorqueMultiplier`.
+Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth torque multiplier** sliders (0–100, type up to 1000; step 0.25). They read and write `LayingDriveBlueprint.Elevation.TorqueMultiplier` and `LayingDriveBlueprint.Azimuth.TorqueMultiplier`.
 
 ### Save keybind
 **Save vehicle** (default Ctrl+S) saves the vehicle open in the designer, the same as its save button. Rebind it on the MadiLib tab.
@@ -61,6 +61,8 @@ Staged ammunition. The loader only takes shells from **ready racks**, racks clos
 - A rack is a ready rack for a gun when the loader path from breech to rack is at most **Ready rack distance** (default 1.5 m).
 - The loader ignores stowage racks. Once ready racks run dry, the gun waits for restock.
 - While the gun has a living loader who isn't loading it, they re-rack: one shell at a time into the closest ready rack with room, taken from the next matching rack farther out (ready or stowage). Ammo moves inward rack by rack. Each carry takes as long as the game's loader rules give for that shell: pick up, walk the crew path between the two racks, put down; divided by the loader's crew efficiency and scaled by **Re-rack time multiplier** (default 1). Loading pauses re-racking; it resumes where it left off.
+- **Toggle re-racking** (default Alt+R) stops your vehicle's loaders re-racking and starts them again, for when they have another role to perform; other vehicles' keep re-racking. Rebind it on the MadiLib tab.
+- Each gun only counts and re-racks shells of its own caliber.
 - A box in the bottom-left corner shows, per gun on your vehicle, ready and stowed shells and re-rack progress. Toggle with **Show indicator**.
 
 ### Autoloaders
@@ -69,7 +71,7 @@ Tick **Autoloader** in an ammo rack's edit panel to make it an autoloader rack. 
 
 - A gun with any autoloader racks loads itself from those, with or without a loader. They are its ready racks; all its other racks are stowage, however close.
 - The loader doesn't load an autoloaded gun. They only re-rack, from stowage into the autoloader racks, and don't pause for loading.
-- **Reload speed** (0.1–10, shown once **Autoloader** is ticked) sets that rack's speed: 1 is a loader at 100% efficiency. It's saved in the name as `[auto x2]` for 2. **Speed multiplier** (default 1) scales every autoloader on top.
+- **Reload speed** (slider 0.1–10, type up to 100; shown once **Autoloader** is ticked) sets that rack's speed: 1 is a loader at 100% efficiency. It's saved in the name as `[auto x2]` for 2. **Speed multiplier** (default 1) scales every autoloader on top.
 - The indicator marks autoloaded guns with **(autoloader)**.
 
 Settings are on the MadiLib tab, and in `BepInEx/config/madi.stagedammo.cfg` under `[Staging]`, `[Autoloader]` and `[Display]`.
@@ -108,7 +110,7 @@ A subcaliber penetrator's penetration is a straight blend of the game's de Marre
 - Below Lanz-Odermatt's minimum speed for the material, the game's penetration applies.
 - The cannon panel's **Sabot penetration** readout shows the blended value.
 - At a fixed speed the blend dips slightly from about 4 to 8 calibers, where de Marre's share falls faster than Lanz-Odermatt rises: at 2000 m/s a 25 mm DU rod loses up to about 60 mm there. Shorter rods also leave faster, which offsets some of it.
-- **Spall multiplier** (0–3, default 1.25) scales each spall burst a long rod makes. The game's burst is a fixed number of fragments; the whole part of the multiplier repeats it (2 is two bursts), and the rest adds one burst of that fraction of the mass (1.25 is a normal burst plus a quarter-mass one). 0 is no spall. The armour view's simulator uses it too when its **Penetrator length** is 8 calibers or more.
+- **Spall multiplier** (slider 0–3, type up to 30; default 1.25) scales each spall burst a long rod makes. The game's burst is a fixed number of fragments; the whole part of the multiplier repeats it (2 is two bursts), and the rest adds one burst of that fraction of the mass (1.25 is a normal burst plus a quarter-mass one). 0 is no spall. The armour view's simulator uses it too when its **Penetrator length** is 8 calibers or more.
 - **Target hardness** is the Brinell hardness long rods are rated against (default 260, rolled armour).
 - Coefficients per material are in `BepInEx/config/madi.subcaliber.longrod.json`, keyed by material name: `A`, `C0`, `C1` (tungsten and DU form) or `A`, `C0`, `K`, `N`, `Hardness` (steel form, used when `K` isn't 0). Materials missing from it use tungsten's.
 
@@ -137,7 +139,7 @@ Copies of adjacent faces share corners, so a selected surface stacks as connecte
 Naive gun stabilization. Tick **Stabilizer** in a traverse motor's or laying drive's edit panel. Each step, a stabilized drive turns back by however far the hull turned around its axes, so the gun holds its direction in the world; the drive then aims as usual, at its normal speed and torque. Elevation stays within the drive's limits.
 
 - A traverse motor stabilizes its turret's traverse; a laying drive stabilizes its elevation and azimuth.
-- Once ticked, **Stabilizer speed limit** (0–100 km/h) switches it off while the vehicle is faster than that; 0 keeps it on at any speed.
+- Once ticked, **Stabilizer speed limit** (slider 0–100 km/h, type up to 1000) switches it off while the vehicle is faster than that; 0 keeps it on at any speed.
 - Both are saved in the drive's name, as **[stab]** or **[stab 30]** for 30 km/h. The game saves drive names in the vehicle file but doesn't show them, so the setting travels with shared vehicles.
 - **Toggle stabilizers** (default Alt+S) switches your vehicle's stabilizers off and back on; other vehicles' stay on. Rebind it on the MadiLib tab.
 - A box in the bottom-left corner shows your vehicle's stabilized drives and whether each is on, or off for being over its speed limit, such as `Stabilizer: traverse on, elevation off (over 40 km/h)`, or `Stabilizer: off` when toggled off. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.

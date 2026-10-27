@@ -64,10 +64,10 @@ namespace Subcaliber
         {
             MaxVelocity = Config.Bind("Muzzle velocity", "Max muzzle velocity", 2200f, new ConfigDescription(
                 "Muzzle velocity in m/s that rounds approach but never pass, as powder gas can only push so fast. Rounds well below it are barely changed.",
-                new AcceptableValueRange<float>(1000f, 4000f), new Step(50f)));
+                new AcceptableValueRange<float>(1000f, 40000f), new SoftMax(4000f), new Step(50f)));
             PropellantDensity = Config.Bind("Muzzle velocity", "Propellant density", 800f, new ConfigDescription(
                 "Charge mass per volume of case, in kg/m³. Pushing its own gas slows light projectiles: full-bore rounds are unchanged, a light sabot round loses a lot. 0 is the game's, no charge mass.",
-                new AcceptableValueRange<float>(0f, 2000f), new Step(50f)));
+                new AcceptableValueRange<float>(0f, 20000f), new SoftMax(2000f), new Step(50f)));
             LongRod.Load(Config, Log);
             SettingsTab.AddSection("Subcaliber", MaxVelocity, PropellantDensity, LongRod.TargetHardness, LongRod.SpallMultiplier);
 
@@ -297,7 +297,10 @@ namespace Subcaliber
                         "Penetrator length in calibers of its own diameter. The game's shells are 3.")
                     {
                         Min = 1f,
-                        Max = 30f,
+                        Max = 300f,
+                        SoftMin = 1f,
+                        SoftMax = 30f,
+                        UseSoftLimits = true,
                         Step = 0.5f
                     },
                     new FloatProperty(
@@ -317,7 +320,10 @@ namespace Subcaliber
                         "Sabot density relative to steel (aluminium is about 0.35). The sabot is discarded at the muzzle.")
                     {
                         Min = 0f,
-                        Max = 1f,
+                        Max = 10f,
+                        SoftMin = 0f,
+                        SoftMax = 1f,
+                        UseSoftLimits = true,
                         Step = 0.05f
                     },
                     readouts);
@@ -435,7 +441,10 @@ namespace Subcaliber
                 "Simulated penetrator length in calibers. The game's shells are 3.")
             {
                 Min = 1f,
-                Max = 30f,
+                Max = 300f,
+                SoftMin = 1f,
+                SoftMax = 30f,
+                UseSoftLimits = true,
                 Step = 0.5f
             };
             drawer.Float(length);

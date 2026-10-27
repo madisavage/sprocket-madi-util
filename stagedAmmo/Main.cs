@@ -46,6 +46,9 @@ namespace StagedAmmo
         internal static ConfigEntry<bool> ShowIndicator = null!;
         internal static ManualLogSource Logger = null!;
 
+        /// <summary>Whether the player's loaders re-rack; the keybind flips it. Other vehicles' always do.</summary>
+        internal static bool PlayerReRack = true;
+
         private static readonly Regex tag = new(@"\[auto(?:\s*x\s*([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
 
         public override void Load()
@@ -53,14 +56,15 @@ namespace StagedAmmo
             Logger = Log;
             ReadyDistance = Config.Bind("Staging", "Ready rack distance", 1.5f, new ConfigDescription(
                 "Racks this many metres or closer (loader path) to the breech are ready racks.",
-                new AcceptableValueRange<float>(0f, 10f), new Step(0.1f)));
+                new AcceptableValueRange<float>(0f, 100f), new SoftMax(10f), new Step(0.1f)));
             ReRackTimeMultiplier = Config.Bind("Staging", "Re-rack time multiplier", 1f, new ConfigDescription(
                 "Scales the time to carry a shell between racks (pick up, walk, put down; from the game's loader rules).",
-                new AcceptableValueRange<float>(0.1f, 5f), new Step(0.05f)));
+                new AcceptableValueRange<float>(0.1f, 100f), new SoftMax(5f), new Step(0.05f)));
             AutoloaderSpeed = Config.Bind("Autoloader", "Speed multiplier", 1f, new ConfigDescription(
                 "Scales every autoloader's speed, on top of each rack's own; 1 is a loader at 100% efficiency.",
-                new AcceptableValueRange<float>(0.1f, 10f), new Step(0.05f)));
+                new AcceptableValueRange<float>(0.1f, 100f), new SoftMax(10f), new Step(0.05f)));
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show ready/stowed counts and re-rack progress for your vehicle's guns.");
+            Keybinds.Register(this, "Toggle re-racking", "Alt+R", () => PlayerReRack = !PlayerReRack);
             new Harmony("madi.stagedammo").PatchAll();
             Hud.AddPanel(Indicator.Text);
             SettingsTab.AddSection("Staged ammo", ReadyDistance, ReRackTimeMultiplier, AutoloaderSpeed, ShowIndicator);
@@ -101,6 +105,7 @@ namespace StagedAmmo
         public bool[] Ready = Array.Empty<bool>();
         public bool Auto;
         public IntPtr Shown;
+        public ProjectileSizeID Size;
         public float NextFilter;
         public float LastSeen;
         public bool IsPlayer;
@@ -196,9 +201,21 @@ namespace StagedAmmo
             staging.LastSeen = now;
             staging.LoaderEfficiency = LoaderEfficiency(contributors);
             staging.LoaderBusy = !staging.Auto && loadTask.State == LoadState.Loading;
+            staging.Size = loadTask.Request.SizeID;
+            // The game keeps loading from the rack it last picked, which may be a stowage rack picked before the finder was filtered
+            if (loadTask.State != LoadState.Loading && loadTask.rack != null && !IsReady(loadTask.rack, staging))
+                loadTask.rack = null;
             Restock(staging, elapsed);
             if (staging.Auto)
                 LoadTaskUpdatePatch.Autoload(loadTask, elapsed);
+        }
+
+        private static bool IsReady(IAmmoSource rack, Staging staging)
+        {
+            for (int i = 0; i < staging.Ready.Length; i++)
+                if (staging.Ready[i] && staging.Sources[i]?.AmmoSource?.Pointer == rack.Pointer)
+                    return true;
+            return false;
         }
 
         /// <summary>The GameObject of the gun <paramref name="loadTask"/> loads, which outlives a rebuild of its load task.</summary>
@@ -262,6 +279,7 @@ namespace StagedAmmo
         /// <summary>
         /// Picks the closest ready rack with room that has a matching shell
         /// (same size and type) in a stowage rack or a ready rack farther out.
+        /// Racks for another caliber are ignored once the gun has asked for a shell.
         /// While a living loader isn't loading the gun, builds up progress; at
         /// <see cref="ReRackTime"/> moves one shell in from the closest such
         /// rack, so ammo moves inward rack by rack. Also counts shells for the
@@ -277,6 +295,9 @@ namespace StagedAmmo
             for (int i = 0; i < count; i++)
             {
                 racks[i] = sources[i]?.AmmoSource?.TryCast<AmmoRackBehaviour>();
+                // Size 0 until the gun's first request
+                if (staging.Size.Value != 0 && racks[i]?.ShellSizeID.Equals(staging.Size) == false)
+                    racks[i] = null;
                 if (racks[i] == null)
                     continue;
                 if (staging.Ready[i])
@@ -308,7 +329,7 @@ namespace StagedAmmo
                 staging.Progress = 0f;
                 return;
             }
-            if (staging.LoaderEfficiency <= 0f || staging.LoaderBusy)
+            if (staging.IsPlayer && !Plugin.PlayerReRack || staging.LoaderEfficiency <= 0f || staging.LoaderBusy)
                 return;
 
             staging.Required = ReRackTime(sources[from]!.Component, sources[target]!.Component) * Plugin.ReRackTimeMultiplier.Value / staging.LoaderEfficiency;
@@ -496,7 +517,10 @@ namespace StagedAmmo
                 "Autoloader speed when loading from this rack; 1 is a loader at 100% efficiency. Saved in the rack's name, as [auto x2] for 2.")
             {
                 Min = 0.1f,
-                Max = 10f,
+                Max = 100f,
+                SoftMin = 0.1f,
+                SoftMax = 10f,
+                UseSoftLimits = true,
                 Step = 0.05f
             });
         }
@@ -522,6 +546,7 @@ namespace StagedAmmo
                 if (!staging.IsPlayer || now - staging.LastSeen > 1f)
                     continue;
                 string status = !staging.HasTarget ? (staging.StowedShells == 0 ? "stowage empty" : "racks full")
+                    : !Plugin.PlayerReRack ? "re-rack off"
                     : staging.LoaderEfficiency <= 0f ? "no loader"
                     : staging.LoaderBusy ? "re-rack paused, loading"
                     : $"re-racking {staging.Progress:0.0}/{staging.Required:0.0}s";

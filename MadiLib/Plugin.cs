@@ -25,7 +25,7 @@ namespace MadiLib
             Logger = Log;
             ScrollSensitivity = Config.Bind("Dropdowns", "Scroll speed", 7f, new ConfigDescription(
                 "How far one mouse wheel step scrolls an open dropdown list, for every dropdown in the game. 7 matches the edit panel; the game's dropdowns use 0.05.",
-                new AcceptableValueRange<float>(1f, 30f), new Step(0.5f)));
+                new AcceptableValueRange<float>(1f, 300f), new SoftMax(30f), new Step(0.5f)));
             SettingsTab.AddSection("MadiLib", ScrollSensitivity);
             ClassInjector.RegisterTypeInIl2Cpp<MadiLibMenu>();
             AddComponent<KeybindPoller>();

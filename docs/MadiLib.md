@@ -36,12 +36,12 @@ Sections on the **MadiLib** Settings tab. The tab only appears once something us
 ```csharp
 var distance = Config.Bind("Staging", "Ready rack distance", 1.5f, new ConfigDescription(
     "Racks this many metres or closer to the breech are ready racks.",
-    new AcceptableValueRange<float>(0f, 10f), new Step(0.1f)));
+    new AcceptableValueRange<float>(0f, 100f), new SoftMax(10f), new Step(0.1f)));
 var indicator = Config.Bind("Display", "Show indicator", true, "Show ready/stowed counts.");
 SettingsTab.AddSection("Staged ammo", distance, indicator);
 ```
 
-- `AddSection(header, entries...)` draws a header, then a slider per `float` entry and a toggle per `bool` entry, labelled with the config key and described by the config description. An `AcceptableValueRange<float>` sets the slider's range and a `Step` tag sets its step. Other entry types are skipped.
+- `AddSection(header, entries...)` draws a header, then a slider per `float` entry and a toggle per `bool` entry, labelled with the config key and described by the config description. An `AcceptableValueRange<float>` sets the hard range, a `SoftMax` tag ends the slider early (typed values may still go up to the hard max, like the game's sliders) and a `Step` tag sets its step. Other entry types are skipped.
 - `AddSection(ui => ...)` draws anything else with the game's `IGUIElementDrawer`. It's called every time the tab is drawn, so cache any properties you draw (see `ObjectCache`), or their callbacks get collected.
 
 ## Hud

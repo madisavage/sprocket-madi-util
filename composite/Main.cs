@@ -84,7 +84,7 @@ namespace Composite
                 (Func<float>)(() => layers),
                 (Action<float>)(value => layers = value),
                 "Plates added behind the selected faces.")
-            { Min = 1f, Max = 50f, Step = 1f };
+            { Min = 1f, Max = 500f, SoftMin = 1f, SoftMax = 50f, UseSoftLimits = true, Step = 1f };
             thicknessProperty ??= new FloatProperty(
                 "Layer thickness",
                 (Func<float>)(() => thickness),
@@ -96,13 +96,13 @@ namespace Composite
                 (Func<float>)(() => gap),
                 (Action<float>)(value => gap = value),
                 "Air gap between plates, in mm.")
-            { Min = 0f, Max = 500f, Step = 1f };
+            { Min = 0f, Max = 5000f, SoftMin = 0f, SoftMax = 500f, UseSoftLimits = true, Step = 1f };
             addonsProperty ??= new FloatProperty(
                 "Add-ons",
                 (Func<float>)(() => addons),
                 (Action<float>)(value => addons = value),
                 "Add-ons the plates alternate between, nearest first: with 3, plates 1 and 4 go in the first, 2 and 5 in the second, 3 and 6 in the third, so each can have its own material.")
-            { Min = 1f, Max = 10f, Step = 1f };
+            { Min = 1f, Max = 100f, SoftMin = 1f, SoftMax = 10f, UseSoftLimits = true, Step = 1f };
             onStack ??= DelegateSupport.ConvertDelegate<UnityAction>(new Action(() => { if (editor != null) Stack(editor); }))!;
 
             drawer.Float(layersProperty);
