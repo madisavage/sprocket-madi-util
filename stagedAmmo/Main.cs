@@ -29,9 +29,10 @@ namespace StagedAmmo
     /// <summary>
     /// BepInEx entry point. Each gun has ready racks, the only ones it loads
     /// from, and stowage. Ready racks are its autoloader racks (name tagged
-    /// <c>[auto]</c>) if it has any, else racks within <see cref="ReadyDistance"/>
-    /// of the breech. While the gun has a living loader who isn't loading it,
-    /// they move shells inward into the closest ready rack with room, taking
+    /// <c>[auto]</c>) if it has any, else racks tagged <c>[ready]</c> if it has
+    /// any, else racks within <see cref="ReadyDistance"/> of the breech. While
+    /// the gun has a living loader who isn't loading it, they move shells
+    /// inward into the closest ready rack with room (<c>[clip N]</c> at a time), taking
     /// as long as the game's loader rules say that carry takes, times
     /// <see cref="ReRackTimeMultiplier"/>. Autoloaded guns load themselves, at
     /// each rack's tagged speed times <see cref="AutoloaderSpeed"/>; their
@@ -53,6 +54,8 @@ namespace StagedAmmo
         internal static bool PlayerReRack = true;
 
         private static readonly Regex tag = new(@"\[auto(?:\s*x\s*([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
+        internal static readonly Regex ReadyTag = new(@"\[ready\]", RegexOptions.IgnoreCase);
+        internal static readonly Regex ClipTag = new(@"\[clip\s*([0-9]+)\]", RegexOptions.IgnoreCase);
 
         public override void Load()
         {
@@ -94,14 +97,26 @@ namespace StagedAmmo
 
         internal static bool IsAuto(IAmmoSourceComponent? source) => RackSpeed(source?.AmmoSource?.RackIdentifier) != null;
 
-        /// <summary><paramref name="rackName"/> with its tag replaced by one for <paramref name="speed"/>, or removed for null.</summary>
-        internal static string WithTag(string rackName, float? speed)
+        /// <summary>Whether <paramref name="rackName"/> is tagged <c>[ready]</c>, flagging it a ready rack by hand.</summary>
+        internal static bool IsFlagged(string? rackName) => rackName != null && ReadyTag.IsMatch(rackName);
+
+        /// <summary>Shells the loader re-racks into <paramref name="rackName"/> per carry: its <c>[clip N]</c> tag, else 1.</summary>
+        internal static int ClipSize(string? rackName)
         {
-            string untagged = tag.Replace(rackName, "").Trim();
-            if (speed == null)
-                return untagged;
-            string newTag = Math.Abs(speed.Value - 1f) < 0.001f ? "[auto]" : $"[auto x{speed.Value.ToString("0.##", CultureInfo.InvariantCulture)}]";
-            return $"{untagged} {newTag}".Trim();
+            Match match = rackName == null ? Match.Empty : ClipTag.Match(rackName);
+            return match.Success && int.TryParse(match.Groups[1].Value, out int clip) && clip > 0 ? clip : 1;
+        }
+
+        /// <summary><paramref name="rackName"/> with its tag replaced by one for <paramref name="speed"/>, or removed for null.</summary>
+        internal static string WithTag(string rackName, float? speed) =>
+            WithTag(rackName, tag, speed == null ? null
+                : Math.Abs(speed.Value - 1f) < 0.001f ? "[auto]" : $"[auto x{speed.Value.ToString("0.##", CultureInfo.InvariantCulture)}]");
+
+        /// <summary><paramref name="rackName"/> with any match of <paramref name="pattern"/> replaced by <paramref name="newTag"/>, or removed for null.</summary>
+        internal static string WithTag(string rackName, Regex pattern, string? newTag)
+        {
+            string untagged = pattern.Replace(rackName, "").Trim();
+            return newTag == null ? untagged : $"{untagged} {newTag}".Trim();
         }
     }
 
@@ -306,6 +321,8 @@ namespace StagedAmmo
         {
             int count = Math.Min(staging.Sources.Length, staging.Paths.Length);
             var auto = new bool[count];
+            var flagged = new bool[count];
+            bool anyFlagged = false;
             staging.Auto = false;
             for (int i = 0; i < count; i++)
             {
@@ -314,6 +331,8 @@ namespace StagedAmmo
                     staging.Paths[i].Update();
                 auto[i] = Plugin.IsAuto(staging.Sources[i]);
                 staging.Auto |= auto[i];
+                flagged[i] = Plugin.IsFlagged(staging.Sources[i]?.AmmoSource?.RackIdentifier);
+                anyFlagged |= flagged[i];
             }
 
             var readySources = new List<IAmmoSourceComponent>();
@@ -321,7 +340,8 @@ namespace StagedAmmo
             staging.Ready = new bool[count];
             for (int i = 0; i < count; i++)
             {
-                staging.Ready[i] = staging.Auto ? auto[i] : Plugin.IsNear(staging.Paths[i]);
+                // Autoloader racks, else racks flagged [ready], else by distance
+                staging.Ready[i] = staging.Auto ? auto[i] : anyFlagged ? flagged[i] : Plugin.IsNear(staging.Paths[i]);
                 if (Rack(staging.Sources[i]) is { } rack)
                 {
                     if (staging.Ready[i])
@@ -417,10 +437,17 @@ namespace StagedAmmo
             if (staging.Progress < staging.Required)
                 return;
             staging.Progress = 0f;
+            int clip = Plugin.ClipSize(sources[target]!.AmmoSource?.RackIdentifier);
             RoundsLink.Rerack(() =>
             {
-                if (racks[from]!.TakeShell())
-                    racks[target]!.LoadAmmo(1);
+                AmmoRackBehaviour ready = racks[target]!;
+                for (int n = 0; n < clip && ready.AmountStored < ready.Capacity; n++)
+                {
+                    int src = n == 0 ? from : NextRackOut(target, racks, staging);
+                    if (src < 0 || !racks[src]!.TakeShell())
+                        break;
+                    ready.LoadAmmo(1);
+                }
             });
         }
 
@@ -584,6 +611,8 @@ namespace StagedAmmo
     {
         // Rack name property, its reload speed field
         private static readonly ObjectCache<FloatProperty> speeds = new();
+        // Rack name property, its clip size field
+        private static readonly ObjectCache<FloatProperty> clips = new();
 
         private static void Postfix(AmmoRackEditor __instance, IGUILayout __0)
         {
@@ -591,6 +620,32 @@ namespace StagedAmmo
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
             if (name == null || drawer == null)
                 return;
+            drawer.ToggleField(
+                "Ready rack",
+                Plugin.IsFlagged(name.Value),
+                (Action<bool>)(ready =>
+                {
+                    name.Value = Plugin.WithTag(name.Value ?? "", Plugin.ReadyTag, ready ? "[ready]" : null);
+                    __instance.RequestRedraw();
+                }),
+                "The gun loads from this rack. Once any of a gun's racks is ticked, only ticked racks are ready, however far; autoloader racks still come first. Adds or removes [ready] in the rack's name.");
+            drawer.Float(clips.Get(name, () => new FloatProperty(
+                "Clip size",
+                (Func<float>)(() => Plugin.ClipSize(name.Value)),
+                (Action<float>)(value =>
+                {
+                    int clip = Math.Max(1, (int)Math.Round(value));
+                    name.Value = Plugin.WithTag(name.Value ?? "", Plugin.ClipTag, clip == 1 ? null : $"[clip {clip}]");
+                }),
+                "Shells the loader re-racks into this rack per carry, if it's a ready rack. Saved in the rack's name, as [clip 5] for 5.")
+            {
+                Min = 1f,
+                Max = 100f,
+                SoftMin = 1f,
+                SoftMax = 20f,
+                UseSoftLimits = true,
+                Step = 1f
+            }));
             float? speed = Plugin.RackSpeed(name.Value);
             drawer.ToggleField(
                 "Autoloader",

@@ -63,9 +63,11 @@ Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth tor
 Staged ammunition. The loader only takes shells from **ready racks**, racks close to the gun's breech. Racks farther away are **stowage**; over time, crew move shells from stowage into the ready racks.
 
 - A rack is a ready rack for a gun when the loader path from breech to rack is at most **Ready rack distance** (default 1.5 m).
+- Tick **Ready rack** in an ammo rack's edit panel to flag it by hand (adds **[ready]** to its name). Once any of a gun's racks is flagged, only flagged racks are its ready racks, however far; distance no longer counts. Autoloader racks still take precedence.
 - The loader ignores stowage racks. Once ready racks run dry, the gun waits for restock.
 - With rounds installed, the loader only loads the gun's next round: from the ready racks holding it, or with none there, from stowage if **Load next round from stowage** (default on) is on. The walk to stowage takes as long as the game's loader rules say. Off, the gun waits for re-racking to bring one forward.
 - While the gun has a living loader who isn't loading it, they re-rack (with rounds installed, racks holding the gun's next round first): one shell at a time into the closest ready rack with room, taken from the next matching rack farther out (ready or stowage). Ammo moves inward rack by rack. Each carry takes as long as the game's loader rules give for that shell: pick up, walk the crew path between the two racks, put down; divided by the loader's crew efficiency and scaled by **Re-rack time multiplier** (default 1). Loading pauses re-racking; it resumes where it left off.
+- **Clip size** (default 1) in a rack's edit panel makes the loader re-rack that many shells into it per carry, for the time of one carry, drawing from the next racks out if the first runs short. Saved in the name as `[clip 5]` for 5; only matters on ready racks.
 - **Toggle re-racking** (default Alt+R) stops your vehicle's loaders re-racking and starts them again, for when they have another role to perform; other vehicles' keep re-racking. Rebind it on the MadiLib tab.
 - Each gun only counts and re-racks shells of its own caliber.
 - A box in the bottom-left corner shows, per gun on your vehicle, ready and stowed shells and re-rack progress. Toggle with **Show indicator**.
