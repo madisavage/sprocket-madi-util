@@ -3,7 +3,7 @@
   <!-- Shared by every plugin in this repo. Each project adds the game interop assemblies it uses. -->
   <PropertyGroup>
     <!-- The one version for every plugin. Tag the GitHub release with the same value. -->
-    <Version>26.10.22</Version>
+    <Version>26.10.28</Version>
     <TargetFramework>net6.0</TargetFramework>
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
