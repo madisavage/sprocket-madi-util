@@ -217,7 +217,7 @@ namespace StagedAmmo
             // Elapsed since this gun last updated, so distant vehicles updated less often still run at full rate
             float elapsed = Math.Min(now - staging.LastSeen, 0.5f);
             staging.LastSeen = now;
-            staging.LoaderEfficiency = LoaderEfficiency(contributors);
+            staging.LoaderEfficiency = LoaderEfficiency(contributors, staging.LoaderEfficiency);
             staging.LoaderBusy = !staging.Auto && loadTask.State == LoadState.Loading;
             staging.Size = loadTask.Request.SizeID;
             // The game keeps loading from the rack it last picked, which may be one picked before the finder was filtered
@@ -249,18 +249,24 @@ namespace StagedAmmo
 
         /// <summary>
         /// The efficiency of the best crew member working one of the gun's load
-        /// tasks, or 0 when none is. Dead or knocked-out crew stop working
-        /// tasks, so this is 0 once every loader is down.
+        /// tasks, or 0 when none can. Crew with other roles leave the load task
+        /// once the gun is loaded, so while one is away but still able
+        /// (<c>EnableFraction</c> above 0) this keeps <paramref name="last"/>.
         /// </summary>
-        private static float LoaderEfficiency(Il2CppReferenceArray<ILoadTaskContributor>? contributors)
+        private static float LoaderEfficiency(Il2CppReferenceArray<ILoadTaskContributor>? contributors, float last)
         {
             float best = 0f;
+            bool able = false;
             if (contributors == null)
                 return best;
             foreach (ILoadTaskContributor contributor in contributors)
-                if (contributor?.TryCast<LoadContributeTask>() is { OperateCount: > 0 } loader)
-                    best = Math.Max(best, loader.efficiency);
-            return best;
+                if (contributor?.TryCast<LoadContributeTask>() is { } loader)
+                {
+                    if (loader.OperateCount > 0)
+                        best = Math.Max(best, loader.efficiency);
+                    able |= loader.EnableFraction > 0f;
+                }
+            return best > 0f ? best : able ? last : 0f;
         }
 
         private static AmmoRackBehaviour? Rack(IAmmoSourceComponent? source) => source?.AmmoSource?.TryCast<AmmoRackBehaviour>();
