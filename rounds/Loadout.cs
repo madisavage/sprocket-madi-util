@@ -158,12 +158,12 @@ namespace Rounds
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as JSON text, and its type; null if there's none.</summary>
         internal static (string Json, string Type)? Raw(CannonBlueprint owner, string id) =>
-            RoundsOf(Read(owner))[id] is JsonObject round ? (round.ToJsonString(), (string?)round["type"] ?? "") : null;
+            RoundsIn(Parsed(owner))[id] is JsonObject round ? (round.ToJsonString(), (string?)round["type"] ?? "") : null;
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as a <typeparamref name="T"/>, if it is of <paramref name="type"/>; otherwise null.</summary>
         public static T? Get<T>(CannonBlueprint? owner, string? id, string type) where T : class
         {
-            if (owner == null || id == null || RoundsOf(Read(owner))[id] is not JsonObject round || (string?)round["type"] != type)
+            if (owner == null || id == null || RoundsIn(Parsed(owner))[id] is not JsonObject round || (string?)round["type"] != type)
                 return null;
             return round.Deserialize<T>(json);
         }
@@ -263,9 +263,10 @@ namespace Rounds
             ShellSlotBlueprint? shell = cannon?.ShellBlueprint;
             if (owner == null || shell == null)
                 return owner;
-            JsonObject root = Read(owner);
-            if (root["rounds"] is JsonObject)
+            // Checked on the cached copies: this runs every frame, the move once
+            if (Parsed(owner)["rounds"] is JsonObject || Parsed(shell)["rounds"] is not JsonObject)
                 return owner;
+            JsonObject root = Read(owner);
             JsonObject old = Read(shell);
             if (old["rounds"] is not JsonObject rounds)
                 return owner;
@@ -318,7 +319,7 @@ namespace Rounds
 
         /// <summary>The rounds in <paramref name="owner"/>, in order.</summary>
         internal static List<(string Id, string Name, string Type)> List(CannonBlueprint? owner) =>
-            owner == null ? new() : RoundsOf(Read(owner))
+            owner == null ? new() : RoundsIn(Parsed(owner))
                 .Where(r => r.Value is JsonObject)
                 .Select(r => (r.Key, (string?)r.Value!["name"] ?? r.Key, (string?)r.Value!["type"] ?? ""))
                 .ToList();
@@ -351,6 +352,9 @@ namespace Rounds
 
         private static JsonObject RoundsOf(JsonObject root) => Child(root, "rounds");
 
+        /// <summary><paramref name="root"/>'s rounds without adding them, for a cached root from <see cref="Parsed"/>.</summary>
+        private static JsonObject RoundsIn(JsonObject root) => root["rounds"] as JsonObject ?? new JsonObject();
+
         /// <summary><paramref name="root"/>'s object <paramref name="key"/>, added if missing.</summary>
         internal static JsonObject Child(JsonObject root, string key)
         {
@@ -363,10 +367,29 @@ namespace Rounds
             return child;
         }
 
-        /// <summary><paramref name="blueprint"/>'s description as JSON; empty if it isn't JSON, and an edit then replaces it.</summary>
-        internal static JsonObject Read(Blueprint blueprint)
+        // Blueprint, its description and that parsed; one entry per blueprint read
+        private static readonly Dictionary<IntPtr, (string Text, JsonObject Json)> parsed = new();
+
+        /// <summary>
+        /// <paramref name="blueprint"/>'s description as JSON, parsed again
+        /// only when it changes: racks and guns are read many times a frame.
+        /// Shared, so never change it; use <see cref="Read(Blueprint)"/> to edit.
+        /// </summary>
+        internal static JsonObject Parsed(Blueprint blueprint)
         {
-            string? description = blueprint.Description;
+            string description = blueprint.Description ?? "";
+            if (parsed.TryGetValue(blueprint.Pointer, out var cached) && cached.Text == description)
+                return cached.Json;
+            JsonObject json = Read(blueprint, description);
+            parsed[blueprint.Pointer] = (description, json);
+            return json;
+        }
+
+        /// <summary><paramref name="blueprint"/>'s description as JSON, a fresh copy to edit; empty if it isn't JSON, and an edit then replaces it.</summary>
+        internal static JsonObject Read(Blueprint blueprint) => Read(blueprint, blueprint.Description);
+
+        private static JsonObject Read(Blueprint blueprint, string? description)
+        {
             if (string.IsNullOrEmpty(description))
                 return new JsonObject();
             try

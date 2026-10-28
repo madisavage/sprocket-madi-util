@@ -364,7 +364,7 @@ namespace Rounds
         internal static string? Get(AmmoRackBlueprint? rack, CannonBlueprint? owner)
         {
             var ids = Loadout.List(owner).Select(r => r.Id).ToList();
-            string? pick = rack == null ? null : (string?)(Loadout.Read(rack)["round"] as JsonValue);
+            string? pick = rack == null ? null : (string?)(Loadout.Parsed(rack)["round"] as JsonValue);
             return pick != null && ids.Contains(pick) ? pick : ids.FirstOrDefault();
         }
 
