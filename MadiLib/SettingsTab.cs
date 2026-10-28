@@ -13,25 +13,35 @@ namespace MadiLib
 {
     /// <summary>
     /// The "MadiLib" tab in the game's Settings screen: the keybinds from
-    /// <see cref="Keybinds"/>, then each section plugins add here.
+    /// <see cref="Keybinds"/>, then each section plugins add here. Sections
+    /// with a header collapse, start collapsed, and stay as left for the
+    /// session.
     /// </summary>
     [HarmonyPatch]
     public static class SettingsTab
     {
-        private static readonly List<Action<IGUIElementDrawer>> sections = new();
+        // Each section's header (null if it doesn't collapse) and drawer, in the order added
+        private static readonly List<(string? Header, Action<IGUIElementDrawer> Draw)> sections = new();
         // Config entry, its property; one Key:Value pair per entry drawn, cached so their callbacks stay alive
         private static readonly Dictionary<ConfigEntryBase, FloatProperty> floats = new();
         private static readonly Dictionary<ConfigEntryBase, BoolProperty> bools = new();
 
         /// <summary>
-        /// Adds a section to the tab. Apply does nothing, so changes should
-        /// save at once (a BepInEx <c>ConfigEntry</c> does by default).
+        /// Adds a section to the tab that doesn't collapse. Apply does
+        /// nothing, so changes should save at once (a BepInEx
+        /// <c>ConfigEntry</c> does by default).
         /// </summary>
         /// <param name="draw">
         /// Called each time the tab is drawn. Cache any properties it draws so
         /// their callbacks stay alive.
         /// </param>
-        public static void AddSection(Action<IGUIElementDrawer> draw) => sections.Add(draw);
+        public static void AddSection(Action<IGUIElementDrawer> draw) => sections.Add((null, draw));
+
+        /// <summary>
+        /// Adds a collapsible section under <paramref name="header"/>; <paramref name="draw"/>
+        /// draws its contents, only while it's expanded.
+        /// </summary>
+        public static void AddSection(string header, Action<IGUIElementDrawer> draw) => sections.Add((header, draw));
 
         /// <summary>
         /// Adds a section with <paramref name="header"/> and one control per
@@ -41,9 +51,8 @@ namespace MadiLib
         /// tag and stepped by a <see cref="Step"/> tag when its description has
         /// them; a bool entry gets a toggle.
         /// </summary>
-        public static void AddSection(string header, params ConfigEntryBase[] entries) => AddSection(ui =>
+        public static void AddSection(string header, params ConfigEntryBase[] entries) => AddSection(header, ui =>
         {
-            ui.Header(header);
             foreach (ConfigEntryBase entry in entries)
             {
                 if (entry is ConfigEntry<float> number)
@@ -97,10 +106,15 @@ namespace MadiLib
         {
             if (layout.TryCast<IGUIElementDrawer>() is not { } ui)
                 return;
-            Keybinds.Draw(page, ui);
-            foreach (Action<IGUIElementDrawer> section in sections)
-                section(ui);
+            if (Keybinds.Any && Expanded(page, ui, "Keybinds"))
+                Keybinds.Draw(page, ui);
+            foreach (var (header, draw) in sections)
+                if (header == null || Expanded(page, ui, header))
+                    draw(ui);
         }
+
+        private static bool Expanded(MadiLibMenu page, IGUIElementDrawer ui, string header) =>
+            EditorGui.Section(ui, "settings:" + header, header, () => page.GUIRepaint = true);
 
         /// <summary>
         /// Runs before the Settings screen builds its tabs and appends our tab

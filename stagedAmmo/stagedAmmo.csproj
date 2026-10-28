@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../MadiLib/MadiLib.csproj" Private="false" />
+    <ProjectReference Include="../rounds/rounds.csproj" Private="false" />
   </ItemGroup>
 
   <ItemGroup>

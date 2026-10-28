@@ -27,7 +27,7 @@ Keybinds.Register(this, "Save vehicle", "Ctrl+S", SaveVehicle);
 | `plugin` | Your plugin; its config file stores the key. |
 | `name` | Label on the Settings tab and config key. Keep it stable, or players lose their binding. |
 | `defaultKey` | A key such as `S` or `F9`, optionally with `Ctrl+`, `Shift+` or `Alt+` in front. |
-| `onPressed` | Called on the frame the key is pressed. Not called while the player is rebinding a key. |
+| `onPressed` | Called on the frame the key is pressed. Not called while the player is rebinding a key or typing in a text field. |
 
 ## SettingsTab
 
@@ -41,8 +41,10 @@ var indicator = Config.Bind("Display", "Show indicator", true, "Show ready/stowe
 SettingsTab.AddSection("Staged ammo", distance, indicator);
 ```
 
-- `AddSection(header, entries...)` draws a header, then a slider per `float` entry and a toggle per `bool` entry, labelled with the config key and described by the config description. An `AcceptableValueRange<float>` sets the hard range, a `SoftMax` tag ends the slider early (typed values may still go up to the hard max, like the game's sliders) and a `Step` tag sets its step. Other entry types are skipped.
-- `AddSection(ui => ...)` draws anything else with the game's `IGUIElementDrawer`. It's called every time the tab is drawn, so cache any properties you draw (see `ObjectCache`), or their callbacks get collected.
+Sections with a header collapse: they start collapsed and stay as left for the session. Keybinds get one too.
+
+- `AddSection(header, entries...)` draws a collapsible header, then a slider per `float` entry and a toggle per `bool` entry, labelled with the config key and described by the config description. An `AcceptableValueRange<float>` sets the hard range, a `SoftMax` tag ends the slider early (typed values may still go up to the hard max, like the game's sliders) and a `Step` tag sets its step. Other entry types are skipped.
+- `AddSection(header, ui => ...)` draws anything else with the game's `IGUIElementDrawer`, under a collapsible header; `AddSection(ui => ...)` does the same without one. It's called every time the tab is drawn (while expanded), so cache any properties you draw (see `ObjectCache`), or their callbacks get collected.
 
 ## Hud
 
@@ -53,6 +55,8 @@ Hud.AddPanel(() => ShowIndicator.Value ? $"Ready {ready} / Stowed {stowed}" : nu
 ```
 
 The function is called every GUI frame. Return null or empty to hide the panel. If it throws, the panel is removed and the error logged.
+
+`Hud.AddPanel((left, bottom) => ...)` adds a panel that draws itself with IMGUI (`GUI.Box`, `GUI.DrawTexture`, ...), upward from its bottom-left corner in screen pixels. It returns its height, or 0 to hide it.
 
 ## PlayerVehicle
 

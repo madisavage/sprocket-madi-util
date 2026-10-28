@@ -76,8 +76,9 @@ namespace MadiLib
 
         /// <summary>
         /// Parses text such as "Ctrl+Shift+S" into a key and modifiers. Names
-        /// follow the Input System <see cref="Key"/> enum, case-insensitive.
-        /// Unknown names or empty text give <see cref="Key.None"/>.
+        /// follow the Input System <see cref="Key"/> enum, case-insensitive;
+        /// a bare digit is that digit key, not the enum's number. Unknown names
+        /// or empty text give <see cref="Key.None"/>.
         /// </summary>
         private static (Key Key, bool Ctrl, bool Shift, bool Alt) Parse(string text)
         {
@@ -88,7 +89,8 @@ namespace MadiLib
                 if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) ctrl = true;
                 else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase)) shift = true;
                 else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase)) alt = true;
-                else if (!Enum.TryParse(part, true, out key)) return default;
+                // Enum.TryParse reads "1" as the enum's value 1, Space
+                else if (!Enum.TryParse(part.Length == 1 && char.IsDigit(part[0]) ? "Digit" + part : part, true, out key)) return default;
             }
             return (key, ctrl, shift, alt);
         }
@@ -138,7 +140,6 @@ namespace MadiLib
             if (binds.Count == 0)
                 return;
 
-            ui.Header("Keybinds");
             ui.InfoField(capturing == null
                 ? "Click a key, then press the new one (with Ctrl, Shift or Alt if wanted). Saved at once."
                 : $"Press the new key for {capturing.Name}. Esc cancels, Backspace leaves it unbound.", 2);

@@ -3,6 +3,7 @@ extern alias UnityCoreModule;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using BepInEx;
@@ -38,12 +39,14 @@ namespace StagedAmmo
     /// </summary>
     [BepInPlugin("madi.stagedammo", "stagedAmmo", ModInfo.Version)]
     [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
+    [BepInDependency("madi.rounds", BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class Plugin : BasePlugin
     {
         internal static ConfigEntry<float> ReadyDistance = null!;
         internal static ConfigEntry<float> ReRackTimeMultiplier = null!;
         internal static ConfigEntry<float> AutoloaderSpeed = null!;
         internal static ConfigEntry<bool> ShowIndicator = null!;
+        internal static ConfigEntry<bool> LoadFromStowage = null!;
         internal static ManualLogSource Logger = null!;
 
         /// <summary>Whether the player's loaders re-rack; the keybind flips it. Other vehicles' always do.</summary>
@@ -65,9 +68,14 @@ namespace StagedAmmo
                 new AcceptableValueRange<float>(0.1f, 100f), new SoftMax(10f), new Step(0.05f)));
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show ready/stowed counts and re-rack progress for your vehicle's guns.");
             Keybinds.Register(this, "Toggle re-racking", "Alt+R", () => PlayerReRack = !PlayerReRack);
+            LoadFromStowage = Config.Bind("Staging", "Load next round from stowage", true,
+                "With rounds installed: when no ready rack holds a gun's next round, its loader fetches it from stowage, which takes as long as the walk. Off, the gun waits for re-racking to bring one to a ready rack.");
+            LoadFromStowage.SettingChanged += (_, _) => LoadControllerUpdatePatch.RefilterAll();
+            RoundsLink.Present = IL2CPPChainloader.Instance.Plugins.ContainsKey("madi.rounds");
+            RoundsLink.ShareReady();
             new Harmony("madi.stagedammo").PatchAll();
             Hud.AddPanel(Indicator.Text);
-            SettingsTab.AddSection("Staged ammo", ReadyDistance, ReRackTimeMultiplier, AutoloaderSpeed, ShowIndicator);
+            SettingsTab.AddSection("Staged ammo", ReadyDistance, ReRackTimeMultiplier, AutoloaderSpeed, LoadFromStowage, ShowIndicator);
         }
 
         /// <summary>Whether the rack at the end of <paramref name="path"/> is near enough the breech to be a ready rack.</summary>
@@ -107,6 +115,8 @@ namespace StagedAmmo
         public IntPtr Shown;
         public ProjectileSizeID Size;
         public float NextFilter;
+        // Which racks the loader was shown for the next round, to filter again when it changes
+        public ulong ShownKey;
         public float LastSeen;
         public bool IsPlayer;
 
@@ -130,6 +140,8 @@ namespace StagedAmmo
     {
         // Finder, its staging; one Key:Value pair per gun's rack finder
         internal static readonly Dictionary<IntPtr, Staging> Staged = new();
+        // Rack behaviours that are ready racks, as of their gun's last filter
+        internal static readonly HashSet<IntPtr> ReadyRacks = new();
         // Guns the game built no crew load task for (no loader), and their load task; one entry per gun
         internal static readonly List<(WeaponBehaviour Weapon, LoadTask Task)> Orphans = new();
         private static int orphanFrame = -1;
@@ -193,6 +205,12 @@ namespace StagedAmmo
                 Staged[finder.Pointer] = staging;
                 Filter(finder, staging, now);
             }
+            else if (RoundsLink.Present && ShownKey(staging) != staging.ShownKey)
+            {
+                // The game only asks for ammo again when a rack's contents change, not which racks it's shown
+                Filter(finder, staging, now);
+                RoundsLink.RequestAmmo(loadTask.target?.TryCast<WeaponBehaviour>());
+            }
             else if (now >= staging.NextFilter)
                 Filter(finder, staging, now);
 
@@ -202,20 +220,28 @@ namespace StagedAmmo
             staging.LoaderEfficiency = LoaderEfficiency(contributors);
             staging.LoaderBusy = !staging.Auto && loadTask.State == LoadState.Loading;
             staging.Size = loadTask.Request.SizeID;
-            // The game keeps loading from the rack it last picked, which may be a stowage rack picked before the finder was filtered
-            if (loadTask.State != LoadState.Loading && loadTask.rack != null && !IsReady(loadTask.rack, staging))
+            // The game keeps loading from the rack it last picked, which may be one picked before the finder was filtered
+            if (loadTask.State != LoadState.Loading && loadTask.rack != null && !Shown(finder, loadTask.rack))
                 loadTask.rack = null;
             Restock(staging, elapsed);
             if (staging.Auto)
                 LoadTaskUpdatePatch.Autoload(loadTask, elapsed);
         }
 
-        private static bool IsReady(IAmmoSource rack, Staging staging)
+        /// <summary>Whether <paramref name="rack"/> is one of the racks <paramref name="finder"/> shows the loader: its ready racks, or with rounds what <see cref="Filter"/> picked.</summary>
+        private static bool Shown(VehicleAmmoRackFinder finder, IAmmoSource rack)
         {
-            for (int i = 0; i < staging.Ready.Length; i++)
-                if (staging.Ready[i] && staging.Sources[i]?.AmmoSource?.Pointer == rack.Pointer)
+            foreach (IAmmoSourceComponent source in finder.sources)
+                if (source?.AmmoSource?.Pointer == rack.Pointer)
                     return true;
             return false;
+        }
+
+        /// <summary>Filters every gun's racks again on its next update, after a setting that changes them.</summary>
+        internal static void RefilterAll()
+        {
+            foreach (Staging staging in Staged.Values)
+                staging.NextFilter = 0f;
         }
 
         /// <summary>The GameObject of the gun <paramref name="loadTask"/> loads, which outlives a rebuild of its load task.</summary>
@@ -235,6 +261,35 @@ namespace StagedAmmo
                 if (contributor?.TryCast<LoadContributeTask>() is { OperateCount: > 0 } loader)
                     best = Math.Max(best, loader.efficiency);
             return best;
+        }
+
+        private static AmmoRackBehaviour? Rack(IAmmoSourceComponent? source) => source?.AmmoSource?.TryCast<AmmoRackBehaviour>();
+
+        /// <summary>The ready racks holding the gun's next round, one bit each (the first 64).</summary>
+        private static ulong HoldingNext(Staging staging)
+        {
+            ulong bits = 0;
+            for (int i = 0; i < Math.Min(staging.Ready.Length, 64); i++)
+                if (staging.Ready[i] && Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack))
+                    bits |= 1UL << i;
+            return bits;
+        }
+
+        /// <summary>
+        /// The ready racks holding the gun's next round, or with none, the
+        /// stowage racks holding it (top bit set): what the loader is shown.
+        /// </summary>
+        private static ulong ShownKey(Staging staging) => ShownKey(staging, HoldingNext(staging));
+
+        private static ulong ShownKey(Staging staging, ulong ready)
+        {
+            if (ready != 0 || staging.Auto || !Plugin.LoadFromStowage.Value)
+                return ready;
+            ulong stowed = 1UL << 63;
+            for (int i = 0; i < Math.Min(staging.Sources.Length, 63); i++)
+                if (Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack))
+                    stowed |= 1UL << i;
+            return stowed;
         }
 
         /// <summary>
@@ -261,7 +316,26 @@ namespace StagedAmmo
             for (int i = 0; i < count; i++)
             {
                 staging.Ready[i] = staging.Auto ? auto[i] : Plugin.IsNear(staging.Paths[i]);
-                if (!staging.Ready[i])
+                if (Rack(staging.Sources[i]) is { } rack)
+                {
+                    if (staging.Ready[i])
+                        ReadyRacks.Add(rack.Pointer);
+                    else
+                        ReadyRacks.Remove(rack.Pointer);
+                }
+            }
+            // With rounds, the loader is only shown ready racks holding the gun's next round; with none,
+            // stowage racks holding it if allowed, else none
+            ulong holdingNext = HoldingNext(staging);
+            staging.ShownKey = ShownKey(staging, holdingNext);
+            bool fromStowage = holdingNext == 0 && !staging.Auto && Plugin.LoadFromStowage.Value;
+            for (int i = 0; i < count; i++)
+            {
+                AmmoRackBehaviour? rack = Rack(staging.Sources[i]);
+                bool show = !RoundsLink.HasRounds(rack) ? staging.Ready[i]
+                    : fromStowage ? RoundsLink.HoldsNext(rack!)
+                    : staging.Ready[i] && i < 64 && (holdingNext & 1UL << i) != 0;
+                if (!show)
                     continue;
                 readySources.Add(staging.Sources[i]);
                 readyPaths.Add(staging.Paths[i]);
@@ -337,16 +411,26 @@ namespace StagedAmmo
             if (staging.Progress < staging.Required)
                 return;
             staging.Progress = 0f;
-            if (racks[from]!.TakeShell())
-                racks[target]!.LoadAmmo(1);
+            RoundsLink.Rerack(() =>
+            {
+                if (racks[from]!.TakeShell())
+                    racks[target]!.LoadAmmo(1);
+            });
         }
 
         /// <summary>
         /// The closest rack to the breech, other than ready rack
         /// <paramref name="target"/>, holding a shell that fits it: any stowage
-        /// rack, or a ready rack farther out. -1 if none.
+        /// rack, or a ready rack farther out. With rounds installed, a rack
+        /// holding the gun's next round comes first. -1 if none.
         /// </summary>
         private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging)
+        {
+            int next = NextRackOut(target, racks, staging, RoundsLink.HoldsNext);
+            return next >= 0 ? next : NextRackOut(target, racks, staging, _ => true);
+        }
+
+        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging, Func<AmmoRackBehaviour, bool> holds)
         {
             AmmoRackBehaviour ready = racks[target]!;
             float targetDistance = staging.Paths[target].Distance;
@@ -356,8 +440,8 @@ namespace StagedAmmo
             {
                 AmmoRackBehaviour? rack = racks[j];
                 float d = staging.Paths[j].Distance;
-                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && d <= targetDistance || d >= distance
-                    || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID))
+                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && d <= targetDistance || d >= distance || !holds(rack)
+                    || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID) || !RoundsLink.SameRound(rack, ready))
                     continue;
                 nearest = j;
                 distance = d;
@@ -492,6 +576,9 @@ namespace StagedAmmo
     [HarmonyPatch(typeof(AmmoRackEditor), nameof(AmmoRackEditor.OnGUI))]
     internal static class AmmoRackEditorOnGuiPatch
     {
+        // Rack name property, its reload speed field
+        private static readonly ObjectCache<FloatProperty> speeds = new();
+
         private static void Postfix(AmmoRackEditor __instance, IGUILayout __0)
         {
             var name = __instance.properties?.Name;
@@ -510,7 +597,7 @@ namespace StagedAmmo
                 "The gun loads itself from this rack; its loader only re-racks. Adds or removes [auto] in the rack's name.");
             if (speed == null)
                 return;
-            drawer.Float(new FloatProperty(
+            FloatProperty reloadSpeed = speeds.Get(name, () => new FloatProperty(
                 "Reload speed",
                 (Func<float>)(() => Plugin.RackSpeed(name.Value) ?? 1f),
                 (Action<float>)(value => name.Value = Plugin.WithTag(name.Value ?? "", value)),
@@ -523,6 +610,7 @@ namespace StagedAmmo
                 UseSoftLimits = true,
                 Step = 0.05f
             });
+            drawer.Float(reloadSpeed);
         }
     }
 
@@ -558,5 +646,63 @@ namespace StagedAmmo
             }
             return text.ToString();
         }
+
+    }
+
+    /// <summary>
+    /// Rounds (madi.rounds), if installed: re-racks only move shells between
+    /// racks of the same round, and racks holding a gun's next round are
+    /// emptied into the ready racks first. Calls into rounds are in methods of their own, so nothing loads
+    /// rounds.dll when it isn't there.
+    /// </summary>
+    internal static class RoundsLink
+    {
+        internal static bool Present;
+
+        internal static void Rerack(Action move)
+        {
+            if (Present)
+                RerackWithRounds(move);
+            else
+                move();
+        }
+
+        internal static bool HoldsNext(AmmoRackBehaviour rack) => Present && HoldsNextWithRounds(rack);
+
+        /// <summary>Whether a shell may move from <paramref name="from"/> to <paramref name="to"/>: with rounds, only between racks of the same round.</summary>
+        internal static bool SameRound(AmmoRackBehaviour from, AmmoRackBehaviour to) => !Present || SameRoundWithRounds(from, to);
+
+        internal static bool HasRounds(AmmoRackBehaviour? rack) => Present && rack != null && HasRoundsWithRounds(rack);
+
+        /// <summary>Tells rounds which racks are ready racks, for its ammo bar.</summary>
+        internal static void ShareReady()
+        {
+            if (Present)
+                ShareReadyWithRounds();
+        }
+
+        internal static void RequestAmmo(WeaponBehaviour? weapon)
+        {
+            if (Present)
+                RequestAmmoWithRounds(weapon);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void ShareReadyWithRounds() => Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.Contains(rack.Pointer);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RequestAmmoWithRounds(WeaponBehaviour? weapon) => Rounds.Loadout.RequestAmmo(weapon);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RerackWithRounds(Action move) => Rounds.Loadout.Rerack(move);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool HoldsNextWithRounds(AmmoRackBehaviour rack) => Rounds.Loadout.HoldsNext(rack);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool SameRoundWithRounds(AmmoRackBehaviour from, AmmoRackBehaviour to) => Rounds.Loadout.RoundOf(from) == Rounds.Loadout.RoundOf(to);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool HasRoundsWithRounds(AmmoRackBehaviour rack) => Rounds.Loadout.HasRounds(rack);
     }
 }

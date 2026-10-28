@@ -31,7 +31,6 @@ TOP = 80
 
 
 def load(path):
-    # ponytail: regex strips trailing commas, would also hit ",}" inside a string; none of the game's files have one
     return json.loads(re.sub(r",(\s*[}\]])", r"\1", path.read_text(encoding="utf-8-sig")))
 
 

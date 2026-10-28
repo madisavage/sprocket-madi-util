@@ -128,7 +128,7 @@ namespace Stabilizer
                 "Turns the drive against the hull's rotation so the gun holds its direction. Saved with the vehicle.");
             if (limit == null)
                 return;
-            drawer.Float(limits.Get(blueprint, () => new FloatProperty(
+            FloatProperty speedLimit = limits.Get(blueprint, () => new FloatProperty(
                 "Stabilizer speed limit",
                 (Func<float>)(() => Limit(blueprint) ?? 0f),
                 (Action<float>)(value =>
@@ -144,7 +144,8 @@ namespace Stabilizer
                 SoftMax = 100f,
                 UseSoftLimits = true,
                 Step = 1f
-            }));
+            });
+            drawer.Float(speedLimit);
         }
     }
 
