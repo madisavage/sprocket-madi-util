@@ -454,7 +454,9 @@ namespace StagedAmmo
         /// <summary>
         /// The closest rack to the breech, other than ready rack
         /// <paramref name="target"/>, holding a shell that fits it: any stowage
-        /// rack, or a ready rack farther out. With rounds installed, a rack
+        /// rack, or a ready rack farther out, except on an autoloaded gun: it
+        /// loads from every autoloader rack, and guns sharing them would pass
+        /// shells back and forth between them. With rounds installed, a rack
         /// holding the gun's next round comes first. -1 if none.
         /// </summary>
         private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging)
@@ -473,7 +475,7 @@ namespace StagedAmmo
             {
                 AmmoRackBehaviour? rack = racks[j];
                 float d = staging.Paths[j].Distance;
-                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && d <= targetDistance || d >= distance || !holds(rack)
+                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance) || d >= distance || !holds(rack)
                     || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID) || !RoundsLink.SameRound(rack, ready))
                     continue;
                 nearest = j;
