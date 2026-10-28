@@ -29,11 +29,7 @@ namespace MadiUtil
         {
             new Harmony("madi.madiutil").PatchAll();
             Keybinds.Register(this, "Save vehicle", "Ctrl+S", SaveVehicle);
-            SettingsTab.AddSection(ui =>
-            {
-                ui.Header("madiUtil");
-                ui.Bool(unlockEras);
-            });
+            SettingsTab.AddSection("madiUtil", ui => ui.Bool(unlockEras));
         }
 
         // The game's own setting, which its Settings screen doesn't show. Edits the

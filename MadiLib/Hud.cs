@@ -12,14 +12,16 @@ using Vector2 = UnityCoreModule::UnityEngine.Vector2;
 namespace MadiLib
 {
     /// <summary>
-    /// Text panels in the bottom-left corner of the screen. Each panel sizes
-    /// itself to its text; panels stack upward in the order they were added.
+    /// Panels in the bottom-left corner of the screen, stacked upward in the
+    /// order they were added. A text panel sizes itself to its text; a drawn
+    /// panel draws itself.
     /// </summary>
     public static class Hud
     {
         private const float Margin = 12f, Gap = 6f;
 
-        private static readonly List<Func<string?>> panels = new();
+        // Each panel: draws itself with its bottom edge at the given y, and returns its height (0 when hidden)
+        private static readonly List<Func<float, float>> panels = new();
         private static GUIStyle? style;
 
         /// <summary>Adds a panel.</summary>
@@ -28,7 +30,23 @@ namespace MadiLib
         /// Return null or empty to hide the panel. A panel whose text throws
         /// is removed and the error logged.
         /// </param>
-        public static void AddPanel(Func<string?> text) => panels.Add(text);
+        public static void AddPanel(Func<string?> text) => panels.Add(bottom =>
+        {
+            string? shown = text();
+            if (string.IsNullOrEmpty(shown))
+                return 0f;
+            Vector2 size = style!.CalcSize(new GUIContent(shown));
+            GUI.Box(new Rect(Margin, bottom - size.y, size.x, size.y), shown, style);
+            return size.y;
+        });
+
+        /// <summary>Adds a panel that draws itself with IMGUI, inside <c>OnGUI</c>.</summary>
+        /// <param name="draw">
+        /// Called every GUI frame with the panel's left edge and bottom edge,
+        /// in screen pixels; draws upward from there and returns its height,
+        /// or 0 to hide. A panel that throws is removed and the error logged.
+        /// </param>
+        public static void AddPanel(Func<float, float, float> draw) => panels.Add(bottom => draw(Margin, bottom));
 
         /// <summary>Draws every visible panel. Called from <see cref="HudDrawer"/>.</summary>
         internal static void Draw()
@@ -41,21 +59,16 @@ namespace MadiLib
             float bottom = Screen.height - Margin;
             for (int i = 0; i < panels.Count; i++)
             {
-                string? text;
-                try { text = panels[i](); }
+                float height;
+                try { height = panels[i](bottom); }
                 catch (Exception e)
                 {
                     Plugin.Logger.LogError($"HUD panel removed after it threw: {e}");
                     panels.RemoveAt(i--);
                     continue;
                 }
-                if (string.IsNullOrEmpty(text))
-                    continue;
-
-                Vector2 size = style.CalcSize(new GUIContent(text));
-                bottom -= size.y;
-                GUI.Box(new Rect(Margin, bottom, size.x, size.y), text, style);
-                bottom -= Gap;
+                if (height > 0f)
+                    bottom -= height + Gap;
             }
         }
     }
