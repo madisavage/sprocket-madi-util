@@ -24,7 +24,9 @@ Adds a **MadiLib** tab to the game's Settings screen, shown once any plugin uses
 
 **Scroll speed** (slider 1–30, type up to 300; default 7) sets how far a mouse wheel step scrolls an open dropdown list, for every dropdown in the game. 7 matches the edit panel; the game's dropdowns use 0.05, a fraction of a pixel per step. It's on the MadiLib tab, and in `BepInEx/config/madi.madilib.cfg` under `[Dropdowns]`.
 
-For plugin authors: `MadiLib.dll` has keybinds, Settings tab sections, HUD panels, the player's vehicle, editor panel controls (collapsible sections, dropdowns, live readouts), a per-object cache and per-key config. See the [API reference](docs/MadiLib.md); the same docs ship as `MadiLib.xml` for your editor.
+**Profile** (default off; `[Debug]` in the same file) logs, every 5 seconds, the frame rate and how long each plugin's per-frame hooks took (milliseconds per second and per frame, calls per second), slowest first, to `BepInEx/LogOutput.log`. Turn it on and send the log with a performance report.
+
+For plugin authors: `MadiLib.dll` has keybinds, Settings tab sections, HUD panels, the player's vehicle, editor panel controls (collapsible sections, dropdowns, live readouts), a per-object cache, per-key config and `Profile.Measure` to time your own hooks in the Profile log. See the [API reference](docs/MadiLib.md); the same docs ship as `MadiLib.xml` for your editor.
 
 ## madiUtil
 
@@ -77,7 +79,7 @@ Staged ammunition. The loader only takes shells from **ready racks**, racks clos
 Tick **Autoloader** in an ammo rack's edit panel to make it an autoloader rack. The checkbox adds **[auto]** to the rack's name, so it travels with shared vehicle files; typing the tag yourself works too.
 
 - A gun with any autoloader racks loads itself from those, with or without a loader. They are its ready racks; all its other racks are stowage, however close.
-- The loader doesn't load an autoloaded gun. They only re-rack, from stowage into the autoloader racks, and don't pause for loading.
+- The loader doesn't load an autoloaded gun. They only re-rack, from stowage into the autoloader racks, never from one autoloader rack to another, and don't pause for loading.
 - **Reload speed** (slider 0.1–10, type up to 100; shown once **Autoloader** is ticked) sets that rack's speed: 1 is a loader at 100% efficiency. It's saved in the name as `[auto x2]` for 2. **Speed multiplier** (default 1) scales every autoloader on top.
 - The indicator marks autoloaded guns with **(autoloader)**.
 
@@ -233,14 +235,15 @@ dotnet build .\sprocket-madi.sln --configuration Release `
 
 ## Release
 
-1. Set `<Version>` in `Directory.Build.props`. Every plugin's `[BepInPlugin]` version and DLL file version come from it (through a generated `ModInfo.Version`).
-2. Build in Release.
-3. Publish a GitHub release tagged with that version (SemVer, such as `26.10.12`; a leading `v` is fine) and upload every `bin/Release/net6.0/<name>.dll` file, plus `MadiLib/bin/Release/net6.0/MadiLib.xml` for plugin authors.
-4. End the release notes with the game versions it supports, which the mod manager registry reads. Releases without it inherit the last release's.
+1. Set `<Version>` in `Directory.Build.props`. Every plugin's `[BepInPlugin]` version and DLL file version come from it (through a generated `ModInfo.Version`). Use CalVer, such as `26.10.12`; a suffix needs a hyphen (`26.10.12-a`), or the mod manager registry skips the release.
+2. Commit and push to `main`.
+3. Run `tools/release.sh` (needs the [GitHub CLI](https://cli.github.com/), logged in with `gh auth login`). It builds every plugin in Release against your local game, tags the version, and publishes a GitHub release with every DLL listed in `registry/packages/` plus `MadiLib.xml` for plugin authors. It refuses to run with uncommitted changes, off `main`, or when the tag already exists. `tools/release.sh --dry-run` only builds and lists the files.
 
-   ```html
-   <!-- sp-compat {"hamish.sprocket": "0.2.55.x"} -->
-   ```
+The release notes start with the game versions it supports, which the mod manager registry reads (releases without it inherit the last release's). By default that's the local game's version as `a.b.c.x`, read from `Sprocket_Data/globalgamemanagers`; pass `--game` for another range, such as `tools/release.sh --game ">=0.2.55.5"`:
+
+```html
+<!-- sp-compat {"hamish.sprocket": ["0.2.55.x"]} -->
+```
 
 Every plugin shares the release tag as its version.
 
