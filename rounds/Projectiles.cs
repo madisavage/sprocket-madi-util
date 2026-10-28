@@ -121,6 +121,7 @@ namespace Rounds
 
         private static void Prefix(CannonBehaviour __instance, ref ProjectileTypeID __0, out Projectiles.Entry? __state)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: fire prefix");
             __state = null;
             Tracker.Fired(__instance.Pointer);
             IProjectileDefinitionSource? source = __instance.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource;

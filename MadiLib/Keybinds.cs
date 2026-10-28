@@ -49,6 +49,7 @@ namespace MadiLib
         /// </summary>
         internal static void Poll()
         {
+            using var _ = MadiLib.Profile.Measure("MadiLib: keybinds");
             if (capturing != null || Keyboard.current is not { } keys || Typing())
                 return;
             foreach (Bind bind in binds)

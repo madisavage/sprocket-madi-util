@@ -70,6 +70,7 @@ namespace Stabilizer
         /// </summary>
         private static string? Indicator()
         {
+            using var _ = MadiLib.Profile.Measure("stabilizer: HUD indicator");
             if (!ShowIndicator.Value)
                 return null;
             float now = Time.realtimeSinceStartup;
@@ -348,6 +349,7 @@ namespace Stabilizer
 
         internal static void Run(TurretBehaviour __instance)
         {
+            using var _ = MadiLib.Profile.Measure("stabilizer: turret");
             Transform? turret = __instance.transform;
             if (turret?.parent == null || !Drives.Stabilized.TryGetValue(__instance.Pointer, out float limit))
                 return;
@@ -372,6 +374,7 @@ namespace Stabilizer
 
         internal static void Run(LayingDriveBehaviour __instance)
         {
+            using var _ = MadiLib.Profile.Measure("stabilizer: laying drive");
             Transform? trunnions = __instance.trunnions;
             if (trunnions?.parent == null || !Drives.Stabilized.TryGetValue(__instance.Pointer, out float limit))
                 return;
@@ -405,6 +408,7 @@ namespace Stabilizer
     {
         private static void Prefix(CannonBehaviour __instance)
         {
+            using var _ = MadiLib.Profile.Measure("stabilizer: fire prefix");
             if (Drives.Stabilized.Count == 0 || __instance.mount?.TryCast<Cannon>() is not { } cannon)
                 return;
             Il2CppObjectBase? horizontal = cannon.HorizontalAimingMechanism, vertical = cannon.VerticalAimingMechanism;

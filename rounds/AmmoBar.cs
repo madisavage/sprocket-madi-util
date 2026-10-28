@@ -34,6 +34,7 @@ namespace Rounds
         /// <summary>Draws a row per gun, bottom gun lowest, and returns their height.</summary>
         internal static float Draw(float left, float bottom)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: ammo bar");
             if (!Plugin.ShowIndicator.Value)
                 return 0f;
             var guns = Tracker.Guns();

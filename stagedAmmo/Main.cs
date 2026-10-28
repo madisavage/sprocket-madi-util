@@ -165,8 +165,12 @@ namespace StagedAmmo
         // Finders replaced by a newer one for the same gun; ignored so the old load task doesn't load or show twice
         private static readonly HashSet<IntPtr> retired = new();
 
-        private static void Postfix(VehicleWeaponLoadController __instance)
+        private static void Prefix(out Profile.Section __state) =>
+            __state = Profile.Measure("stagedAmmo: load controller, game's Update included");
+
+        private static void Postfix(VehicleWeaponLoadController __instance, Profile.Section __state)
         {
+            using var total = __state;
             float now = Time.time;
             var tasks = __instance.loadTasks;
             if (tasks != null)
@@ -198,6 +202,7 @@ namespace StagedAmmo
         /// <summary>Stages, restocks and, if autoloaded, loads one gun.</summary>
         private static void Update(LoadTask loadTask, Il2CppReferenceArray<ILoadTaskContributor>? contributors, float now)
         {
+            using var _ = Profile.Measure("stagedAmmo: per gun update");
             VehicleAmmoRackFinder? finder = loadTask.rackLookup?.TryCast<VehicleAmmoRackFinder>();
             if (finder?.sources == null || finder.paths == null || retired.Contains(finder.Pointer))
                 return;
@@ -319,6 +324,7 @@ namespace StagedAmmo
         /// </summary>
         private static void Filter(VehicleAmmoRackFinder finder, Staging staging, float now)
         {
+            using var _ = Profile.Measure("stagedAmmo: Filter");
             int count = Math.Min(staging.Sources.Length, staging.Paths.Length);
             var auto = new bool[count];
             var flagged = new bool[count];
@@ -387,6 +393,7 @@ namespace StagedAmmo
         /// </summary>
         private static void Restock(Staging staging, float elapsed)
         {
+            using var _ = Profile.Measure("stagedAmmo: Restock");
             var sources = staging.Sources;
             var paths = staging.Paths;
             int count = Math.Min(staging.Ready.Length, Math.Min(sources.Length, paths.Length));
@@ -531,6 +538,7 @@ namespace StagedAmmo
         /// <summary>Advances <paramref name="loadTask"/> by <paramref name="elapsed"/> seconds at autoloader speed.</summary>
         internal static void Autoload(LoadTask loadTask, float elapsed)
         {
+            using var _ = Profile.Measure("stagedAmmo: Autoload (game LoadTask.Update)");
             autoloading = true;
             try
             {
@@ -544,6 +552,7 @@ namespace StagedAmmo
 
         private static bool Prefix(LoadTask __instance, ref float travelSpeed, ref float manipulationSpeed, ref float prepareTime)
         {
+            using var _ = Profile.Measure("stagedAmmo: LoadTask.Update prefix");
             if (autoloading)
             {
                 // Speed follows the rack being loaded from
@@ -686,6 +695,7 @@ namespace StagedAmmo
         /// <summary>The panel text, or null to hide it.</summary>
         internal static string? Text()
         {
+            using var _ = Profile.Measure("stagedAmmo: HUD indicator");
             if (!Plugin.ShowIndicator.Value)
                 return null;
 

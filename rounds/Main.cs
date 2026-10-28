@@ -396,6 +396,7 @@ namespace Rounds
         [HarmonyPrefix, HarmonyPatch(typeof(LoadTask), nameof(LoadTask.Update))]
         private static bool LoadStart(LoadTask __instance)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: LoadTask.Update prefix");
             Tracker.Loading = __instance.target?.Pointer ?? IntPtr.Zero;
             if (__instance.State != LoadState.Loading || __instance.rack?.TryCast<AmmoRackBehaviour>() is not { } rack || Tracker.MayTake(rack))
                 return true;
@@ -415,6 +416,7 @@ namespace Rounds
         [HarmonyPostfix, HarmonyPatch(typeof(LoadTask), nameof(LoadTask.Update))]
         private static void LoadEnd(LoadTask __instance)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: LoadTask.Update postfix");
             Tracker.Landed(__instance);
             Tracker.Loading = IntPtr.Zero;
         }
@@ -423,6 +425,7 @@ namespace Rounds
         [HarmonyPrefix, HarmonyPatch(typeof(AmmoRackBehaviour), nameof(AmmoRackBehaviour.TakeShell))]
         private static bool BeforeTake(AmmoRackBehaviour __instance, out int __state, ref bool __result)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: TakeShell prefix");
             __state = __instance.AmountStored;
             __result = Tracker.MayTake(__instance);
             // A refused take leaves the load task with no shell
@@ -434,6 +437,7 @@ namespace Rounds
         [HarmonyPostfix, HarmonyPatch(typeof(AmmoRackBehaviour), nameof(AmmoRackBehaviour.TakeShell))]
         private static void Took(AmmoRackBehaviour __instance, int __state)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: TakeShell postfix");
             if (__state > __instance.AmountStored)
                 Tracker.Took(__instance);
         }

@@ -51,6 +51,7 @@ namespace MadiLib
         /// <summary>Draws every visible panel. Called from <see cref="HudDrawer"/>.</summary>
         internal static void Draw()
         {
+            using var _ = MadiLib.Profile.Measure("MadiLib: HUD, all panels");
             if (panels.Count == 0)
                 return;
             // Built here, not at load: GUI.skin only exists inside OnGUI

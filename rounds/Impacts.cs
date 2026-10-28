@@ -214,6 +214,7 @@ namespace Rounds
 
         private static void Prefix(ref PenetratorInfo __0)
         {
+            using var _ = MadiLib.Profile.Measure("rounds: hit prefix");
             if (Impacts.Hitting)
                 return;
             Impacts.Hitting = true;

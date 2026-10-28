@@ -15,6 +15,7 @@ using Sprocket.Vehicles.AmmunitionStorage;
 using Sprocket.Vehicles.Cannons;
 using Sprocket.Vehicles.Weapons;
 using Sprocket.WeaponFramework;
+using Time = UnityCoreModule::UnityEngine.Time;
 using UnityObject = UnityCoreModule::UnityEngine.Object;
 
 namespace Rounds
@@ -279,6 +280,8 @@ namespace Rounds
 
         // Shell slot, the cannon using it, for racks, which only know their shell slot
         private static readonly Dictionary<IntPtr, Cannon> cannonOfShell = new();
+        // Shell slot no cannon used at the last scan, when to scan for it again
+        private static readonly Dictionary<IntPtr, float> missed = new();
 
         /// <summary>The cannon using <paramref name="shell"/>, in game or in the designer.</summary>
         internal static Cannon? CannonOf(ShellSlotBlueprint? shell)
@@ -287,9 +290,16 @@ namespace Rounds
                 return null;
             if (cannonOfShell.TryGetValue(shell.Pointer, out Cannon? known) && Alive(known) && known.ShellBlueprint?.Pointer == shell.Pointer)
                 return known;
-            foreach (Cannon cannon in UnityObject.FindObjectsOfType<Cannon>())
-                if (cannon.ShellBlueprint is { } s)
-                    cannonOfShell[s.Pointer] = cannon;
+            // The scan finds every object in the scene, and racks are looked up many times a frame: a shell no cannon uses is scanned for at most once a second
+            float now = Time.unscaledTime;
+            if (missed.TryGetValue(shell.Pointer, out float retry) && now < retry)
+                return null;
+            using (MadiLib.Profile.Measure("rounds: cannon scan"))
+                foreach (Cannon cannon in UnityObject.FindObjectsOfType<Cannon>())
+                    if (cannon.ShellBlueprint is { } s)
+                        cannonOfShell[s.Pointer] = cannon;
+            if (!cannonOfShell.ContainsKey(shell.Pointer))
+                missed[shell.Pointer] = now + 1f;
             return cannonOfShell.TryGetValue(shell.Pointer, out known) && known.ShellBlueprint?.Pointer == shell.Pointer ? known : null;
         }
 
