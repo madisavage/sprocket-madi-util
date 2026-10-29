@@ -79,7 +79,9 @@ namespace Rounds
             register.AddUser(guid);
 
             float mass = shape.Mass;
-            while (Hits.ContainsKey((mass, shape.Diameter)) || mass == game.Mass && shape.Diameter == game.Diameter)
+            // Hits match by (mass, diameter), so also avoid a stock shell of the penetrator's caliber
+            float stock = ShellProperties.GetProjectileMass((ushort)MathF.Round(shape.Diameter * 1000f));
+            while (Hits.ContainsKey((mass, shape.Diameter)) || mass == game.Mass && shape.Diameter == game.Diameter || mass == stock)
                 mass = MathF.BitIncrement(mass);
             def.Mass = mass;
             def.Diameter = shape.Diameter;

@@ -36,6 +36,8 @@ namespace HighExplosive
         internal static void Load(ConfigFile config, ManualLogSource log)
         {
             Log = log;
+            // A hit that throws skips HitSimulated, which ends the jet otherwise
+            Impacts.HitEnded += JetBudget.End;
             JetDiameter = config.Bind("HEAT", "Jet diameter", 0.2f, new ConfigDescription(
                 "Width of a HEAT round's jet as it hits, over the caliber. Narrower jets spall in a tighter cone.",
                 new AcceptableValueRange<float>(0.05f, 1f), new Step(0.05f)));

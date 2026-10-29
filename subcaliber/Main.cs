@@ -123,7 +123,7 @@ namespace Subcaliber
         internal static Penetrator Penetrator(SabotRound round, float caliber) => new(
             round.Diameter > 0f ? Math.Min(round.Diameter / caliber, 1f) : 1f,
             round.Length,
-            Materials.TryGetValue(round.Material, out float density) ? density / SteelDensity : 1f,
+            Materials.TryGetValue(round.Material ?? "", out float density) ? density / SteelDensity : 1f,
             round.SabotDensity,
             round.SabotCoverage);
     }

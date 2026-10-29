@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.PlayerState.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Photomode.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.PlayerFramework.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.SettingsMenu.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleController.dll" Private="false" />

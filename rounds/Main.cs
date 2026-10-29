@@ -125,6 +125,7 @@ namespace Rounds
         {
             if (cannon.behaviour == null)
                 return;
+            Prune();
             // A cannon enabled again gets a new behaviour; forget the old one, keeping the player's pick
             foreach (IntPtr old in Cannons.Where(c => c.Value.Pointer == cannon.Pointer && c.Key != cannon.behaviour.Pointer).Select(c => c.Key).ToList())
             {
@@ -279,6 +280,17 @@ namespace Rounds
                 }
             }
             return guns;
+        }
+
+        /// <summary>Drops guns and racks destroyed with their vehicles; run at each spawn, as the HUD may never walk them.</summary>
+        private static void Prune()
+        {
+            foreach (var (gun, cannon) in Cannons.ToList())
+                if (cannon == null)
+                    Forget(gun);
+            foreach (var (behaviour, rack) in racks.ToList())
+                if (rack == null)
+                    racks.Remove(behaviour);
         }
 
         /// <summary>Drops a gun destroyed with its vehicle, so the lists don't grow each battle.</summary>

@@ -89,24 +89,13 @@ namespace Subcaliber
         /// </summary>
         internal static float Penetration(float calibers, float diameter, float mass, string material, float speed, float penetratorConstant)
         {
-            float deMarre = DeMarre(diameter, mass, speed, penetratorConstant);
+            float deMarre = Impacts.DeMarre(diameter, mass, speed, penetratorConstant);
             float t = Math.Clamp((calibers - BlendStart) / (BlendEnd - BlendStart), 0f, 1f);
             return t > 0f && LanzOdermatt(calibers, diameter, material, speed) is { } lanzOdermatt
                 ? deMarre + (lanzOdermatt - deMarre) * t
                 : deMarre;
         }
 
-        /// <summary>
-        /// The game's penetration (mm) for a projectile of <paramref name="diameter"/>
-        /// mm and <paramref name="mass"/> kg at <paramref name="speed"/> m/s.
-        /// </summary>
-        /// <remarks>
-        /// De Marre, as the game's combat code computes it (constants read from
-        /// GameAssembly): <c>100 (√m v / ((d/100)^0.75 K))^1.43</c>. The game's
-        /// own <c>ShellProfile.GetPenetration</c> assumes a steel 3-caliber mass.
-        /// </remarks>
-        internal static float DeMarre(float diameter, float mass, float speed, float penetratorConstant) =>
-            Impacts.DeMarre(diameter, mass, speed, penetratorConstant);
 
         /// <summary>
         /// Lanz-Odermatt penetration (mm of armour at <see cref="TargetHardness"/>,
@@ -120,8 +109,8 @@ namespace Subcaliber
         /// </remarks>
         private static float? LanzOdermatt(float calibers, float diameter, string material, float speed)
         {
-            Coefficients c = materials.TryGetValue(material, out Coefficients? found) ? found : Coefficients.Tungsten;
-            float density = Plugin.Materials.TryGetValue(material, out float d) ? d : Plugin.SteelDensity;
+            Coefficients c = materials.TryGetValue(material ?? "", out Coefficients? found) ? found : Coefficients.Tungsten;
+            float density = Plugin.Materials.TryGetValue(material ?? "", out float d) ? d : Plugin.SteelDensity;
             float bhn = TargetHardness.Value;
             float s2 = (c.K != 0f
                 ? c.C0 * MathF.Pow(bhn, c.K) * MathF.Pow(c.Hardness, c.N)

@@ -474,6 +474,8 @@ namespace StagedAmmo
             var paths = staging.Paths;
             int count = Math.Min(staging.Ready.Length, Math.Min(sources.Length, paths.Length));
             var racks = new AmmoRackBehaviour?[count];
+            // Which racks hold the gun's next round, found once rather than for every rack pair
+            var holds = new bool[count];
             int readyShells = 0, stowedShells = 0;
             for (int i = 0; i < count; i++)
             {
@@ -483,6 +485,7 @@ namespace StagedAmmo
                     racks[i] = null;
                 if (racks[i] == null)
                     continue;
+                holds[i] = RoundsLink.HoldsNext(racks[i]!);
                 if (staging.Ready[i])
                     readyShells += racks[i]!.AmountStored;
                 else
@@ -498,7 +501,7 @@ namespace StagedAmmo
                 AmmoRackBehaviour? ready = racks[i];
                 if (ready == null || !staging.Ready[i] || ready.AmountStored >= ready.Capacity || paths[i].Distance >= targetDistance)
                     continue;
-                int next = NextRackOut(i, racks, staging);
+                int next = NextRackOut(i, racks, holds, staging);
                 if (next < 0)
                     continue;
                 target = i;
@@ -526,7 +529,7 @@ namespace StagedAmmo
                 AmmoRackBehaviour ready = racks[target]!;
                 for (int n = 0; n < clip && ready.AmountStored < ready.Capacity; n++)
                 {
-                    int src = n == 0 ? from : NextRackOut(target, racks, staging);
+                    int src = n == 0 ? from : NextRackOut(target, racks, holds, staging);
                     if (src < 0 || !racks[src]!.TakeShell())
                         break;
                     ready.LoadAmmo(1);
@@ -543,13 +546,14 @@ namespace StagedAmmo
         /// another gun, for the same reason. With rounds installed, a rack
         /// holding the gun's next round comes first. -1 if none.
         /// </summary>
-        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging)
+        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, bool[] holds, Staging staging)
         {
-            int next = NextRackOut(target, racks, staging, RoundsLink.HoldsNext);
-            return next >= 0 ? next : NextRackOut(target, racks, staging, _ => true);
+            int next = NextRackOut(target, racks, staging, holds);
+            return next >= 0 ? next : NextRackOut(target, racks, staging, null);
         }
 
-        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging, Func<AmmoRackBehaviour, bool> holds)
+        /// <param name="holds">Racks to take from; null for any.</param>
+        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging, bool[]? holds)
         {
             AmmoRackBehaviour ready = racks[target]!;
             float targetDistance = staging.Paths[target].Distance;
@@ -559,7 +563,7 @@ namespace StagedAmmo
             {
                 AmmoRackBehaviour? rack = racks[j];
                 float d = staging.Paths[j].Distance;
-                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance || Shared(rack)) || d >= distance || !holds(rack)
+                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance || Shared(rack)) || d >= distance || holds?[j] == false
                     || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID) || !RoundsLink.SameRound(rack, ready))
                     continue;
                 nearest = j;

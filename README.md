@@ -26,7 +26,7 @@ Adds a **MadiLib** tab to the game's Settings screen, shown once any plugin uses
 
 **Profile** (default off; `[Debug]` in the same file) logs, every 5 seconds, the frame rate and how long each plugin's per-frame hooks took (milliseconds per second and per frame, calls per second), slowest first, to `BepInEx/LogOutput.log`. Turn it on and send the log with a performance report.
 
-For plugin authors: `MadiLib.dll` has keybinds, Settings tab sections, HUD panels, the player's vehicle, editor panel controls (collapsible sections, dropdowns, live readouts), a per-object cache, per-key config and `Profile.Measure` to time your own hooks in the Profile log. See the [API reference](docs/MadiLib.md); the same docs ship as `MadiLib.xml` for your editor.
+For plugin authors: `MadiLib.dll` has keybinds, Settings tab sections, HUD panels, the player's vehicle, editor panel controls (collapsible sections, dropdowns, live readouts), a per-object cache and `Profile.Measure` to time your own hooks in the Profile log. See the [API reference](docs/MadiLib.md); the same docs ship as `MadiLib.xml` for your editor.
 
 ## madiUtil
 

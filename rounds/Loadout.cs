@@ -167,8 +167,21 @@ namespace Rounds
         {
             if (owner == null || id == null || RoundsIn(Parsed(owner))[id] is not JsonObject round || (string?)round["type"] != type)
                 return null;
-            return round.Deserialize<T>(json);
+            try
+            {
+                return round.Deserialize<T>(json);
+            }
+            catch (JsonException e)
+            {
+                // A bad field in a shared vehicle file falls back to the defaults rather than stopping the gun
+                if (badRounds.Add((owner.Pointer, id)))
+                    Plugin.Logger.LogError($"Couldn't read round {id} in {owner.Name}, using its defaults: {e.Message}");
+                return null;
+            }
         }
+
+        // Cannon blueprint and round id of rounds that don't deserialize, logged once each
+        private static readonly HashSet<(IntPtr, string)> badRounds = new();
 
         /// <summary>Changes the round <paramref name="id"/> in <paramref name="owner"/> and saves it. Fields <typeparamref name="T"/> doesn't have are kept.</summary>
         public static void Edit<T>(CannonBlueprint owner, string id, Action<T> change) where T : new() => Change(owner, rounds =>

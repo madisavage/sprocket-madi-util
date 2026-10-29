@@ -2,6 +2,8 @@ extern alias UnityCoreModule;
 
 using System;
 using System.Collections.Generic;
+using HarmonyLib;
+using Sprocket.Gameplay;
 using UnityEngine;
 using MonoBehaviour = UnityCoreModule::UnityEngine.MonoBehaviour;
 using Rect = UnityCoreModule::UnityEngine.Rect;
@@ -52,7 +54,8 @@ namespace MadiLib
         internal static void Draw()
         {
             using var _ = MadiLib.Profile.Measure("MadiLib: HUD, all panels");
-            if (panels.Count == 0)
+            // Panels only draw boxes and labels, so the layout and input passes have nothing to do
+            if (panels.Count == 0 || Event.current.type != EventType.Repaint || PhotomodeWatch.Active)
                 return;
             // Built here, not at load: GUI.skin only exists inside OnGUI
             style ??= new GUIStyle(GUI.skin.box) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(10, 10, 6, 6) };
@@ -72,6 +75,22 @@ namespace MadiLib
                     bottom -= height + Gap;
             }
         }
+    }
+
+    /// <summary>Whether the player is in photo mode, where the HUD hides.</summary>
+    [HarmonyPatch]
+    internal static class PhotomodeWatch
+    {
+        private static PhotomodePlayerState? state;
+
+        // A state destroyed with its scene, without Exit, counts as left
+        internal static bool Active => state != null;
+
+        [HarmonyPostfix, HarmonyPatch(typeof(PhotomodePlayerState), nameof(PhotomodePlayerState.Enter))]
+        private static void Entered(PhotomodePlayerState __instance) => state = __instance;
+
+        [HarmonyPrefix, HarmonyPatch(typeof(PhotomodePlayerState), nameof(PhotomodePlayerState.Exit))]
+        private static void Exited() => state = null;
     }
 
     /// <summary>Component added to the plugin's object to call <see cref="Hud.Draw"/> every GUI frame.</summary>

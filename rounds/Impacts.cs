@@ -322,7 +322,11 @@ namespace Rounds
             hook = Hook;
             // MethodInfo starts with its native code pointer
             detour = INativeDetour.CreateAndApply(*(IntPtr*)method, hook, out original);
+            Ready = true;
         }
+
+        // Set once hooked; until then the fragment offsets above are 0
+        internal static bool Ready;
 
         private static unsafe void Hook(IntPtr simulation, IntPtr burst, IntPtr method)
         {
@@ -427,7 +431,7 @@ namespace Rounds
             direction = null;
             if (__0 == null)
                 return;
-            if (Impacts.Normalization > 0f)
+            if (Impacts.Normalization > 0f && SpallDetour.Ready)
             {
                 byte* fragment = SpallDetour.Element(__0.Pointer, __1);
                 // The original penetrator's flag
