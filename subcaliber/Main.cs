@@ -48,6 +48,9 @@ namespace Subcaliber
     {
         internal const float SteelDensity = 7850f;
 
+        /// <summary>Lightest sabot, relative to steel: below it a sabot would be free weight.</summary>
+        internal const float MinSabotDensity = 0.3f;
+
         internal static ConfigEntry<float> MaxVelocity = null!;
         internal static ConfigEntry<float> PropellantDensity = null!;
 
@@ -124,7 +127,7 @@ namespace Subcaliber
             round.Diameter > 0f ? Math.Min(round.Diameter / caliber, 1f) : 1f,
             round.Length,
             Materials.TryGetValue(round.Material ?? "", out float density) ? density / SteelDensity : 1f,
-            round.SabotDensity,
+            Math.Max(round.SabotDensity, MinSabotDensity),
             round.SabotCoverage);
     }
 
@@ -177,7 +180,7 @@ namespace Subcaliber
                 StringProperty[] readouts =
                 {
                     EditorGui.Readout("Muzzle velocity", () => $"{Performance(gun, id).Velocity:0} m/s", ReadoutDescription),
-                    EditorGui.Readout("Penetration", () => $"{Performance(gun, id).Penetration:0} mm", ReadoutDescription),
+                    EditorGui.Readout("Penetration", () => $"{Performance(gun, id).Penetration:0} mm ({Regime(gun, id)})", ReadoutDescription),
                     EditorGui.Readout("Penetrator / sabot mass", () => $"{Performance(gun, id).Penetrator:0.00} / {Performance(gun, id).Sabot:0.00} kg", ReadoutDescription),
                 };
                 void Set(Action<SabotRound> change)
@@ -225,9 +228,9 @@ namespace Subcaliber
                         (Action<float>)(value => Set(r => r.SabotDensity = value)),
                         "Sabot density relative to steel (aluminium is about 0.35). The sabot is discarded at the muzzle.")
                     {
-                        Min = 0f,
+                        Min = Plugin.MinSabotDensity,
                         Max = 10f,
-                        SoftMin = 0f,
+                        SoftMin = Plugin.MinSabotDensity,
                         SoftMax = 1f,
                         UseSoftLimits = true,
                         Step = 0.05f
@@ -264,7 +267,14 @@ namespace Subcaliber
                 $"Densities are in {Path.Combine(Paths.ConfigPath, "madi.subcaliber.materials.json")}; edit it and restart to add materials.");
         }
 
-        private const string ReadoutDescription = "Penetration is at the muzzle. Mass is per round; the sabot is discarded at the muzzle.";
+        private const string ReadoutDescription = "Penetration is at the muzzle: the game's for a full-bore round, else the Lanz-Odermatt long-rod equation, raised for stubby (APDS-like) penetrators. Mass is per round; the sabot is discarded at the muzzle.";
+
+        /// <summary>Which penetration model the round's <b>Penetration</b> readout comes from.</summary>
+        private static string Regime(CannonBlueprint gun, string id)
+        {
+            Penetrator p = Penetrator(gun, id);
+            return p.Ratio >= 1f ? "full-bore" : p.Calibers < LongRod.MinCalibers ? "APDS" : "long rod";
+        }
 
         private static Penetrator Penetrator(CannonBlueprint gun, string id) => Plugin.Penetrator(Plugin.Round(gun, id), gun.Caliber);
 
@@ -277,7 +287,7 @@ namespace Subcaliber
             Penetrator p = Penetrator(gun, id);
             float fullBore = ShellProperties.GetProjectileMass(gun.Caliber);
             float velocity = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, p.Launch);
-            float penetration = LongRod.Penetration(p.Calibers, gun.Caliber * p.Ratio, fullBore * p.Mass, Plugin.Round(gun, id).Material, velocity, gun.PenetratorConstant);
+            float penetration = LongRod.Penetration(p.Ratio, p.Calibers, gun.Caliber * p.Ratio, fullBore * p.Mass, Plugin.Round(gun, id).Material, velocity, gun.PenetratorConstant);
             return (velocity, penetration, fullBore * p.Mass, fullBore * p.Sabot);
         }
     }

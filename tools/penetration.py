@@ -20,12 +20,12 @@ DENSITY = {"Steel": 7850, "Tungsten carbide": 15600, "Tungsten heavy alloy": 176
 # Lanz-Odermatt coefficients, as subcaliber's LongRod.cs defaults
 LO = {
     "Steel": dict(a=1.104, c0=9874, k=0.3598, n=-0.2342, hardness=500),
-    "Tungsten carbide": dict(a=0.994, c0=134.5, c1=-0.148),
+    "Tungsten carbide": dict(a=0.70, c0=90.2, c1=-0.148),
     "Tungsten heavy alloy": dict(a=0.994, c0=134.5, c1=-0.148),
     "Depleted uranium": dict(a=0.825, c0=90.0, c1=-0.0849),
 }
 BHN = 260
-BLEND = (0, 8)  # LongRod.BlendStart, BlendEnd: all de Marre to all Lanz-Odermatt
+FACTOR = [(3.5, 1.35), (8.5, 0.85), (20, 0.95)]  # LongRod.LengthFactor: real over Lanz-Odermatt by L/D
 
 # kind, name, penetrator diameter mm, length mm, material, impact m/s, real mm RHA at 0°, game K
 # Full-bore rows give mass in kg as length (negative) since de Marre only needs mass; K is the era's penetratorConstant.
@@ -54,11 +54,9 @@ def de_marre(diameter, mass, speed, k):
 
 
 def lanz_odermatt(diameter, length, material, speed):
-    """subcaliber's LongRod.Penetration without the length cutoff, mm."""
+    """Lanz-Odermatt, as subcaliber's LongRod.LanzOdermatt, mm."""
     c, rho, v = LO[material], DENSITY[material], speed / 1000
     s2 = (c["c0"] * BHN ** c["k"] * c["hardness"] ** c["n"] if "k" in c else (c["c0"] + c["c1"] * BHN) * BHN) / rho
-    if v * v < s2 / 1.5:
-        return 0.0
     ld = length / diameter
     return length * c["a"] / math.tanh(0.283 + 0.0656 * ld) * math.sqrt(rho / STEEL) * math.exp(-s2 / (v * v))
 
@@ -71,21 +69,23 @@ def predict(kind, d, length, material, speed, k):
     m = -length if length < 0 else mass(d, length, material)
     dm = de_marre(d, m, speed, k)
     lo = lanz_odermatt(d, length, material, speed) if length > 0 else None
-    return dm, lo, blend(d, length, dm, lo)
+    return dm, lo, dm if lo is None else lo * factor(length / d)
 
 
-def blend(d, length, dm, lo):
-    """subcaliber's LongRod.Penetration: de Marre lerped into Lanz-Odermatt by L/D."""
-    if lo is None or lo == 0:
-        return dm
-    t = min(max((length / d - BLEND[0]) / (BLEND[1] - BLEND[0]), 0), 1)
-    return dm + (lo - dm) * t
+def factor(ld):
+    """subcaliber's LongRod.Factor: FACTOR interpolated, flat beyond its ends."""
+    if ld <= FACTOR[0][0]:
+        return FACTOR[0][1]
+    for (a, fa), (b, fb) in zip(FACTOR, FACTOR[1:]):
+        if ld <= b:
+            return fa + (fb - fa) * (ld - a) / (b - a)
+    return FACTOR[-1][1]
 
 
 def main():
     fig, (ax, sweep) = plt.subplots(1, 2, figsize=(15, 7))
     colors = {"Full-bore": "tab:gray", "APDS": "tab:orange", "APFSDS": "tab:blue"}
-    print(f"{'round':28} {'L/D':>5} {'real':>5} {'deMarre':>8} {'LO':>5} {'blend':>5}")
+    print(f"{'round':28} {'L/D':>5} {'real':>5} {'deMarre':>8} {'LO':>5} {'model':>5}")
     top = 0
     for kind, name, d, length, material, speed, real, k in ROUNDS:
         dm, lo, mod = predict(kind, d, length, material, speed, k)
@@ -100,7 +100,7 @@ def main():
     ax.plot([0, top], [0, top], "k--", lw=0.8, label="prediction = real")
     ax.scatter([], [], marker="x", color="k", label="de Marre (game)")
     ax.scatter([], [], marker="o", facecolors="none", edgecolors="k", label="Lanz-Odermatt")
-    ax.scatter([], [], marker="*", s=80, color="k", label="Blend (subcaliber)")
+    ax.scatter([], [], marker="*", s=80, color="k", label="Lanz-Odermatt x length factor (subcaliber)")
     for kind, color in colors.items():
         ax.scatter([], [], marker="s", color=color, label=kind)
     ax.set(xlabel="Real penetration, mm RHA (rough)", ylabel="Predicted, mm", title="Real rounds vs formulas", xlim=(0, top * 1.05), ylim=(0, top * 1.05))
@@ -114,11 +114,11 @@ def main():
         los = [lanz_odermatt(d, ld * d, material, speed) for ld in lds]
         sweep.plot(lds, dms, style, color="tab:red", label=f"de Marre @ {speed} m/s")
         sweep.plot(lds, los, style, color="tab:blue", label=f"Lanz-Odermatt @ {speed} m/s")
-        sweep.plot(lds, [blend(d, ld * d, a, b) for ld, a, b in zip(lds, dms, los)], style, color="tab:green", lw=2.5, label=f"Blend @ {speed} m/s")
+        sweep.plot(lds, [b * factor(ld) for ld, b in zip(lds, los)], style, color="tab:green", lw=2.5, label=f"subcaliber @ {speed} m/s")
     full_mass = 1.59e-5 * gun ** 3  # the game's full-bore projectile: steel, 3 calibers
     for speed in (1000, 1400):
         sweep.axhline(de_marre(gun, full_mass, speed, 1800), color="tab:gray", ls=":", label=f"Full-bore {gun}mm @ {speed} m/s")
-    for x in BLEND:
+    for x, _ in FACTOR:
         sweep.axvline(x, color="k", lw=0.8)
     sweep.set(xlabel="Penetrator L/D", ylabel="Penetration, mm", title=f"{d}mm {material} rod in a {gun}mm gun", ylim=(0, 1500))
     sweep.legend(fontsize=8)

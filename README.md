@@ -56,7 +56,7 @@ Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth tor
 `uv run tools/techedit.py --check` round-trips every file through the writer.
 
 ### Penetration plot
-`tools/penetration.py` plots real rounds' penetration against the game's de Marre, Lanz-Odermatt and subcaliber's blend of the two, and sweeps a rod's length in a 105 mm gun against the full-bore round. Run it with `uv run tools/penetration.py` (uv installs matplotlib), or pass a file name to save a PNG. The rounds' figures are rough; replace them in its `ROUNDS` list with sourced values. Keep its `BLEND` in step with `LongRod.BlendStart` and `BlendEnd`.
+`tools/penetration.py` plots real rounds' penetration against the game's de Marre, Lanz-Odermatt and subcaliber's Lanz-Odermatt with its length factor, and sweeps a rod's length in a 105 mm gun against the full-bore round. Run it with `uv run tools/penetration.py` (uv installs matplotlib), or pass a file name to save a PNG. The rounds' figures are rough; replace them in its `ROUNDS` list with sourced values. Keep its `FACTOR` in step with `LongRod.LengthFactor`.
 
 `tools/shellicons.py` draws the ammo bar's round icons (AP, APHE, HE, HESH, HEAT, and sabot as a long rod or, under 8 calibers, APDS) into each plugin's `icons/` folder. Run it with `uv run tools/shellicons.py` (uv installs Pillow), or pass a file name to also save them side by side as one PNG.
 
@@ -115,7 +115,7 @@ Needs `rounds.dll`. Adds the **Sabot** round type. A sabot round in a cannon's *
 
 - **Projectile diameter** (1 mm to the caliber). Below the caliber, the shell is a sabot round.
 - **Penetrator length** in calibers of its own diameter (1 to 30; the vanilla shells are 3).
-- **Sabot coverage**, the fraction of the penetrator's length the sabot covers (0.05 to 1, default 1; about 0.25 to 0.35 for a long rod's saddle sabot), and **Sabot density** relative to steel (0 to 1, default 0.35, about aluminium); they only matter below the caliber.
+- **Sabot coverage**, the fraction of the penetrator's length the sabot covers (0.05 to 1, default 1; about 0.25 to 0.35 for a long rod's saddle sabot), and **Sabot density** relative to steel (0.3 to 1, default 0.35, about aluminium); they only matter below the caliber.
 - **Material**, a dropdown of the materials file.
 - Readouts that update as you change them: **Muzzle velocity**, **Penetration** (at the muzzle) and **Penetrator / sabot mass**.
 
@@ -125,27 +125,26 @@ How it works:
 - The sabot fills the bore around the penetrator, along **Sabot coverage** of its length, at **Sabot density** times steel's. Muzzle velocity comes from the game's interior ballistics with the full-bore charge pushing penetrator plus sabot. The sabot is discarded at the muzzle.
 - The charge has to push its own gas too: about a third of its mass moves at projectile speed, so light projectiles leave slower than the game's formula says. Charge mass is the case's length at bore width times **Propellant density** (default 800 kg/m³; 0 turns it off). Scaled so a full-bore 3-caliber projectile is unchanged; a light sabot round can lose 30–40% (a 25 mm, 3.5-caliber DU rod in a 105 mm gun with a 600 mm case keeps about 0.68 of the game's velocity).
 - Every muzzle velocity is softly capped at **Max muzzle velocity** (default 2200 m/s): `v / (1 + (v/max)⁸)^⅛`. Rounds under about three quarters of it lose well under 1%; none pass it.
-- In flight the penetrator drags at its own diameter and hits with its own diameter and mass. Penetration blends the game's de Marre formula into the Lanz-Odermatt long-rod equation by length (below).
+- In flight the penetrator drags at its own diameter and hits with its own diameter and mass. Penetration comes from the Lanz-Odermatt long-rod equation (below).
 
 The armour view's penetration simulator also gets a **Penetrator** section with **Penetrator length** and **Material**. Set **Calibre** to the penetrator's diameter and **Penetration** as usual; These make very small changes to the penetration characteristics.
 
 Materials are in `BepInEx/config/madi.subcaliber.materials.json`, written on first run as material name to density in kg/m³ (steel 7850, tungsten carbide 15600, tungsten heavy alloy 17600, depleted uranium 19100). Edit it and restart to add or change materials.
 
-A gun with no rounds, or firing a round of another type such as **AP**, fires the game's own shell with the game's penetration, without the long-rod blend. Settings from older versions, which were keyed by projectile GUID in `madi.subcaliber.cfg`, aren't read; set them again as rounds.
+A gun with no rounds, or firing a round of another type such as **AP**, fires the game's own shell with the game's penetration. So does a full-bore **Sabot** round. Settings from older versions, which were keyed by projectile GUID in `madi.subcaliber.cfg`, aren't read; set them again as rounds.
 
 The game's own designer readouts and the gunner's sight range marks still use the game's full-bore steel round.
 
 ### Long rods
 
-A subcaliber penetrator's penetration is a straight blend of the game's de Marre and the Lanz-Odermatt perforation equation by length: all de Marre at 0 calibers, half each at 4, all Lanz-Odermatt at 8 calibers or longer. De Marre gives small fast penetrators far too much (about 1.5x real APDS, 2–3x real APFSDS) and Lanz-Odermatt gives stubby ones too little (about 0.75x real APDS), so APDS-length rounds land between them (the L7's L52 APDS comes out about 360 mm against a real 300 or so); `tools/penetration.py` plots all three against real rounds. With Lanz-Odermatt, length, material and target hardness count, not only mass. A penetrator 8 calibers or longer is a long rod and spalls more.
+A subcaliber penetrator's penetration is the Lanz-Odermatt perforation equation times a length factor: 1.35 up to 3.5 calibers long, 0.85 at 8.5, 0.95 from 20, linear between. De Marre gives small fast penetrators far too much (about 1.5x real APDS, 2–3x real APFSDS), and against real rounds Lanz-Odermatt gives APDS too little and early rods too much; the factor is fitted to the rounds `tools/penetration.py` plots. Matching both costs a rod up to about 6% of its penetration as it lengthens from about 4 to 8 calibers at a fixed speed; past that, longer penetrates more. A slower penetrator always penetrates less. With Lanz-Odermatt, length, material and target hardness count, not only mass. A penetrator 8 calibers or longer is a long rod and spalls more; the **Penetration** readout says which (full-bore, APDS or long rod).
 
-- On impact, the game's penetrator constant is swapped for the one that makes its de Marre give the blended penetration at the impact speed. Obliquity, multiple plates, spall and damage are still the game's; through stacked plates, penetration falls off with speed as de Marre does.
-- Below Lanz-Odermatt's minimum speed for the material, the game's penetration applies.
-- A sabot round's **Penetration** readout shows the blended value.
-- At a fixed speed the blend dips slightly from about 4 to 8 calibers, where de Marre's share falls faster than Lanz-Odermatt rises: at 2000 m/s a 25 mm DU rod loses up to about 60 mm there. Shorter rods also leave faster, which offsets some of it.
+- On impact, the game's penetrator constant is swapped for the one that makes its de Marre give this penetration at the impact speed. Obliquity, multiple plates, spall and damage are still the game's; through stacked plates, penetration falls off with speed as de Marre does.
+- Below Lanz-Odermatt's minimum speed for the material (about 970 m/s for tungsten alloy, 1200 m/s for steel) the equation still applies and falls off steeply, so slow rods, steel ones especially, penetrate little.
+- A sabot round's **Penetration** readout shows this value.
 - **Spall multiplier** (slider 0–3, type up to 30; default 1.25) scales each spall burst a long rod makes. The game's burst is a fixed number of fragments; the whole part of the multiplier repeats it (2 is two bursts), and the rest adds one burst of that fraction of the mass (1.25 is a normal burst plus a quarter-mass one). 0 is no spall. The armour view's simulator uses it too when its **Penetrator length** is 8 calibers or more.
 - **Target hardness** is the Brinell hardness long rods are rated against (default 260, rolled armour).
-- Coefficients per material are in `BepInEx/config/madi.subcaliber.longrod.json`, keyed by material name: `A`, `C0`, `C1` (tungsten and DU form) or `A`, `C0`, `K`, `N`, `Hardness` (steel form, used when `K` isn't 0). Materials missing from it use tungsten's.
+- Coefficients per material are in `BepInEx/config/madi.subcaliber.longrod.json`, keyed by material name: `A`, `C0`, `C1` (tungsten and DU form) or `A`, `C0`, `K`, `N`, `Hardness` (steel form, used when `K` isn't 0). Materials missing from it use tungsten's. Tungsten carbide's defaults are fitted to the 17pdr's APDS and the 3BM3 (lower `A` and `C0` than tungsten alloy: brittle, but hard); the file is only written on first run, so delete it to get new defaults.
 
 The armour view's simulator fires at whatever **Penetration** you enter, so enter the long-rod value from the cannon panel (with **Calibre**, **Penetrator length** and **Material** matching the rod) and it behaves as combat does.
 

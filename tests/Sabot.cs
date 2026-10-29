@@ -14,5 +14,20 @@ namespace Tests
             Assert.Equal(1f, p.Launch);
             Assert.Equal(1f, p.Length);
         }
+
+        [Fact]
+        public void FullBorePenetrationIsDeMarre()
+        {
+            // 1250 m/s: above steel's Lanz-Odermatt minimum speed, where the old blend changed it
+            Assert.Equal(Rounds.Impacts.DeMarre(105f, 20f, 1250f, 1800f), LongRod.Penetration(1f, 3f, 105f, 20f, "Steel", 1250f, 1800f));
+        }
+
+        [Fact]
+        public void LengthFactorInterpolates()
+        {
+            Assert.Equal(1.35f, LongRod.Factor(2f));
+            Assert.Equal(1.1f, LongRod.Factor(6f), 5);
+            Assert.Equal(0.95f, LongRod.Factor(30f));
+        }
     }
 }
