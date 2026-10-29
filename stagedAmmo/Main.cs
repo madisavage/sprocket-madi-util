@@ -53,9 +53,10 @@ namespace StagedAmmo
         /// <summary>Whether the player's loaders re-rack; the keybind flips it. Other vehicles' always do.</summary>
         internal static bool PlayerReRack = true;
 
-        private static readonly Regex tag = new(@"\[auto(?:\s*x\s*([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
-        internal static readonly Regex ReadyTag = new(@"\[ready\]", RegexOptions.IgnoreCase);
-        internal static readonly Regex ClipTag = new(@"\[clip\s*([0-9]+)\]", RegexOptions.IgnoreCase);
+        // Tags match with the space before them, so removing one from mid-name leaves no double space
+        private static readonly Regex tag = new(@"\s*\[auto(?:\s*x\s*([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
+        internal static readonly Regex ReadyTag = new(@"\s*\[ready\]", RegexOptions.IgnoreCase);
+        internal static readonly Regex ClipTag = new(@"\s*\[clip\s*([0-9]+)\]", RegexOptions.IgnoreCase);
 
         public override void Load()
         {
@@ -123,9 +124,12 @@ namespace StagedAmmo
     /// <summary>One gun's rack finder: its full rack lists and restock state.</summary>
     internal sealed class Staging
     {
+        public VehicleAmmoRackFinder Finder = null!;
         public Il2CppReferenceArray<IAmmoSourceComponent> Sources = null!;
         public Il2CppReferenceArray<VehicleComponentPath> Paths = null!;
         public bool[] Ready = Array.Empty<bool>();
+        // Rack behaviours this gun marked ready, unmarked if it's dropped
+        public List<IntPtr> ReadyRacks = new();
         public bool Auto;
         public IntPtr Shown;
         public ProjectileSizeID Size;
@@ -155,15 +159,17 @@ namespace StagedAmmo
     {
         // Finder, its staging; one Key:Value pair per gun's rack finder
         internal static readonly Dictionary<IntPtr, Staging> Staged = new();
-        // Rack behaviours that are ready racks, as of their gun's last filter
-        internal static readonly HashSet<IntPtr> ReadyRacks = new();
+        // Rack behaviour, how many guns it's a ready rack for, as of their last filter
+        internal static readonly Dictionary<IntPtr, int> ReadyRacks = new();
         // Guns the game built no crew load task for (no loader), and their load task; one entry per gun
         internal static readonly List<(WeaponBehaviour Weapon, LoadTask Task)> Orphans = new();
         private static int orphanFrame = -1;
         // Gun GameObject, its current finder; re-entering the game from the designer rebuilds a gun's load task on the same GameObject
         private static readonly Dictionary<IntPtr, IntPtr> gunFinders = new();
-        // Finders replaced by a newer one for the same gun; ignored so the old load task doesn't load or show twice
-        private static readonly HashSet<IntPtr> retired = new();
+        // Finders replaced by a newer one for the same gun, and when last seen; ignored so the old load task doesn't load or show twice
+        private static readonly Dictionary<IntPtr, float> retired = new();
+        private static float nextPrune;
+        private static readonly List<IntPtr> dead = new();
 
         private static void Prefix(out Profile.Section __state) =>
             __state = Profile.Measure("stagedAmmo: load controller, game's Update included");
@@ -182,6 +188,11 @@ namespace StagedAmmo
             if (orphanFrame == Time.frameCount)
                 return;
             orphanFrame = Time.frameCount;
+            if (now >= nextPrune)
+            {
+                nextPrune = now + 5f;
+                Prune(now);
+            }
             for (int i = Orphans.Count - 1; i >= 0; i--)
             {
                 try
@@ -199,21 +210,85 @@ namespace StagedAmmo
             }
         }
 
+        /// <summary>
+        /// Drops guns not updated for a while, with their vehicle, so the lists
+        /// don't grow each battle. A dropped gun gets its full rack lists back,
+        /// so if it's still alive it's staged again at its next update.
+        /// </summary>
+        private static void Prune(float now)
+        {
+            dead.Clear();
+            foreach (var (finder, staging) in Staged)
+                if (now - staging.LastSeen > 10f)
+                    dead.Add(finder);
+            foreach (IntPtr finder in dead)
+            {
+                Staging staging = Staged[finder];
+                Unready(staging);
+                try
+                {
+                    staging.Finder.sources = staging.Sources;
+                    staging.Finder.paths = staging.Paths;
+                }
+                catch (Exception e)
+                {
+                    Plugin.Logger.LogWarning($"Couldn't give a dropped gun its racks back: {e.Message}");
+                }
+                Staged.Remove(finder);
+            }
+            if (dead.Count > 0)
+                rackPaths.Clear();
+
+            dead.Clear();
+            foreach (var (finder, seen) in retired)
+                if (now - seen > 10f)
+                    dead.Add(finder);
+            foreach (IntPtr finder in dead)
+                retired.Remove(finder);
+
+            dead.Clear();
+            foreach (var (gun, finder) in gunFinders)
+                if (!Staged.ContainsKey(finder) && !retired.ContainsKey(finder))
+                    dead.Add(gun);
+            foreach (IntPtr gun in dead)
+                gunFinders.Remove(gun);
+        }
+
+        /// <summary>Takes back the ready marks <paramref name="staging"/>'s gun put on its racks.</summary>
+        private static void Unready(Staging staging)
+        {
+            foreach (IntPtr rack in staging.ReadyRacks)
+                if (ReadyRacks.TryGetValue(rack, out int guns) && guns > 1)
+                    ReadyRacks[rack] = guns - 1;
+                else
+                    ReadyRacks.Remove(rack);
+            staging.ReadyRacks.Clear();
+        }
+
+        /// <summary>Whether <paramref name="rack"/> is a ready rack for more than one gun.</summary>
+        private static bool Shared(AmmoRackBehaviour rack) => ReadyRacks.GetValueOrDefault(rack.Pointer) > 1;
+
         /// <summary>Stages, restocks and, if autoloaded, loads one gun.</summary>
         private static void Update(LoadTask loadTask, Il2CppReferenceArray<ILoadTaskContributor>? contributors, float now)
         {
             using var _ = Profile.Measure("stagedAmmo: per gun update");
             VehicleAmmoRackFinder? finder = loadTask.rackLookup?.TryCast<VehicleAmmoRackFinder>();
-            if (finder?.sources == null || finder.paths == null || retired.Contains(finder.Pointer))
+            if (finder?.sources == null || finder.paths == null)
                 return;
+            if (retired.ContainsKey(finder.Pointer))
+            {
+                retired[finder.Pointer] = now;
+                return;
+            }
 
             if (!Staged.ContainsKey(finder.Pointer))
             {
                 IntPtr gun = GunKey(loadTask) ?? finder.Pointer;
                 if (gunFinders.TryGetValue(gun, out IntPtr old) && old != finder.Pointer)
                 {
-                    retired.Add(old);
-                    Staged.Remove(old);
+                    retired[old] = now;
+                    if (Staged.Remove(old, out Staging? replaced))
+                        Unready(replaced);
                 }
                 gunFinders[gun] = finder.Pointer;
             }
@@ -221,7 +296,9 @@ namespace StagedAmmo
             // New finder, or the game rebuilt its lists: take them as the full lists
             if (!Staged.TryGetValue(finder.Pointer, out Staging? staging) || finder.sources.Pointer != staging.Shown)
             {
-                staging = new Staging { Sources = finder.sources, Paths = finder.paths, LastSeen = now };
+                if (staging != null)
+                    Unready(staging);
+                staging = new Staging { Finder = finder, Sources = finder.sources, Paths = finder.paths, LastSeen = now };
                 Staged[finder.Pointer] = staging;
                 Filter(finder, staging, now);
             }
@@ -344,16 +421,15 @@ namespace StagedAmmo
             var readySources = new List<IAmmoSourceComponent>();
             var readyPaths = new List<VehicleComponentPath>();
             staging.Ready = new bool[count];
+            Unready(staging);
             for (int i = 0; i < count; i++)
             {
                 // Autoloader racks, else racks flagged [ready], else by distance
                 staging.Ready[i] = staging.Auto ? auto[i] : anyFlagged ? flagged[i] : Plugin.IsNear(staging.Paths[i]);
-                if (Rack(staging.Sources[i]) is { } rack)
+                if (staging.Ready[i] && Rack(staging.Sources[i]) is { } rack)
                 {
-                    if (staging.Ready[i])
-                        ReadyRacks.Add(rack.Pointer);
-                    else
-                        ReadyRacks.Remove(rack.Pointer);
+                    ReadyRacks[rack.Pointer] = ReadyRacks.GetValueOrDefault(rack.Pointer) + 1;
+                    staging.ReadyRacks.Add(rack.Pointer);
                 }
             }
             // With rounds, the loader is only shown ready racks holding the gun's next round; with none,
@@ -463,7 +539,8 @@ namespace StagedAmmo
         /// <paramref name="target"/>, holding a shell that fits it: any stowage
         /// rack, or a ready rack farther out, except on an autoloaded gun: it
         /// loads from every autoloader rack, and guns sharing them would pass
-        /// shells back and forth between them. With rounds installed, a rack
+        /// shells back and forth between them. Nor from a ready rack shared with
+        /// another gun, for the same reason. With rounds installed, a rack
         /// holding the gun's next round comes first. -1 if none.
         /// </summary>
         private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging)
@@ -482,7 +559,7 @@ namespace StagedAmmo
             {
                 AmmoRackBehaviour? rack = racks[j];
                 float d = staging.Paths[j].Distance;
-                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance) || d >= distance || !holds(rack)
+                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance || Shared(rack)) || d >= distance || !holds(rack)
                     || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID) || !RoundsLink.SameRound(rack, ready))
                     continue;
                 nearest = j;
@@ -761,7 +838,7 @@ namespace StagedAmmo
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void ShareReadyWithRounds() => Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.Contains(rack.Pointer);
+        private static void ShareReadyWithRounds() => Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.ContainsKey(rack.Pointer);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RequestAmmoWithRounds(WeaponBehaviour? weapon) => Rounds.Loadout.RequestAmmo(weapon);

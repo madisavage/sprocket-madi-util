@@ -77,13 +77,19 @@ namespace MadiUtil
         private static void Postfix(CrewSeatEditor __instance, IGUILayout __0)
         {
             CrewSeatBlueprint? blueprint = __instance.crewBlueprint;
+            var slot = __instance.Component?.blueprintSlot;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (blueprint == null || drawer == null)
+            if (blueprint == null || slot == null || drawer == null)
                 return;
             FloatProperty efficiency = properties.Get(blueprint, () => new FloatProperty(
                 "Base efficiency",
                 (Func<float>)(() => blueprint.BaseEfficiency),
-                (Action<float>)(value => blueprint.BaseEfficiency = value),
+                (Action<float>)(value =>
+                {
+                    blueprint.BaseEfficiency = value;
+                    // How the game knows the design changed, as for the laying drive
+                    slot.MarkModified();
+                }),
                 "Crew member base efficiency multiplier.")
             {
                 Min = 0f,

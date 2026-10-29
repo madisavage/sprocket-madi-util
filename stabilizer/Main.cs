@@ -43,7 +43,7 @@ namespace Stabilizer
     public sealed class Plugin : BasePlugin
     {
         // [stab] or [stab 30] for a 30 km/h speed limit
-        private static readonly Regex tag = new(@"\[stab(?:\s+([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
+        private static readonly Regex tag = new(@"\s*\[stab(?:\s+([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
 
         // Drive blueprint, its speed limit property
         private static readonly ObjectCache<FloatProperty> limits = new();
@@ -71,9 +71,10 @@ namespace Stabilizer
         private static string? Indicator()
         {
             using var _ = MadiLib.Profile.Measure("stabilizer: HUD indicator");
+            float now = Time.realtimeSinceStartup;
+            Drives.Prune(now);
             if (!ShowIndicator.Value)
                 return null;
-            float now = Time.realtimeSinceStartup;
             var parts = new List<string>();
             foreach (var (part, name, speed, limit, seen) in Drives.Status.Values)
                 if (now - seen < 1f && part != null && PlayerVehicle.Contains(part))
@@ -90,21 +91,27 @@ namespace Stabilizer
         /// The speed limit (km/h, 0 for none) in <paramref name="blueprint"/>'s
         /// <c>[stab]</c> tag, or null when the drive isn't stabilized.
         /// </summary>
-        internal static float? Limit(Blueprint? blueprint)
+        internal static float? Limit(Blueprint? blueprint) => Limit(blueprint?.Name);
+
+        /// <summary>The speed limit in <paramref name="name"/>'s <c>[stab]</c> tag, as <see cref="Limit(Blueprint?)"/>.</summary>
+        internal static float? Limit(string? name)
         {
-            Match match = tag.Match(blueprint?.Name ?? "");
+            Match match = tag.Match(name ?? "");
             if (!match.Success)
                 return null;
             return match.Groups[1].Success ? float.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : 0f;
         }
 
         /// <summary>Sets <paramref name="blueprint"/>'s tag for <paramref name="limit"/>, or removes it for null.</summary>
-        private static void SetLimit(Blueprint blueprint, float? limit)
+        private static void SetLimit(Blueprint blueprint, float? limit) => blueprint.Name = WithLimit(blueprint.Name ?? "", limit);
+
+        /// <summary><paramref name="name"/> with its tag replaced by one for <paramref name="limit"/>, or removed for null.</summary>
+        internal static string WithLimit(string name, float? limit)
         {
-            string name = tag.Replace(blueprint.Name ?? "", "").Trim();
+            name = tag.Replace(name, "").Trim();
             if (limit is { } value)
                 name = (name + (value > 0f ? $" [stab {value.ToString("0.#", CultureInfo.InvariantCulture)}]" : " [stab]")).Trim();
-            blueprint.Name = name;
+            return name;
         }
 
         /// <summary>
@@ -172,7 +179,6 @@ namespace Stabilizer
             public float Gain;
             public float Moved, Turned;
             public float Time;
-            public Vector3 Position;
             /// <summary>Hull speed in km/h.</summary>
             public float Speed;
             // Time and hull position since the speed was last measured
@@ -287,7 +293,6 @@ namespace Stabilizer
 
             // The angle before correcting, so the next step's comparison includes the correction on both sides
             s.Hull = hull;
-            s.Position = position;
             s.Angle = before;
             s.Local = local;
             s.Time = now;
@@ -307,6 +312,27 @@ namespace Stabilizer
 
         // Behaviour, every stabilized turret seen aiming and when, for re-stabilizing before its guns fire
         internal static readonly Dictionary<IntPtr, (TurretBehaviour Turret, float Time)> Turrets = new();
+
+        private static readonly List<IntPtr> dead = new();
+
+        /// <summary>
+        /// Drops drives whose part is destroyed, with their vehicle, and the
+        /// status of drives not run for a while, so the lists don't grow each battle.
+        /// </summary>
+        internal static void Prune(float now)
+        {
+            dead.Clear();
+            foreach (var (pointer, (part, _, _, _, seen)) in Status)
+                if (part == null || now - seen > 10f)
+                    dead.Add(pointer);
+            foreach (IntPtr pointer in dead)
+            {
+                // Kept for a live drive that's only idle, or the game paused: only its run sets it again
+                if (Status[pointer].Part == null)
+                    Stabilized.Remove(pointer);
+                Status.Remove(pointer);
+            }
+        }
 
         private static void Set(Il2CppObjectBase? behaviour, float? limit)
         {
@@ -418,7 +444,9 @@ namespace Stabilizer
             float now = Time.realtimeSinceStartup;
             // A copy: running a turret updates its entry
             foreach (var (pointer, (turret, seen)) in new List<KeyValuePair<IntPtr, (TurretBehaviour, float)>>(Drives.Turrets))
-                if (gun != null && now - seen < 1f && Drives.Stabilized.ContainsKey(pointer)
+                if (now - seen > 10f)
+                    Drives.Turrets.Remove(pointer);
+                else if (gun != null && now - seen < 1f && Drives.Stabilized.ContainsKey(pointer)
                     && turret.transform != null && gun.IsChildOf(turret.transform))
                     TurretMovePatch.Run(turret);
             Run(horizontal);

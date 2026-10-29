@@ -172,13 +172,9 @@ namespace Rounds
                 return;
             float velocity = blueprint.MuzzleVelocity;
             if (Projectiles.For(gun, game) is { } entry)
-                velocity *= Fire(blueprint, entry.Shape.LaunchLength / game.Length) / Fire(blueprint, 1f);
+                velocity *= Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
             cannon.muzzleVelocity = velocity;
         }
-
-        /// <summary>Muzzle velocity of a projectile <paramref name="length"/> times the full-bore one's length, from the game's interior ballistics, as the round editors work it out.</summary>
-        private static float Fire(CannonBlueprint gun, float length) =>
-            ShellProperties.CalculateFireInfo(gun.BoreLength, gun.Caliber, 3f * gun.Caliber * length, gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
     }
 
     /// <summary>

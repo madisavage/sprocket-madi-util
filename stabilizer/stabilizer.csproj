@@ -19,4 +19,8 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.WeaponFramework.dll" Private="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="tests" />
+  </ItemGroup>
+
 </Project>

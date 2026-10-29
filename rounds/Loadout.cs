@@ -10,6 +10,7 @@ using Il2CppInterop.Runtime.InteropTypes;
 using Properties;
 using Sprocket.Blueprints;
 using Sprocket.DamageModelling;
+using Sprocket.ProjectilePhysicsSystems;
 using Sprocket.UI;
 using Sprocket.Vehicles.AmmunitionStorage;
 using Sprocket.Vehicles.Cannons;
@@ -267,15 +268,25 @@ namespace Rounds
             // Checked on the cached copies: this runs every frame, the move once
             if (Parsed(owner)["rounds"] is JsonObject || Parsed(shell)["rounds"] is not JsonObject)
                 return owner;
-            JsonObject root = Read(owner);
-            JsonObject old = Read(shell);
-            if (old["rounds"] is not JsonObject rounds)
+            if (Read(owner) is not { } root || Read(shell) is not { } old || old["rounds"] is not JsonObject rounds)
                 return owner;
             old.Remove("rounds");
             root["rounds"] = rounds;
             owner.Description = root.ToJsonString();
             shell.Description = old.Count == 0 ? "" : old.ToJsonString();
             return owner;
+        }
+
+        /// <summary>
+        /// Muzzle velocity of a projectile <paramref name="length"/> times the
+        /// full-bore length over a full-bore projectile's, from the game's
+        /// interior ballistics. One formula for editor readouts, AI lead and shots.
+        /// </summary>
+        public static float VelocityRatio(CannonBlueprint gun, float length)
+        {
+            float caliber = gun.Caliber;
+            float Velocity(float l) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * l, gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
+            return Velocity(length) / Velocity(1f);
         }
 
         // Shell slot, the cannon using it, for racks, which only know their shell slot
@@ -355,7 +366,8 @@ namespace Rounds
 
         private static void Change(CannonBlueprint owner, Action<JsonObject> change)
         {
-            JsonObject root = Read(owner);
+            if (Read(owner) is not { } root)
+                return;
             change(RoundsOf(root));
             owner.Description = root.ToJsonString();
         }
@@ -390,27 +402,35 @@ namespace Rounds
             string description = blueprint.Description ?? "";
             if (parsed.TryGetValue(blueprint.Pointer, out var cached) && cached.Text == description)
                 return cached.Json;
-            JsonObject json = Read(blueprint, description);
+            JsonObject json = Read(blueprint, description) ?? new JsonObject();
             parsed[blueprint.Pointer] = (description, json);
             return json;
         }
 
-        /// <summary><paramref name="blueprint"/>'s description as JSON, a fresh copy to edit; empty if it isn't JSON, and an edit then replaces it.</summary>
-        internal static JsonObject Read(Blueprint blueprint) => Read(blueprint, blueprint.Description);
+        /// <summary>
+        /// <paramref name="blueprint"/>'s description as JSON, a fresh copy to edit;
+        /// null if it holds other text, which an edit must leave as it is.
+        /// </summary>
+        internal static JsonObject? Read(Blueprint blueprint) => Read(blueprint, blueprint.Description);
 
-        private static JsonObject Read(Blueprint blueprint, string? description)
+        // Blueprints whose description isn't JSON, logged once each
+        private static readonly HashSet<IntPtr> unreadable = new();
+
+        private static JsonObject? Read(Blueprint blueprint, string? description)
         {
             if (string.IsNullOrEmpty(description))
                 return new JsonObject();
             try
             {
-                return JsonNode.Parse(description) as JsonObject ?? new JsonObject();
+                if (JsonNode.Parse(description) is JsonObject json)
+                    return json;
             }
-            catch (JsonException e)
+            catch (JsonException)
             {
-                Plugin.Logger.LogError($"Couldn't read the rounds in {blueprint.Name}: {e.Message}");
-                return new JsonObject();
             }
+            if (unreadable.Add(blueprint.Pointer))
+                Plugin.Logger.LogError($"Couldn't read the rounds in {blueprint.Name}: its description isn't rounds' JSON, so rounds leave it as it is");
+            return null;
         }
     }
 }

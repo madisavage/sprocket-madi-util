@@ -201,7 +201,7 @@ namespace HighExplosive
         /// <summary>From <see cref="Impacts.FragmentSimulated"/>.</summary>
         internal static void Simulated(PenetrationSimulation __0, short __1)
         {
-            if (!active || broken || __0 == null)
+            if (!active || __0 == null)
                 return;
             try
             {
@@ -229,6 +229,9 @@ namespace HighExplosive
                     }
                     return;
                 }
+                // Only APHE's burst is off once it failed; HE and HESH still stop at the first plate
+                if (broken)
+                    return;
                 log?.Append("\n  shell ").Append(Describe(simulation, __1, shell)).Append(armed ? $", {travelled * 1000f:0} mm past the first plate" : ", not armed");
                 if (!armed)
                     return;
@@ -276,6 +279,8 @@ namespace HighExplosive
 
         private static void Fail(Exception e)
         {
+            if (broken)
+                return;
             broken = true;
             Aphe.Log.LogWarning($"Couldn't burst an APHE shell, they hit as solid shot from now on: {e}");
         }

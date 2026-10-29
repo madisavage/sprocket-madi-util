@@ -130,27 +130,3 @@ drawer.Float(properties.Get(blueprint, () => new FloatProperty(
 ```
 
 `Get(owner, create)` returns the value for `owner`, calling `create` on first use. Entries are keyed by native pointer, so two wrappers of the same game object share an entry. Entries are never removed.
-
-## KeyedConfig\<T\>
-
-Values stored per key in one config section of your plugin's config, such as a setting per shell type keyed by its GUID. A key reads as the fallback until it's set, and only set keys are written to the file.
-
-```csharp
-// In Load:
-Diameters = new KeyedConfig<float>(Config, "Projectile diameter", 0f, "Projectile diameter in mm; 0 fires full-bore.");
-
-// Anywhere after:
-float d = Diameters[guid];
-Diameters[guid] = 40f; // saves
-```
-
-| Parameter | |
-| --- | --- |
-| `file` | Your plugin's `Config`. |
-| `section` | The config section, one entry per key. |
-| `fallback` | The value of a key never set. |
-| `description` | Written to the file above each entry. |
-
-Create it in `Load`, before anything reads it. BepInEx hides values saved last session until their key is bound; the constructor binds every key already in the section so reads find them. It reaches into a private BepInEx property to do that, so a BepInEx update could break it.
-
-Keys can't contain `=`, `\n`, `\t`, `\`, `"`, `'`, `[` or `]` (a BepInEx rule).

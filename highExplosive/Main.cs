@@ -209,11 +209,6 @@ namespace HighExplosive
         }
 
         /// <summary>Muzzle velocity of a shell <paramref name="mass"/> times the full-bore one's, from the game's interior ballistics.</summary>
-        internal static float Velocity(CannonBlueprint gun, float mass)
-        {
-            float caliber = gun.Caliber;
-            float At(float m) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * m, gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
-            return gun.MuzzleVelocity * At(mass) / At(1f);
-        }
+        internal static float Velocity(CannonBlueprint gun, float mass) => gun.MuzzleVelocity * Loadout.VelocityRatio(gun, mass);
     }
 }

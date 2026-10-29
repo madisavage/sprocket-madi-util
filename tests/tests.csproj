@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tests for the plugins' pure logic. Not in the solution, so release builds don't need xunit. Run: dotnet test tests -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <SkipModDeploy>true</SkipModDeploy>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../stagedAmmo/stagedAmmo.csproj" />
+    <ProjectReference Include="../stabilizer/stabilizer.csproj" />
+    <!-- The plugins' game and BepInEx references, copied so their types load -->
+    <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" />
+    <Reference Update="@(Reference)" Private="true" />
+  </ItemGroup>
+
+</Project>

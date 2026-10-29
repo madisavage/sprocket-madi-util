@@ -28,6 +28,8 @@ namespace MadiLib
         private static readonly List<UnityAction> callbacks = new(); // keeps button callbacks alive while the tab shows
         private static readonly Key[] modifiers = { Key.LeftCtrl, Key.RightCtrl, Key.LeftShift, Key.RightShift, Key.LeftAlt, Key.RightAlt, Key.LeftMeta, Key.RightMeta, Key.ContextMenu };
         private static Bind? capturing;
+        // Bind text, parsed; polled every frame, so parsed once per text
+        private static readonly Dictionary<string, (Key Key, bool Ctrl, bool Shift, bool Alt)> parsed = new();
 
         /// <summary>Registers a keybind and shows it in the Settings tab.</summary>
         /// <param name="plugin">The plugin whose config file stores the key.</param>
@@ -70,7 +72,9 @@ namespace MadiLib
         /// </summary>
         private static bool Pressed(Keyboard keys, string text)
         {
-            (Key key, bool ctrl, bool shift, bool alt) = Parse(text);
+            if (!parsed.TryGetValue(text, out var bind))
+                parsed[text] = bind = Parse(text);
+            (Key key, bool ctrl, bool shift, bool alt) = bind;
             return key != Key.None && keys[key].wasPressedThisFrame
                 && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
         }

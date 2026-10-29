@@ -276,21 +276,9 @@ namespace Subcaliber
         {
             Penetrator p = Penetrator(gun, id);
             float fullBore = ShellProperties.GetProjectileMass(gun.Caliber);
-            float velocity = gun.MuzzleVelocity * VelocityRatio(gun, p.Launch);
+            float velocity = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, p.Launch);
             float penetration = LongRod.Penetration(p.Calibers, gun.Caliber * p.Ratio, fullBore * p.Mass, Plugin.Round(gun, id).Material, velocity, gun.PenetratorConstant);
             return (velocity, penetration, fullBore * p.Mass, fullBore * p.Sabot);
-        }
-
-        /// <summary>
-        /// Muzzle velocity of a projectile <paramref name="length"/> times the
-        /// full-bore length over a full-bore projectile's, from the game's
-        /// interior ballistics.
-        /// </summary>
-        internal static float VelocityRatio(CannonBlueprint gun, float length)
-        {
-            float caliber = gun.Caliber;
-            float Velocity(float l) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * l, gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
-            return Velocity(length) / Velocity(1f);
         }
     }
 

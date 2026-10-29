@@ -106,7 +106,7 @@ namespace Subcaliber
         /// own <c>ShellProfile.GetPenetration</c> assumes a steel 3-caliber mass.
         /// </remarks>
         internal static float DeMarre(float diameter, float mass, float speed, float penetratorConstant) =>
-            100f * MathF.Pow(MathF.Sqrt(mass) * speed / (MathF.Pow(diameter * 0.01f, 0.75f) * penetratorConstant), 1.43f);
+            Impacts.DeMarre(diameter, mass, speed, penetratorConstant);
 
         /// <summary>
         /// Lanz-Odermatt penetration (mm of armour at <see cref="TargetHardness"/>,

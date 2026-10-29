@@ -106,7 +106,15 @@ namespace Rounds
 
         /// <summary>The game's penetration (mm, at normal) of <paramref name="penetrator"/> at its speed: de Marre, <c>100 (√m v / ((d/100)^0.75 K))^1.43</c>.</summary>
         public static float Penetration(PenetratorInfo penetrator) =>
-            100f * MathF.Pow(MathF.Sqrt(penetrator.Mass) * penetrator.Velocity.magnitude / (MathF.Pow(penetrator.Diameter * 10f, 0.75f) * penetrator.PenetratorConstant), 1.43f);
+            DeMarre(penetrator.Diameter * 1000f, penetrator.Mass, penetrator.Velocity.magnitude, penetrator.PenetratorConstant);
+
+        /// <summary>
+        /// The game's penetration (mm) for a projectile of <paramref name="diameter"/>
+        /// mm and <paramref name="mass"/> kg at <paramref name="speed"/> m/s: de Marre,
+        /// <c>100 (√m v / ((d/100)^0.75 K))^1.43</c>, as the game's combat code computes it.
+        /// </summary>
+        public static float DeMarre(float diameter, float mass, float speed, float penetratorConstant) =>
+            100f * MathF.Pow(MathF.Sqrt(mass) * speed / (MathF.Pow(diameter * 0.01f, 0.75f) * penetratorConstant), 1.43f);
 
         /// <summary>
         /// Gives <paramref name="penetrator"/> the penetrator constant that
@@ -224,19 +232,32 @@ namespace Rounds
                 Impacts.RaiseSimulated(ref __0);
             }
             else if (Projectiles.Hits.TryGetValue((__0.Mass, __0.Diameter), out var round) && round.Hit != null)
-                round.Hit(ref __0, round.Owner, round.Id);
+            {
+                // A failing round falls back to the game's shell for this hit only
+                try { round.Hit(ref __0, round.Owner, round.Id); }
+                catch (Exception e) { Plugin.Logger.LogError($"A round's hit handler failed: {e}"); }
+            }
         }
 
-        private static void Postfix(PenetratorInfo __0, IPenetrationSimulation? __result)
+        // A finalizer, not a postfix, so a throwing hit still ends; otherwise every later hit is skipped
+        private static Exception? Finalizer(Exception? __exception, PenetratorInfo __0, IPenetrationSimulation? __result)
         {
-            Impacts.RaiseHitSimulated(__0, __result);
-            Impacts.Hitting = false;
-            Impacts.SpallBursts = Impacts.FragmentMass = 1f;
-            NormalizePatch.Reset();
-            Impacts.FirstBurst = null;
-            Impacts.Normalization = 0f;
-            SpallDetour.HasTemplate = false;
-            Impacts.RaiseHitEnded();
+            try
+            {
+                if (__exception == null)
+                    Impacts.RaiseHitSimulated(__0, __result);
+            }
+            finally
+            {
+                Impacts.Hitting = false;
+                Impacts.SpallBursts = Impacts.FragmentMass = 1f;
+                NormalizePatch.Reset();
+                Impacts.FirstBurst = null;
+                Impacts.Normalization = 0f;
+                SpallDetour.HasTemplate = false;
+                Impacts.RaiseHitEnded();
+            }
+            return __exception;
         }
     }
 

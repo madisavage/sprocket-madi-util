@@ -267,16 +267,30 @@ namespace Rounds
             {
                 try
                 {
-                    if (PlayerVehicle.Contains(cannon) && Loadout.Owner(cannon) is { } owner && Loadout.List(owner).Count > 0)
+                    if (cannon == null)
+                        Forget(gun);
+                    else if (PlayerVehicle.Contains(cannon) && Loadout.Owner(cannon) is { } owner && Loadout.List(owner).Count > 0)
                         guns.Add((gun, cannon, owner));
                 }
                 catch (Exception)
                 {
                     // Destroyed with its vehicle
-                    Cannons.Remove(gun);
+                    Forget(gun);
                 }
             }
             return guns;
+        }
+
+        /// <summary>Drops a gun destroyed with its vehicle, so the lists don't grow each battle.</summary>
+        private static void Forget(IntPtr gun)
+        {
+            Cannons.Remove(gun);
+            selected.Remove(gun);
+            loaded.Remove(gun);
+            carried.Remove(gun);
+            waiting.Remove(gun);
+            foreach (var key in gunOfShell.Where(g => g.Value == gun).Select(g => g.Key).ToList())
+                gunOfShell.Remove(key);
         }
 
         /// <summary>Shells of each round id left in <paramref name="cannon"/>'s racks on its vehicle; those in ready racks also go in <paramref name="ready"/>.</summary>
@@ -287,6 +301,11 @@ namespace Rounds
             {
                 try
                 {
+                    if (rack == null)
+                    {
+                        racks.Remove(behaviour);
+                        continue;
+                    }
                     if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer || !PlayerVehicle.Contains(rack) || RoundOf(rack.behaviour) is not { } id)
                         continue;
                     int count = rack.behaviour.AmountStored;
@@ -370,7 +389,8 @@ namespace Rounds
 
         internal static void Set(AmmoRackBlueprint rack, string id)
         {
-            JsonObject root = Loadout.Read(rack);
+            if (Loadout.Read(rack) is not { } root)
+                return;
             root.Remove("mix");
             root["round"] = id;
             rack.Description = root.ToJsonString();
