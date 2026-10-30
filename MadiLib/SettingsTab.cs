@@ -12,46 +12,48 @@ using Sprocket.UI;
 namespace MadiLib
 {
     /// <summary>
-    /// The "MadiLib" tab in the game's Settings screen: the keybinds from
-    /// <see cref="Keybinds"/>, then each section plugins add here. Sections
-    /// with a header collapse, start collapsed, and stay as left for the
-    /// session.
+    /// The "MadiLib" tab in the game's Settings screen: a subtab per feature
+    /// area, each with the sections plugins add to it, then its keybinds from
+    /// <see cref="Keybinds"/>. Sections with a header collapse and start
+    /// collapsed; opening one closes the others in its subtab, so a subtab
+    /// fits on screen (the Settings screen doesn't scroll).
     /// </summary>
     [HarmonyPatch]
     public static class SettingsTab
     {
-        // Each section's header (null if it doesn't collapse) and drawer, in the order added
-        private static readonly List<(string? Header, Action<IGUIElementDrawer> Draw)> sections = new();
+        // Each section's subtab, header (null if it doesn't collapse) and drawer, in the order added
+        private static readonly List<(string Subtab, string? Header, Action<IGUIElementDrawer> Draw)> sections = new();
+        // Subtab, its open section; one Key:Value pair per subtab with a section open
+        private static readonly Dictionary<string, string> open = new();
+        // The subtab shown, for the session; null for the first
+        private static string? selected;
         // Config entry, its property; one Key:Value pair per entry drawn, cached so their callbacks stay alive
         private static readonly Dictionary<ConfigEntryBase, FloatProperty> floats = new();
         private static readonly Dictionary<ConfigEntryBase, BoolProperty> bools = new();
 
         /// <summary>
-        /// Adds a section to the tab that doesn't collapse. Apply does
-        /// nothing, so changes should save at once (a BepInEx
+        /// Adds a section to <paramref name="subtab"/>, which is created the
+        /// first time it's named; subtabs show in the order first named. Apply
+        /// does nothing, so changes should save at once (a BepInEx
         /// <c>ConfigEntry</c> does by default).
         /// </summary>
+        /// <param name="subtab">The subtab, such as "Rounds"; add-on plugins pass their parent's to join it.</param>
+        /// <param name="header">The collapsible header, or null for a section that doesn't collapse.</param>
         /// <param name="draw">
-        /// Called each time the tab is drawn. Cache any properties it draws so
-        /// their callbacks stay alive.
+        /// Called each time the subtab is drawn, while the section is
+        /// expanded. Cache any properties it draws so their callbacks stay alive.
         /// </param>
-        public static void AddSection(Action<IGUIElementDrawer> draw) => sections.Add((null, draw));
+        public static void AddSection(string subtab, string? header, Action<IGUIElementDrawer> draw) => sections.Add((subtab, header, draw));
 
         /// <summary>
-        /// Adds a collapsible section under <paramref name="header"/>; <paramref name="draw"/>
-        /// draws its contents, only while it's expanded.
-        /// </summary>
-        public static void AddSection(string header, Action<IGUIElementDrawer> draw) => sections.Add((header, draw));
-
-        /// <summary>
-        /// Adds a section with <paramref name="header"/> and one control per
-        /// entry, labelled with its config key and described by its config
-        /// description. A float entry gets a slider, limited by an
+        /// Adds a section to <paramref name="subtab"/> with <paramref name="header"/>
+        /// and one control per entry, labelled with its config key and described
+        /// by its config description. A float entry gets a slider, limited by an
         /// <see cref="AcceptableValueRange{T}"/>, ended early by a <see cref="SoftMax"/>
         /// tag and stepped by a <see cref="Step"/> tag when its description has
         /// them; a bool entry gets a toggle.
         /// </summary>
-        public static void AddSection(string header, params ConfigEntryBase[] entries) => AddSection(header, ui =>
+        public static void AddSection(string subtab, string header, params ConfigEntryBase[] entries) => AddSection(subtab, header, ui =>
         {
             foreach (ConfigEntryBase entry in entries)
             {
@@ -61,6 +63,15 @@ namespace MadiLib
                     ui.Bool(BoolFor(toggle));
             }
         });
+
+        /// <summary>Adds a section that doesn't collapse, in the "MadiLib" subtab. Kept for older plugins.</summary>
+        public static void AddSection(Action<IGUIElementDrawer> draw) => AddSection("MadiLib", null, draw);
+
+        /// <summary>Adds a collapsible section in a subtab named <paramref name="header"/>. Kept for older plugins.</summary>
+        public static void AddSection(string header, Action<IGUIElementDrawer> draw) => AddSection(header, header, draw);
+
+        /// <summary>Adds a section of config entries in a subtab named <paramref name="header"/>. Kept for older plugins.</summary>
+        public static void AddSection(string header, params ConfigEntryBase[] entries) => AddSection(header, header, entries);
 
         private static FloatProperty FloatFor(ConfigEntry<float> entry)
         {
@@ -99,22 +110,46 @@ namespace MadiLib
             return property;
         }
 
-        /// <summary>Draws the tab: keybinds, then each section.</summary>
+        /// <summary>Draws the tab: the subtab bar, then the selected subtab's sections and keybinds.</summary>
         /// <param name="page">The Settings tab being drawn.</param>
         /// <param name="layout">The layout the game is drawing the tab into.</param>
         internal static void Draw(MadiLibMenu page, IGUILayout layout)
         {
             if (layout.TryCast<IGUIElementDrawer>() is not { } ui)
                 return;
-            if (Keybinds.Any && Expanded(page, ui, "Keybinds"))
-                Keybinds.Draw(page, ui);
-            foreach (var (header, draw) in sections)
-                if (header == null || Expanded(page, ui, header))
+            List<string> subtabs = sections.Select(s => s.Subtab).Concat(Keybinds.Subtabs).Distinct().ToList();
+            if (subtabs.Count == 0)
+                return;
+            int index = Math.Max(0, subtabs.IndexOf(selected ?? ""));
+            string subtab = subtabs[index];
+            if (subtabs.Count > 1)
+                ui.TabGroup((Action<int>)(i =>
+                {
+                    selected = subtabs[i];
+                    Keybinds.StopCapture();
+                    page.GUIRepaint = true;
+                }), index, subtabs.ToArray());
+            foreach (var (tab, header, draw) in sections)
+                if (tab == subtab && (header == null || Expanded(page, ui, subtab, header)))
                     draw(ui);
+            if (Keybinds.Subtabs.Contains(subtab) && Expanded(page, ui, subtab, "Keybinds"))
+                Keybinds.Draw(page, ui, subtab);
         }
 
-        private static bool Expanded(MadiLibMenu page, IGUIElementDrawer ui, string header) =>
-            EditorGui.Section(ui, "settings:" + header, header, () => page.GUIRepaint = true);
+        /// <summary>Draws a section header; opening it closes the subtab's other sections.</summary>
+        private static bool Expanded(MadiLibMenu page, IGUIElementDrawer ui, string subtab, string header)
+        {
+            bool shown = open.TryGetValue(subtab, out string? current) && current == header;
+            ui.HeaderBar(header, shown, (Action<bool>)(value =>
+            {
+                if (value)
+                    open[subtab] = header;
+                else
+                    open.Remove(subtab);
+                page.GUIRepaint = true;
+            }));
+            return shown;
+        }
 
         /// <summary>
         /// Runs before the Settings screen builds its tabs and appends our tab
@@ -139,13 +174,13 @@ namespace MadiLib
     }
 
     /// <summary>
-    /// Slider step for a float setting drawn by <see cref="SettingsTab.AddSection(string, ConfigEntryBase[])"/>.
+    /// Slider step for a float setting drawn by <see cref="SettingsTab.AddSection(string, string, ConfigEntryBase[])"/>.
     /// Pass it in the <see cref="ConfigDescription"/> tags.
     /// </summary>
     public sealed record Step(float Value);
 
     /// <summary>
-    /// Slider end for a float setting drawn by <see cref="SettingsTab.AddSection(string, ConfigEntryBase[])"/>,
+    /// Slider end for a float setting drawn by <see cref="SettingsTab.AddSection(string, string, ConfigEntryBase[])"/>,
     /// like the game's own sliders: typed values may go past it, up to the
     /// <see cref="AcceptableValueRange{T}"/> maximum. Pass it in the <see cref="ConfigDescription"/> tags.
     /// </summary>

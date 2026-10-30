@@ -29,7 +29,7 @@ namespace MadiLib
                 new AcceptableValueRange<float>(1f, 300f), new SoftMax(30f), new Step(0.5f)));
             Profiling = Config.Bind("Debug", "Profile", false,
                 "Every 5 seconds, logs how long each plugin's hooks took, slowest first, to BepInEx/LogOutput.log. Costs a little frame rate while on.");
-            SettingsTab.AddSection("MadiLib", ScrollSensitivity, Profiling);
+            SettingsTab.AddSection("MadiLib", "MadiLib", ScrollSensitivity, Profiling);
             ClassInjector.RegisterTypeInIl2Cpp<MadiLibMenu>();
             AddComponent<KeybindPoller>();
             AddComponent<HudDrawer>();

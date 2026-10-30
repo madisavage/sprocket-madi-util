@@ -9,6 +9,7 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.Photomode.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.PlayerFramework.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.SettingsMenu.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/DynamicGUI.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleController.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Unity.InputSystem.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Unity.TextMeshPro.dll" Private="false" />

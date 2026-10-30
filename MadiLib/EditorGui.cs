@@ -43,6 +43,20 @@ namespace MadiLib
             return shown;
         }
 
+        /// <summary>
+        /// Ends a header drag once the left button is up. Pressing a header
+        /// arms the game's expand/collapse-on-hover drag, and a coroutine on
+        /// that header disarms it on release; a section that redraws its panel
+        /// on toggle pools the header and kills the coroutine, so every header
+        /// hovered after toggles until the next click. Called every frame.
+        /// </summary>
+        internal static void EndHeaderDrag()
+        {
+            if ((DynamicGUI.HeaderBar.expandOnHover || DynamicGUI.HeaderBar.collapseOnHover)
+                && UnityEngine.InputSystem.Mouse.current is { } mouse && !mouse.leftButton.isPressed)
+                DynamicGUI.HeaderBar.expandOnHover = DynamicGUI.HeaderBar.collapseOnHover = false;
+        }
+
         /// <summary>Draws a dropdown of <paramref name="options"/>.</summary>
         /// <param name="drawer">The panel being drawn.</param>
         /// <param name="label">The label beside the dropdown.</param>

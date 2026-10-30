@@ -19,32 +19,36 @@ Plugins in this repo use `">=" + ModInfo.Version`.
 Rebindable keys, stored as text in the `[Keybinds]` section of your plugin's config and shown on the **MadiLib** Settings tab.
 
 ```csharp
-Keybinds.Register(this, "Save vehicle", "Ctrl+S", SaveVehicle);
+Keybinds.Register(this, "madiUtil", "Save vehicle", "Ctrl+S", SaveVehicle);
 ```
 
 | Parameter | |
 | --- | --- |
 | `plugin` | Your plugin; its config file stores the key. |
+| `subtab` | The Settings subtab whose Keybinds section shows it, as passed to `SettingsTab.AddSection`. Left out (`Register(plugin, name, defaultKey, onPressed)`), it's your plugin's name. |
 | `name` | Label on the Settings tab and config key. Keep it stable, or players lose their binding. |
 | `defaultKey` | A key such as `S` or `F9`, optionally with `Ctrl+`, `Shift+` or `Alt+` in front. |
 | `onPressed` | Called on the frame the key is pressed. Not called while the player is rebinding a key or typing in a text field. |
 
 ## SettingsTab
 
-Sections on the **MadiLib** Settings tab. The tab only appears once something uses it. Apply does nothing, so values must save as soon as they change; a BepInEx `ConfigEntry` does by default.
+Sections on the **MadiLib** Settings tab, grouped in subtabs. The tab only appears once something uses it. Apply does nothing, so values must save as soon as they change; a BepInEx `ConfigEntry` does by default.
 
 ```csharp
 var distance = Config.Bind("Staging", "Ready rack distance", 1.5f, new ConfigDescription(
     "Racks this many metres or closer to the breech are ready racks.",
     new AcceptableValueRange<float>(0f, 100f), new SoftMax(10f), new Step(0.1f)));
 var indicator = Config.Bind("Display", "Show indicator", true, "Show ready/stowed counts.");
-SettingsTab.AddSection("Staged ammo", distance, indicator);
+SettingsTab.AddSection("Staged ammo", "Staging", distance, indicator);
 ```
 
-Sections with a header collapse: they start collapsed and stay as left for the session. Keybinds get one too.
+The first argument is the subtab. A subtab is created the first time it's named, and subtabs show in that order as tabs at the top. An add-on plugin passes its parent's subtab to join it (highExplosive and subcaliber pass `"Rounds"`). Each subtab's keybinds come last, under a Keybinds header.
 
-- `AddSection(header, entries...)` draws a collapsible header, then a slider per `float` entry and a toggle per `bool` entry, labelled with the config key and described by the config description. An `AcceptableValueRange<float>` sets the hard range, a `SoftMax` tag ends the slider early (typed values may still go up to the hard max, like the game's sliders) and a `Step` tag sets its step. Other entry types are skipped.
-- `AddSection(header, ui => ...)` draws anything else with the game's `IGUIElementDrawer`, under a collapsible header; `AddSection(ui => ...)` does the same without one. It's called every time the tab is drawn (while expanded), so cache any properties you draw (see `ObjectCache`), or their callbacks get collected.
+Sections with a header collapse: they start collapsed, and opening one closes the others in its subtab, so a subtab fits on screen (the Settings screen doesn't scroll). The subtab shown and the open section stay as left for the session.
+
+- `AddSection(subtab, header, entries...)` draws a collapsible header, then a slider per `float` entry and a toggle per `bool` entry, labelled with the config key and described by the config description. An `AcceptableValueRange<float>` sets the hard range, a `SoftMax` tag ends the slider early (typed values may still go up to the hard max, like the game's sliders) and a `Step` tag sets its step. Other entry types are skipped.
+- `AddSection(subtab, header, ui => ...)` draws anything else with the game's `IGUIElementDrawer`, under a collapsible header, or without one when `header` is null. It's called every time the tab is drawn (while expanded), so cache any properties you draw (see `ObjectCache`), or their callbacks get collected.
+- The older overloads without a subtab still work: `AddSection(header, ...)` puts the section in a subtab named `header`, and `AddSection(ui => ...)` in the "MadiLib" subtab.
 
 ## Hud
 
