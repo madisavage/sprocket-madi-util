@@ -16,6 +16,7 @@ using Sprocket.Vehicles.AmmunitionStorage;
 using Sprocket.Vehicles.Cannons;
 using Sprocket.Vehicles.Weapons;
 using Sprocket.WeaponFramework;
+using Rect = UnityCoreModule::UnityEngine.Rect;
 using Time = UnityCoreModule::UnityEngine.Time;
 using UnityObject = UnityCoreModule::UnityEngine.Object;
 
@@ -150,6 +151,27 @@ namespace Rounds
         /// ready counts; set by a plugin that stages ammo. Null counts none.
         /// </summary>
         public static Func<AmmoRackBehaviour, bool>? IsReady;
+
+        /// <summary>
+        /// For the ammo bar, per gun (its <c>WeaponBehaviour</c>'s pointer):
+        /// the round id a plugin is moving into a ready rack and how far
+        /// along it is (0-1), or null when it isn't; set by a plugin that
+        /// stages ammo.
+        /// </summary>
+        public static Func<IntPtr, (string Round, float Progress)?>? Reracking;
+
+        /// <summary>
+        /// Draws a plugin's status for a gun (its <c>WeaponBehaviour</c>'s
+        /// pointer) in a column at the end of its ammo bar row, given the
+        /// column's rect.
+        /// </summary>
+        public static Action<IntPtr, Rect>? GunBadge;
+
+        /// <summary>
+        /// Whether the ammo bar drew the gun (its <c>WeaponBehaviour</c>'s
+        /// pointer) last GUI frame, so a plugin can leave it out of its own panel.
+        /// </summary>
+        public static bool OnBar(IntPtr gun) => AmmoBar.Shown.Contains(gun);
 
         /// <summary>
         /// Makes every round's projectile again on its next shot, for a setting

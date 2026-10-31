@@ -73,7 +73,7 @@ Staged ammunition. The loader only takes shells from **ready racks**, racks clos
 - **Clip size** (default 1) in a rack's edit panel makes the loader re-rack that many shells into it per carry, for the time of one carry, drawing from the next racks out if the first runs short. Saved in the name as `[clip 5]` for 5; only matters on ready racks.
 - **Toggle re-racking** (default Alt+R) stops your vehicle's loaders re-racking and starts them again, for when they have another role to perform; other vehicles' keep re-racking. Rebind it on the MadiLib tab.
 - Each gun only counts and re-racks shells of its own caliber.
-- A box in the bottom-left corner shows, per gun on your vehicle, ready and stowed shells and re-rack progress. Toggle with **Show indicator**.
+- A panel in the bottom-left corner shows a row per gun on your vehicle: a bar of ready shells against ready rack space, stowed shells, and a re-rack progress bar beside a loader icon. The icon is green while re-racking, yellow while paused for the loader loading the gun, red with no loader (or a stowage icon once stowage is empty), and grey with re-racking toggled off. With rounds installed, guns on its ammo bar show there instead: a green progress bar under the round being re-racked, and the loader icon at the row's end, with time left or why it's stopped. Toggle with **Show indicator**.
 
 ### Autoloaders
 
@@ -82,7 +82,7 @@ Tick **Autoloader** in an ammo rack's edit panel to make it an autoloader rack. 
 - A gun with any autoloader racks loads itself from those, with or without a loader. They are its ready racks; all its other racks are stowage, however close.
 - The loader doesn't load an autoloaded gun. They only re-rack, from stowage into the autoloader racks, never from one autoloader rack to another, and don't pause for loading.
 - **Reload speed** (slider 0.1–10, type up to 100; shown once **Autoloader** is ticked) sets that rack's speed: 1 is a loader at 100% efficiency. It's saved in the name as `[auto x2]` for 2. **Speed multiplier** (default 1) scales every autoloader on top.
-- The indicator marks autoloaded guns with **(autoloader)**.
+- The indicator shows an autoloader icon instead of a loader for autoloaded guns.
 
 Settings are on the MadiLib tab, and in `BepInEx/config/madi.stagedammo.cfg` under `[Staging]`, `[Autoloader]` and `[Display]`.
 
@@ -100,7 +100,7 @@ In game:
 - The gun only loads its next round; without one in reach it doesn't load and uses no ammo, and waits until one is or you pick a round that is. With stagedAmmo, the loader only goes to ready racks holding the next round, and re-racking brings one forward; with none in the ready racks, they fetch it from stowage (as long as the walk takes), unless stagedAmmo's **Load next round from stowage** is off. Without it, the loader goes to whichever rack the game picks, and waits there if it has none.
 - A gun fires the round it has loaded. Before a load has been seen (a gun loaded at spawn), that's its first round; picking a next round doesn't change it.
 - With stagedAmmo, re-racking moves shells only between racks of the same round, emptying racks of the next round into the ready racks first.
-- An ammo bar in the bottom-left corner shows a row per gun with rounds, and a cell per round: its type's icon, its name and its shells left. With stagedAmmo, it shows them as `ready/all`, where ready is the shells in ready racks. A yellow frame marks the next round, red while the loader found none in the rack they went to. A green bar marks the loaded round. Rounds with none left are dimmed. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.rounds.cfg` under `[Display]`.
+- An ammo bar in the bottom-left corner shows a row per gun with rounds, headed by the gun's name (its **Name** in the designer, without plugin tags), and a cell per round: its type's icon, its name and its shells left. With stagedAmmo, it shows them as `ready/all`, where ready is the shells in ready racks, plus re-rack progress and the loader's state (see stagedAmmo). A yellow frame marks the next round, red while the loader found none in the rack they went to. A green bar marks the loaded round. Rounds with none left are dimmed. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.rounds.cfg` under `[Display]`.
 
 Rounds are stored as JSON in the cannon blueprint's `description`, so they go with the cannon into the cannon library and onto other vehicles, keyed by a short id so renaming a round keeps the racks holding it: `{"rounds": {"3f9a01c2": {"name": "M829", "type": "sabot", "diameter": 25, ...}}}`. Earlier versions kept them in the shell slot's `description`; they move to the cannon the first time the vehicle loads, and stay there once it's saved. A rack's round is in its own `description`: `{"round": "3f9a01c2"}`. The game has no UI for either field, but saves and loads them untouched.
 
@@ -212,7 +212,7 @@ Naive gun stabilization. Tick **Stabilizer** in a traverse motor's or laying dri
 - Once ticked, **Stabilizer speed limit** (slider 0–100 km/h, type up to 1000) switches it off while the vehicle is faster than that; 0 keeps it on at any speed.
 - Both are saved in the drive's name, as **[stab]** or **[stab 30]** for 30 km/h. The game saves drive names in the vehicle file but doesn't show them, so the setting travels with shared vehicles.
 - **Toggle stabilizers** (default Alt+S) switches your vehicle's stabilizers off and back on; other vehicles' stay on. Rebind it on the MadiLib tab.
-- A box in the bottom-left corner shows your vehicle's stabilized drives and whether each is on, or off for being over its speed limit, such as `Stabilizer: traverse on, elevation off (over 40 km/h)`, or `Stabilizer: off` when toggled off. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.
+- A panel in the bottom-left corner shows an icon per stabilized drive on your vehicle (turret traverse, gun elevation, gun azimuth): green while on, yellow while off for being over its speed limit, grey when toggled off. A drive's speed limit is shown under its icon. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.
 
 ## hydropneumatic
 
@@ -224,7 +224,7 @@ Adjustable (hydropneumatic) suspension, like a Strv 103's. Tick **Adjustable sus
 - Height and roll go through the game's own springs. Pitch is pushed in by equal and opposite forces at the loaded wheels, as struts would, so the hull never lifts off and the lighter end's wheels stay on the ground; a nose- or tail-heavy vehicle pitches less one way.
 - Keybinds (rebind them on the MadiLib tab, **Hydropneumatic** subtab): **Raise** PageUp, **Lower** PageDown, **Pitch up** Home, **Pitch down** End, **Roll left** Insert, **Roll right** Delete, held; **Level** Backspace returns to level at the set rate.
 - Only your own vehicle adjusts; AI vehicles stay level, and vehicles without the tag are unchanged.
-- A box in the bottom-left corner shows height, pitch and roll while you aren't level, such as `Suspension: +40 mm, pitch -2.0°, roll 0.0°`. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.hydropneumatic.cfg` under `[Display]`.
+- A panel in the bottom-left corner shows height, pitch and roll while you aren't level, each as a value and a gauge against how far it can go, and with hull aiming a crosshair icon, green while on. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.hydropneumatic.cfg` under `[Display]`.
 
 ### Hull aiming
 

@@ -22,7 +22,9 @@ using Sprocket.Vehicles.CrewSystems;
 using Sprocket.Vehicles.Weapons;
 using Sprocket.WeaponFramework;
 using VehicleDesigner.AmmunitionStorage;
+using Rect = UnityCoreModule::UnityEngine.Rect;
 using Time = UnityCoreModule::UnityEngine.Time;
+using UnityEngine;
 
 namespace StagedAmmo
 {
@@ -78,7 +80,7 @@ namespace StagedAmmo
             RoundsLink.Present = IL2CPPChainloader.Instance.Plugins.ContainsKey("madi.rounds");
             RoundsLink.ShareReady();
             new Harmony("madi.stagedammo").PatchAll();
-            Hud.AddPanel(Indicator.Text);
+            Hud.AddPanel(Indicator.Draw);
             SettingsTab.AddSection("Staged ammo", "Staged ammo", ReadyDistance, ReRackTimeMultiplier, AutoloaderSpeed, LoadFromStowage, ShowIndicator);
         }
 
@@ -138,11 +140,15 @@ namespace StagedAmmo
         public ulong ShownKey;
         public float LastSeen;
         public bool IsPlayer;
+        // The gun's WeaponBehaviour, as rounds keys guns
+        public IntPtr Weapon;
+        // The ready rack being restocked, if any
+        public AmmoRackBehaviour? Target;
 
         public float Progress, Required;
         public bool HasTarget, LoaderBusy;
         public float LoaderEfficiency;
-        public int ReadyShells, StowedShells;
+        public int ReadyShells, StowedShells, ReadyCapacity;
     }
 
     /// <summary>
@@ -298,7 +304,11 @@ namespace StagedAmmo
             {
                 if (staging != null)
                     Unready(staging);
-                staging = new Staging { Finder = finder, Sources = finder.sources, Paths = finder.paths, LastSeen = now };
+                staging = new Staging
+                {
+                    Finder = finder, Sources = finder.sources, Paths = finder.paths, LastSeen = now,
+                    Weapon = loadTask.target?.TryCast<WeaponBehaviour>()?.Pointer ?? IntPtr.Zero
+                };
                 Staged[finder.Pointer] = staging;
                 Filter(finder, staging, now);
             }
@@ -476,7 +486,7 @@ namespace StagedAmmo
             var racks = new AmmoRackBehaviour?[count];
             // Which racks hold the gun's next round, found once rather than for every rack pair
             var holds = new bool[count];
-            int readyShells = 0, stowedShells = 0;
+            int readyShells = 0, stowedShells = 0, readyCapacity = 0;
             for (int i = 0; i < count; i++)
             {
                 racks[i] = sources[i]?.AmmoSource?.TryCast<AmmoRackBehaviour>();
@@ -487,12 +497,16 @@ namespace StagedAmmo
                     continue;
                 holds[i] = RoundsLink.HoldsNext(racks[i]!);
                 if (staging.Ready[i])
+                {
                     readyShells += racks[i]!.AmountStored;
+                    readyCapacity += racks[i]!.Capacity;
+                }
                 else
                     stowedShells += racks[i]!.AmountStored;
             }
             staging.ReadyShells = readyShells;
             staging.StowedShells = stowedShells;
+            staging.ReadyCapacity = readyCapacity;
 
             int target = -1, from = -1;
             float targetDistance = float.MaxValue;
@@ -510,6 +524,7 @@ namespace StagedAmmo
             }
 
             staging.HasTarget = target >= 0;
+            staging.Target = target >= 0 ? racks[target] : null;
             if (target < 0)
             {
                 staging.Progress = 0f;
@@ -768,39 +783,108 @@ namespace StagedAmmo
     }
 
     /// <summary>
-    /// The HUD panel: one line per gun on the player's vehicle with ready and
-    /// stowed shells and what the loader is doing.
+    /// The HUD panel: one row per gun on the player's vehicle with a bar of
+    /// ready shells against ready capacity, stowed shells, and a re-rack
+    /// progress bar beside an icon coloured by what the loader is doing.
+    /// Guns on rounds' ammo bar are left out; rounds draws their re-rack
+    /// progress and <see cref="Badge"/> instead.
     /// </summary>
     internal static class Indicator
     {
-        /// <summary>The panel text, or null to hide it.</summary>
-        internal static string? Text()
+        internal enum State { Idle, Running, Off, Paused, NoLoader, StowageEmpty }
+
+        private const float Icon = 40f, BarWidth = 140f, Pad = 4f, RowHeight = Icon + 2 * Pad;
+
+        internal static State Of(Staging staging) =>
+            !staging.HasTarget ? (staging.StowedShells == 0 ? State.StowageEmpty : State.Idle)
+            : !Plugin.PlayerReRack ? State.Off
+            : staging.LoaderEfficiency <= 0f ? State.NoLoader
+            : staging.LoaderBusy ? State.Paused
+            : State.Running;
+
+        /// <summary>The player's gun with WeaponBehaviour <paramref name="gun"/>, if staged and updated in the last second.</summary>
+        internal static Staging? Find(IntPtr gun)
+        {
+            float now = Time.time;
+            foreach (Staging staging in LoadControllerUpdatePatch.Staged.Values)
+                if (staging.Weapon == gun && staging.IsPlayer && now - staging.LastSeen <= 1f)
+                    return staging;
+            return null;
+        }
+
+        /// <summary>Draws a row per player gun not on rounds' ammo bar, upward from (<paramref name="left"/>, <paramref name="bottom"/>); returns the height.</summary>
+        internal static float Draw(float left, float bottom)
         {
             using var _ = Profile.Measure("stagedAmmo: HUD indicator");
             if (!Plugin.ShowIndicator.Value)
-                return null;
-
-            var text = new StringBuilder();
-            int gun = 0;
+                return 0f;
+            float top = bottom;
             float now = Time.time;
+            // Bottom row first, so guns read top to bottom in the order found
+            var rows = new List<Staging>();
             foreach (Staging staging in LoadControllerUpdatePatch.Staged.Values)
+                if (staging.IsPlayer && now - staging.LastSeen <= 1f && !RoundsLink.OnBar(staging.Weapon))
+                    rows.Add(staging);
+            for (int i = rows.Count - 1; i >= 0; i--)
             {
-                if (!staging.IsPlayer || now - staging.LastSeen > 1f)
-                    continue;
-                string status = !staging.HasTarget ? (staging.StowedShells == 0 ? "stowage empty" : "racks full")
-                    : !Plugin.PlayerReRack ? "re-rack off"
-                    : staging.LoaderEfficiency <= 0f ? "no loader"
-                    : staging.LoaderBusy ? "re-rack paused, loading"
-                    : $"re-racking {staging.Progress:0.0}/{staging.Required:0.0}s";
-                if (text.Length > 0)
-                    text.Append('\n');
-                text.Append($"Gun {++gun}{(staging.Auto ? " (autoloader)" : "")}: ready {staging.ReadyShells}, stowed {staging.StowedShells}, {status}");
-                if (staging.LoaderEfficiency > 0f)
-                    text.Append($" (loader {staging.LoaderEfficiency:P0})");
+                Staging staging = rows[i];
+                top -= RowHeight;
+                var row = new Rect(left, top, 2 * Pad + 14f + Icon + Pad + BarWidth + Pad, RowHeight);
+                GUI.Box(row, "");
+                HudDraw.Label(new Rect(row.x + Pad, row.y, 14f, row.height), $"{i + 1}", 14, HudDraw.Idle);
+                Badge(staging, new Rect(row.x + Pad + 14f + Pad, row.y + Pad, Icon, Icon), false);
+
+                float x = row.x + 2 * Pad + 14f + Icon + Pad;
+                HudDraw.Label(new Rect(x, row.y + Pad, BarWidth, 16f), $"ready {staging.ReadyShells}/{staging.ReadyCapacity}", 13, HudDraw.Idle, TextAnchor.MiddleLeft);
+                HudDraw.Label(new Rect(x, row.y + Pad, BarWidth, 16f), $"stowed {staging.StowedShells}", 13, HudDraw.Idle, TextAnchor.MiddleRight);
+                HudDraw.Bar(new Rect(x, row.y + Pad + 18f, BarWidth, 8f), staging.ReadyCapacity > 0 ? (float)staging.ReadyShells / staging.ReadyCapacity : 0f, HudDraw.Next);
+                State state = Of(staging);
+                HudDraw.Bar(new Rect(x, row.y + Pad + 30f, BarWidth, 6f), state is State.Running or State.Paused ? Progress(staging) : 0f, Color(state));
+                if (i > 0)
+                    top -= Pad;
             }
-            return text.ToString();
+            return bottom - top;
         }
 
+        /// <summary>Re-rack progress, 0-1.</summary>
+        internal static float Progress(Staging staging) => staging.Required > 0f ? staging.Progress / staging.Required : 0f;
+
+        /// <summary>Rounds' ammo bar column for <paramref name="gun"/>: the icon, and below it a short state.</summary>
+        internal static void Badge(IntPtr gun, Rect column)
+        {
+            if (Find(gun) is { } staging)
+                Badge(staging, column, true);
+        }
+
+        /// <summary>The loader's icon, coloured by its state; with <paramref name="caption"/>, a short state under it.</summary>
+        private static void Badge(Staging staging, Rect r, bool caption)
+        {
+            State state = Of(staging);
+            string resource = state == State.StowageEmpty ? "stowage.png" : staging.Auto && state != State.NoLoader ? "autoloader.png" : "loader.png";
+            if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } icon)
+                HudDraw.Image(new Rect(r.x, r.y, r.width, r.width), icon, Color(state));
+            if (!caption)
+                return;
+            string text = state switch
+            {
+                State.Running => $"{Math.Max(staging.Required - staging.Progress, 0f):0.0}s",
+                State.Paused => "LOAD",
+                State.Off => "OFF",
+                State.NoLoader => "CREW",
+                State.StowageEmpty => "EMPTY",
+                _ => "",
+            };
+            HudDraw.Label(new Rect(r.x - Pad, r.y + r.width + 2f, r.width + 2 * Pad, 16f), text, 11, Color(state));
+        }
+
+        private static UnityCoreModule::UnityEngine.Color Color(State state) => state switch
+        {
+            State.Running => HudDraw.Ok,
+            State.Paused => HudDraw.Next,
+            State.Off => HudDraw.Off,
+            State.NoLoader or State.StowageEmpty => HudDraw.Blocked,
+            _ => HudDraw.Idle,
+        };
     }
 
     /// <summary>
@@ -828,7 +912,10 @@ namespace StagedAmmo
 
         internal static bool HasRounds(AmmoRackBehaviour? rack) => Present && rack != null && HasRoundsWithRounds(rack);
 
-        /// <summary>Tells rounds which racks are ready racks, for its ammo bar.</summary>
+        /// <summary>Whether rounds' ammo bar shows gun (a WeaponBehaviour pointer), so the panel leaves it out.</summary>
+        internal static bool OnBar(IntPtr gun) => Present && OnBarWithRounds(gun);
+
+        /// <summary>Tells rounds which racks are ready racks, and what re-racking is doing, for its ammo bar.</summary>
         internal static void ShareReady()
         {
             if (Present)
@@ -842,7 +929,17 @@ namespace StagedAmmo
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void ShareReadyWithRounds() => Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.ContainsKey(rack.Pointer);
+        private static void ShareReadyWithRounds()
+        {
+            Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.ContainsKey(rack.Pointer);
+            Rounds.Loadout.GunBadge = Indicator.Badge;
+            Rounds.Loadout.Reracking = gun =>
+                Indicator.Find(gun) is { Target: { } target } staging && Indicator.Of(staging) is Indicator.State.Running or Indicator.State.Paused
+                && Rounds.Loadout.RoundOf(target) is { } round ? (round, Indicator.Progress(staging)) : null;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool OnBarWithRounds(IntPtr gun) => Rounds.Loadout.OnBar(gun);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RequestAmmoWithRounds(WeaponBehaviour? weapon) => Rounds.Loadout.RequestAmmo(weapon);

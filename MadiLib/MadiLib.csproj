@@ -13,6 +13,7 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleController.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Unity.InputSystem.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Unity.TextMeshPro.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/UnityEngine.ImageConversionModule.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/UnityEngine.IMGUIModule.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/UnityEngine.UI.dll" Private="false" />

@@ -367,13 +367,13 @@ namespace Rounds
 
         /// <summary>
         /// Each of the player's guns with rounds: its loaded and next round,
-        /// whether it's waiting for the next round to be in reach, whether the
+        /// its name, whether it's waiting for the next round to be in reach, whether the
         /// round keys pick for it, and each round with its icon key and its
         /// shells left in all its racks and in ready racks.
         /// </summary>
-        internal static List<(string? Loaded, string? Next, bool Waiting, bool Active, List<(string Id, string Name, string Type, string Icon, int Left, int Ready)> Rounds)> Guns()
+        internal static List<(IntPtr Gun, string Name, string? Loaded, string? Next, bool Waiting, bool Active, List<(string Id, string Name, string Type, string Icon, int Left, int Ready)> Rounds)> Guns()
         {
-            var guns = new List<(string?, string?, bool, bool, List<(string, string, string, string, int, int)>)>();
+            var guns = new List<(IntPtr, string, string?, string?, bool, bool, List<(string, string, string, string, int, int)>)>();
             var player = PlayerGuns();
             int current = Active(player);
             for (int i = 0; i < player.Count; i++)
@@ -382,9 +382,16 @@ namespace Rounds
                 var ready = new Dictionary<string, int>();
                 var left = Left(cannon, ready);
                 var rounds = Loadout.List(owner).Select(r => (r.Id, r.Name, r.Type, Loadout.IconOf(owner, r.Id, r.Type), left.GetValueOrDefault(r.Id), ready.GetValueOrDefault(r.Id))).ToList();
-                guns.Add((Loaded(gun, owner), Selected(gun, owner), waiting.Contains(gun), i == current, rounds));
+                guns.Add((gun, GunName(owner, i), Loaded(gun, owner), Selected(gun, owner), waiting.Contains(gun), i == current, rounds));
             }
             return guns;
+        }
+
+        /// <summary>The gun's blueprint name without its plugins' <c>[tags]</c>, or "Gun n" when that leaves nothing.</summary>
+        private static string GunName(CannonBlueprint owner, int index)
+        {
+            string name = System.Text.RegularExpressions.Regex.Replace(owner.Name ?? "", @"\s*\[[^\]]*\]", "").Trim();
+            return name.Length > 0 ? name : $"Gun {index + 1}";
         }
     }
 

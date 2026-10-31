@@ -67,7 +67,25 @@ Hud.AddPanel(() => ShowIndicator.Value ? $"Ready {ready} / Stowed {stowed}" : nu
 
 The function is called every GUI frame. Return null or empty to hide the panel. If it throws, the panel is removed and the error logged.
 
-`Hud.AddPanel((left, bottom) => ...)` adds a panel that draws itself with IMGUI (`GUI.Box`, `GUI.DrawTexture`, ...), upward from its bottom-left corner in screen pixels. It returns its height, or 0 to hide it.
+`Hud.AddPanel((left, bottom) => ...)` adds a panel that draws itself with IMGUI (`GUI.Box`, `GUI.Label`, ...), upward from its bottom-left corner in screen pixels. It returns its height, or 0 to hide it. Panels only draw on the Repaint pass.
+
+## HudDraw
+
+Drawing helpers for drawn panels, so every plugin's panel looks the same. `GUI.DrawTexture` is stripped from the game, so these draw through label styles.
+
+- `Fill(rect, color)`, `Outline(rect, color)` (a `HudDraw.Frame`-wide frame), `Bar(rect, fraction, color)`, `CentredBar(rect, value, limit, color)`.
+- `Label(rect, text, fontSize, color, anchor)`: bold text.
+- `Icon(assembly, "name.png")` loads an embedded PNG once (null if missing); `Icon(key, bytes)` from bytes. `Image(rect, icon, color)` draws it scaled to fit, tinted. Draw icons light grey with a dark outline so the tint shows (see `tools/hudicons.py`).
+- Colours: `Ok` (green: running, on), `Next` (yellow: next up, paused, over a limit), `Blocked` (red), `Off` (grey: switched off by the player), `Idle`.
+
+```csharp
+Hud.AddPanel((left, bottom) =>
+{
+    if (HudDraw.Icon(typeof(Plugin).Assembly, "thing.png") is { } icon)
+        HudDraw.Image(new Rect(left, bottom - 40f, 40f, 40f), icon, on ? HudDraw.Ok : HudDraw.Off);
+    return 40f;
+});
+```
 
 ## PlayerVehicle
 

@@ -21,6 +21,8 @@ using Sprocket.Vehicles.Weapons.Cannons;
 using Sprocket.Vehicles.Weapons;
 using VehicleDesigner.Compartments.Design;
 using Mathf = UnityCoreModule::UnityEngine.Mathf;
+using Rect = UnityCoreModule::UnityEngine.Rect;
+using UnityEngine;
 using Quaternion = UnityCoreModule::UnityEngine.Quaternion;
 using Time = UnityCoreModule::UnityEngine.Time;
 using Transform = UnityCoreModule::UnityEngine.Transform;
@@ -65,23 +67,44 @@ namespace Stabilizer
         }
 
         /// <summary>
-        /// The HUD line for the player's vehicle: each stabilized drive, and
-        /// whether it's on or off for being over its speed limit.
+        /// The HUD panel for the player's vehicle: an icon per stabilized
+        /// drive (a gun turning both ways gets two), green while on, amber
+        /// over its speed limit, grey with stabilizers switched off; a
+        /// drive's limit (km/h) is shown under it.
         /// </summary>
-        private static string? Indicator()
+        private static float Indicator(float left, float bottom)
         {
             using var _ = MadiLib.Profile.Measure("stabilizer: HUD indicator");
             float now = Time.realtimeSinceStartup;
             Drives.Prune(now);
             if (!ShowIndicator.Value)
-                return null;
-            var parts = new List<string>();
+                return 0f;
+            const float icon = 40f, pad = 4f, caption = 14f;
+            var shown = new List<(string Resource, float Limit, UnityCoreModule::UnityEngine.Color Color)>();
             foreach (var (part, name, speed, limit, seen) in Drives.Status.Values)
-                if (now - seen < 1f && part != null && PlayerVehicle.Contains(part))
-                    parts.Add(limit > 0f && speed > limit ? $"{name} off (over {limit:0} km/h)" : $"{name} on");
-            if (parts.Count == 0)
-                return null;
-            return PlayerEnabled ? "Stabilizer: " + string.Join(", ", parts) : "Stabilizer: off";
+            {
+                if (now - seen >= 1f || part == null || !PlayerVehicle.Contains(part))
+                    continue;
+                var color = !PlayerEnabled ? HudDraw.Off : limit > 0f && speed > limit ? HudDraw.Next : HudDraw.Ok;
+                if (name is "traverse" or "gun azimuth" or "gun")
+                    shown.Add((name == "traverse" ? "traverse.png" : "azimuth.png", limit, color));
+                if (name is "elevation" or "gun")
+                    shown.Add(("elevation.png", limit, color));
+            }
+            if (shown.Count == 0)
+                return 0f;
+            float height = icon + caption + 2 * pad;
+            GUI.Box(new Rect(left, bottom - height, pad + shown.Count * (icon + pad), height), "");
+            for (int i = 0; i < shown.Count; i++)
+            {
+                var (resource, limit, color) = shown[i];
+                var cell = new Rect(left + pad + i * (icon + pad), bottom - height + pad, icon, icon);
+                if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } image)
+                    HudDraw.Image(cell, image, color);
+                if (limit > 0f)
+                    HudDraw.Label(new Rect(cell.x - pad, cell.yMax, icon + 2 * pad, caption), $"{limit:0} km/h", 10, color);
+            }
+            return height;
         }
 
         /// <summary>Whether <paramref name="part"/>'s drive should stabilize: always, unless the player switched theirs off.</summary>

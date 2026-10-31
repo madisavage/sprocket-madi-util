@@ -18,6 +18,8 @@ using Sprocket.UI;
 using Sprocket.Vehicles.Tracks;
 using Sprocket.Vehicles.Tracks.Editor;
 using Quaternion = UnityCoreModule::UnityEngine.Quaternion;
+using Rect = UnityCoreModule::UnityEngine.Rect;
+using UnityEngine;
 using Time = UnityCoreModule::UnityEngine.Time;
 using Transform = UnityCoreModule::UnityEngine.Transform;
 using Vector3 = UnityCoreModule::UnityEngine.Vector3;
@@ -76,16 +78,41 @@ namespace Hydropneumatic
             new Harmony("madi.hydropneumatic").PatchAll();
         }
 
-        /// <summary>The HUD line for the player's vehicle while it isn't level.</summary>
-        private static string? Indicator()
+        /// <summary>
+        /// The HUD panel for the player's vehicle while it isn't level: a
+        /// gauge each for height, pitch and roll against how far they can go,
+        /// and with hull aiming, its icon, green while on.
+        /// </summary>
+        private static float Indicator(float left, float bottom)
         {
             using var _ = MadiLib.Profile.Measure("hydropneumatic: HUD indicator");
             Ride.Prune();
             Pose.State pose = Ride.Current;
             if (!ShowIndicator.Value || !Ride.Active || pose == default && !HullAim.Active)
-                return null;
-            string line = $"Suspension: {pose.Height:+0;-0;0} mm, pitch {pose.Pitch:+0.0;-0.0;0.0}°, roll {pose.Roll:+0.0;-0.0;0.0}°";
-            return HullAim.Active ? line + (HullAim.Enabled ? ", hull aim on" : ", hull aim off") : line;
+                return 0f;
+            const float icon = 40f, pad = 4f, column = 76f, gauge = icon + pad + column;
+            float Degrees(float half) => MathF.Atan(Ride.Travel / (1000f * half)) * 180f / MathF.PI;
+            var gauges = new (string Resource, string Text, float Value, float Limit)[]
+            {
+                ("height.png", $"{pose.Height:+0;-0;0} mm", pose.Height, Ride.Travel),
+                ("pitch.png", $"{pose.Pitch:+0.0;-0.0;0.0}°", pose.Pitch, Degrees(Ride.HalfLength)),
+                ("roll.png", $"{pose.Roll:+0.0;-0.0;0.0}°", pose.Roll, Degrees(Ride.HalfWidth)),
+            };
+            float height = icon + 2 * pad;
+            float width = pad + gauges.Length * (gauge + pad) + (HullAim.Active ? icon + pad : 0f);
+            GUI.Box(new Rect(left, bottom - height, width, height), "");
+            float x = left + pad, y = bottom - height + pad;
+            foreach (var (resource, text, value, limit) in gauges)
+            {
+                if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } image)
+                    HudDraw.Image(new Rect(x, y, icon, icon), image, value == 0f ? HudDraw.Idle : HudDraw.Next);
+                HudDraw.Label(new Rect(x + icon + pad, y, column, 20f), text, 14, HudDraw.Idle);
+                HudDraw.CentredBar(new Rect(x + icon + pad, y + 26f, column, 8f), value, limit, HudDraw.Next);
+                x += gauge + pad;
+            }
+            if (HullAim.Active && HudDraw.Icon(typeof(Plugin).Assembly, "hullaim.png") is { } aim)
+                HudDraw.Image(new Rect(x, y, icon, icon), aim, HullAim.Enabled ? HudDraw.Ok : HudDraw.Off);
+            return height;
         }
 
         /// <summary>
@@ -233,7 +260,11 @@ namespace Hydropneumatic
         internal static Pose.State Current;
         private static Pose.State? target;
         private static Transform? root;
-        private static float seen, levelPitch = float.NaN, integral, halfLength = 2f, halfWidth = 1f;
+        private static float seen, levelPitch = float.NaN, integral;
+        // Half the wheelbase and track spacing (m), for the HUD's pitch and roll limits too
+        internal static float HalfLength = 2f, HalfWidth = 1f;
+        /// <summary>The player's travel (± mm) as of the last frame: the tag's, or less if the suspension can't reach it.</summary>
+        internal static float Travel;
         private static bool capped;
         private static float smoothedMoment;
         // Seconds over which the strut moment follows the controller, so arms loading and unloading don't slam it
@@ -344,7 +375,7 @@ namespace Hydropneumatic
                     return;
                 }
                 seen = Time.realtimeSinceStartup;
-                *preload = track.Stock + Pose.Preload(Current, __instance.sideMultiplier, halfWidth);
+                *preload = track.Stock + Pose.Preload(Current, __instance.sideMultiplier, HalfWidth);
                 track.Written = true;
                 Arms(track);
                 // Once per step, after the right track: both tracks' arms are in
@@ -481,10 +512,11 @@ namespace Hydropneumatic
             }
             // Never past what the suspension itself can reach: an unreachable pose leaves the struts slamming against its stops
             float travel = MathF.Min(tagTravel, Measure(hull));
+            Travel = travel;
 
             float dt = Time.deltaTime, step = rate * dt;
-            float pitchStep = MathF.Atan(step / (1000f * halfLength)) * 180f / MathF.PI;
-            float rollStep = MathF.Atan(step / (1000f * halfWidth)) * 180f / MathF.PI;
+            float pitchStep = MathF.Atan(step / (1000f * HalfLength)) * 180f / MathF.PI;
+            float rollStep = MathF.Atan(step / (1000f * HalfWidth)) * 180f / MathF.PI;
             float Axis(Func<bool> plus, Func<bool> minus) => (plus() ? 1f : 0f) - (minus() ? 1f : 0f);
             float dHeight = Axis(Plugin.Raise, Plugin.Lower) * step;
             float dPitch = Axis(Plugin.PitchUp, Plugin.PitchDown) * pitchStep;
@@ -495,16 +527,16 @@ namespace Hydropneumatic
                 target = null;
                 if (dPitch != 0f)
                     Plugin.PitchTarget = null;
-                Current = Pose.Move(Current, dHeight, dPitch, dRoll, travel, halfLength, halfWidth);
+                Current = Pose.Move(Current, dHeight, dPitch, dRoll, travel, HalfLength, HalfWidth);
             }
             else if (target is { } level)
             {
-                Current = Pose.Toward(Current, level, dt, rate, halfLength, halfWidth, travel);
+                Current = Pose.Toward(Current, level, dt, rate, HalfLength, HalfWidth, travel);
                 if (Current == level)
                     target = null;
             }
             else if (Plugin.PitchTarget is { } pitch)
-                Current = Pose.Toward(Current, Current with { Pitch = pitch }, dt, rate, halfLength, halfWidth, travel);
+                Current = Pose.Toward(Current, Current with { Pitch = pitch }, dt, rate, HalfLength, HalfWidth, travel);
         }
 
         /// <summary>Sets half the wheelbase and half the track spacing of the player's tagged tracks.</summary>
@@ -523,9 +555,9 @@ namespace Hydropneumatic
                 if (track.Behaviour.sideMultiplier < 0) left = side; else right = side;
             }
             if (maxX > minX)
-                halfLength = (maxX - minX) / 2f;
+                HalfLength = (maxX - minX) / 2f;
             if (!float.IsNaN(left) && !float.IsNaN(right) && right > left)
-                halfWidth = (right - left) / 2f;
+                HalfWidth = (right - left) / 2f;
             return reach;
         }
     }
