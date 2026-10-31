@@ -10,6 +10,7 @@ using Sprocket.Blueprints;
 using Sprocket.SettingConfiguration;
 using Sprocket.UI;
 using Sprocket.VehicleDesigner;
+using Sprocket.VehicleDesigner.UI;
 using Sprocket.Vehicles.CrewSystems;
 using Sprocket.Vehicles.CrewSystems.Editor;
 using Sprocket.Vehicles.Weapons;
@@ -25,8 +26,11 @@ namespace MadiUtil
     [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
     public sealed class Plugin : BasePlugin
     {
+        internal static BepInEx.Logging.ManualLogSource Logger = null!;
+
         public override void Load()
         {
+            Logger = Log;
             new Harmony("madi.madiutil").PatchAll();
             Keybinds.Register(this, "madiUtil", "Save vehicle", "Ctrl+S", SaveVehicle);
             SettingsTab.AddSection("madiUtil", "madiUtil", ui => ui.Bool(unlockEras));
@@ -159,5 +163,36 @@ namespace MadiUtil
                 UseSoftLimits = true,
                 Step = 0.25f
             });
+    }
+
+    /// <summary>
+    /// Widens the armour overlay's penetration preview sliders, so very heavy
+    /// rounds (thousands of mm) can be previewed.
+    /// Patches Draw, not the constructor: Il2CppInterop can't hook this constructor.
+    /// </summary>
+    [HarmonyPatch(typeof(ArmourOverlayConfig), nameof(ArmourOverlayConfig.Draw))]
+    internal static class ArmourOverlayConfigPatch
+    {
+        private const float MaxPenetration = 5000f, MaxCalibre = 1000f;
+
+        private static bool logged;
+
+        private static void Prefix(ArmourOverlayConfig __instance)
+        {
+            FloatProperty penetration = __instance.Penetration, calibre = __instance.Calibre;
+            if (!logged)
+            {
+                logged = true;
+                Plugin.Logger.LogInfo($"Stock overlay sliders: penetration {penetration.Min}-{penetration.Max} (soft {penetration.SoftMax}), calibre {calibre.Min}-{calibre.Max} (soft {calibre.SoftMax})");
+            }
+            Widen(penetration, MaxPenetration);
+            Widen(calibre, MaxCalibre);
+        }
+
+        private static void Widen(FloatProperty property, float max)
+        {
+            // Max only: stock SoftMax is infinite with soft limits off, and setting it turns the slider into a text box.
+            property.Max = Math.Max(property.Max, max);
+        }
     }
 }

@@ -8,11 +8,13 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.CrewDesigner.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.LayingDriveDesigner.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Operations.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Crew.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.SettingsConfiguration.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.SettingsMenu.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.UI.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
   </ItemGroup>
 
