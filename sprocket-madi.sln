@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rounds", "rounds\rounds.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "highExplosive", "highExplosive\highExplosive.csproj", "{AEDE9705-C003-44A2-B850-000CEDFD14F1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "hydropneumatic", "hydropneumatic\hydropneumatic.csproj", "{5840743C-0100-47D1-B4BF-0AD18CF9B810}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -139,6 +141,18 @@ Global
 		{AEDE9705-C003-44A2-B850-000CEDFD14F1}.Release|x64.Build.0 = Release|Any CPU
 		{AEDE9705-C003-44A2-B850-000CEDFD14F1}.Release|x86.ActiveCfg = Release|Any CPU
 		{AEDE9705-C003-44A2-B850-000CEDFD14F1}.Release|x86.Build.0 = Release|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Debug|x64.Build.0 = Debug|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Debug|x86.Build.0 = Debug|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x64.ActiveCfg = Release|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x64.Build.0 = Release|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x86.ActiveCfg = Release|Any CPU
+		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

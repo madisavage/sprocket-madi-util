@@ -17,6 +17,7 @@
     <ProjectReference Include="../stagedAmmo/stagedAmmo.csproj" />
     <ProjectReference Include="../stabilizer/stabilizer.csproj" />
     <ProjectReference Include="../subcaliber/subcaliber.csproj" />
+    <ProjectReference Include="../hydropneumatic/hydropneumatic.csproj" />
     <!-- The plugins' game and BepInEx references, copied so their types load -->
     <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" />
     <Reference Update="@(Reference)" Private="true" />

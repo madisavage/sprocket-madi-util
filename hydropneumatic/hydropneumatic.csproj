@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MadiLib/MadiLib.csproj" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.ContinuousTracks.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Powertrains.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.ContinuousTracks.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleController.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Cannons.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Cannons.Editor.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/UnityEngine.PhysicsModule.dll" Private="false" Aliases="UnityPhysicsModule" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.ContinuousTracks.Editor.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="tests" />
+  </ItemGroup>
+
+</Project>
