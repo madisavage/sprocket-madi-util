@@ -52,6 +52,29 @@ namespace MadiLib
             binds.Add(new Bind(subtab, name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S or F9, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
         }
 
+        /// <summary>
+        /// Registers a keybind that is held rather than pressed, shown and
+        /// rebound like the others, in the Keybinds section of <paramref name="subtab"/>.
+        /// </summary>
+        /// <param name="plugin">The plugin whose config file stores the key.</param>
+        /// <param name="subtab">The Settings subtab, as passed to <see cref="SettingsTab.AddSection(string, string, ConfigEntryBase[])"/>.</param>
+        /// <param name="name">Shown in the Settings tab and used as the config key; keep it stable.</param>
+        /// <param name="defaultKey">Default key, such as "S", "F9" or "Ctrl+S".</param>
+        /// <returns>True while the key is held; false while a key is being rebound or the player is typing.</returns>
+        public static Func<bool> RegisterHeld(BasePlugin plugin, string subtab, string name, string defaultKey)
+        {
+            Register(plugin, subtab, name, defaultKey, () => { });
+            ConfigEntry<string> entry = binds[^1].Entry;
+            return () =>
+            {
+                if (capturing != null || Keyboard.current is not { } keys || Typing())
+                    return false;
+                (Key key, bool ctrl, bool shift, bool alt) = Lookup(entry.Value);
+                return key != Key.None && keys[key].isPressed
+                    && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
+            };
+        }
+
         /// <summary>Whether any keybinds are registered.</summary>
         internal static bool Any => binds.Count > 0;
 
@@ -86,11 +109,17 @@ namespace MadiLib
         /// </summary>
         private static bool Pressed(Keyboard keys, string text)
         {
-            if (!parsed.TryGetValue(text, out var bind))
-                parsed[text] = bind = Parse(text);
-            (Key key, bool ctrl, bool shift, bool alt) = bind;
+            (Key key, bool ctrl, bool shift, bool alt) = Lookup(text);
             return key != Key.None && keys[key].wasPressedThisFrame
                 && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
+        }
+
+        /// <summary><paramref name="text"/> parsed, once per text.</summary>
+        private static (Key Key, bool Ctrl, bool Shift, bool Alt) Lookup(string text)
+        {
+            if (!parsed.TryGetValue(text, out var bind))
+                parsed[text] = bind = Parse(text);
+            return bind;
         }
 
         /// <summary>

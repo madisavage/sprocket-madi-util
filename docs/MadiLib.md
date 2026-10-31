@@ -30,6 +30,13 @@ Keybinds.Register(this, "madiUtil", "Save vehicle", "Ctrl+S", SaveVehicle);
 | `defaultKey` | A key such as `S` or `F9`, optionally with `Ctrl+`, `Shift+` or `Alt+` in front. |
 | `onPressed` | Called on the frame the key is pressed. Not called while the player is rebinding a key or typing in a text field. |
 
+For a key that acts while held, `RegisterHeld` takes the same parameters without `onPressed` and returns a check to call each frame. It's false while the player is rebinding a key or typing:
+
+```csharp
+Func<bool> raise = Keybinds.RegisterHeld(this, "Hydropneumatic", "Raise", "PageUp");
+// in a per-frame update: if (raise()) height += rate * Time.deltaTime;
+```
+
 ## SettingsTab
 
 Sections on the **MadiLib** Settings tab, grouped in subtabs. The tab only appears once something uses it. Apply does nothing, so values must save as soon as they change; a BepInEx `ConfigEntry` does by default.
