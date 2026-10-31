@@ -43,12 +43,12 @@ namespace Rounds
             Logger = Log;
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show the ammo bar: each of your guns' rounds with shells left, its loaded round and its next.");
             LogShells = Config.Bind("Debug", "Log shells", false, "Logs every shell taken from or put in a rack with rounds, which round it was and why, to BepInEx/LogOutput.log.");
-            SettingsTab.AddSection("Rounds", ShowIndicator, LogShells);
-            Keybinds.Register(this, "Select gun", "B", Tracker.SelectGun);
+            SettingsTab.AddSection("Rounds", "Rounds", ShowIndicator, LogShells);
+            Keybinds.Register(this, "Rounds", "Select gun", "B", Tracker.SelectGun);
             for (int n = 1; n <= 9; n++)
             {
                 int round = n;
-                Keybinds.Register(this, $"Round {n}", $"Digit{n}", () => Tracker.SelectRound(round));
+                Keybinds.Register(this, "Rounds", $"Round {n}", $"Digit{n}", () => Tracker.SelectRound(round));
             }
             using (var icon = typeof(Plugin).Assembly.GetManifestResourceStream("ap.png"))
                 Loadout.Register("ap", "AP", (_, _, _, _) => { }, icon: icon);

@@ -61,7 +61,7 @@ namespace HighExplosive
                 new AcceptableValueRange<float>(0.25f, 10f), new Step(0.25f)));
             LogHits = config.Bind("HEAT", "Log hits", false,
                 "Logs each HEAT jet's setup and its path through the armour: each plate's residual penetration and whether the jet perforated, stopped or left the vehicle.");
-            SettingsTab.AddSection("HEAT", JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, LogHits);
+            SettingsTab.AddSection("Rounds", "HEAT", JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, LogHits);
             Impacts.FragmentSimulating += JetBudget.Simulating;
             Impacts.FragmentSimulated += JetBudget.Simulated;
             Impacts.HitSimulated += JetLog.Simulated;

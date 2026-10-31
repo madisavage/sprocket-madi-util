@@ -12,6 +12,7 @@ BepInEx 6 (IL2CPP) plugins for Sprocket, plus the library they share.
 | `highExplosive/` | `highExplosive.dll` | HE and HESH rounds that penetrate by mass alone and spall catastrophically, HEAT rounds whose jet penetrates the same at any range, and APHE rounds that burst into spall behind the armour. Needs `rounds.dll`. |
 | `composite/` | `composite.dll` | Pseudo-composite armour: stack thin plates behind selected faces, in add-ons that can each have their own material. |
 | `stabilizer/` | `stabilizer.dll` | Naive gun stabilization for traverse motors and laying drives. |
+| `hydropneumatic/` | `hydropneumatic.dll` | Adjustable suspension: change your vehicle's ride height, pitch and roll while driving. |
 | `armourMaterial/` | `armourMaterial.dll` | Pick any armour material for a plate structure. |
 
 ## Install
@@ -212,6 +213,31 @@ Naive gun stabilization. Tick **Stabilizer** in a traverse motor's or laying dri
 - Both are saved in the drive's name, as **[stab]** or **[stab 30]** for 30 km/h. The game saves drive names in the vehicle file but doesn't show them, so the setting travels with shared vehicles.
 - **Toggle stabilizers** (default Alt+S) switches your vehicle's stabilizers off and back on; other vehicles' stay on. Rebind it on the MadiLib tab.
 - A box in the bottom-left corner shows your vehicle's stabilized drives and whether each is on, or off for being over its speed limit, such as `Stabilizer: traverse on, elevation off (over 40 km/h)`, or `Stabilizer: off` when toggled off. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.stabilizer.cfg` under `[Display]`.
+
+## hydropneumatic
+
+Adjustable (hydropneumatic) suspension, like a Strv 103's. Tick **Adjustable suspension** in the tracks' edit panel, then in battle hold the keys to raise, lower, pitch and roll your vehicle while driving.
+
+- Once ticked, **Suspension travel** (mm each way, default 150) and **Suspension rate** (mm/s at the outermost wheel, default 50) set how far and how fast it moves.
+- Both are saved in the track's name, as **[adjust 150 50]**. The game saves the name in the vehicle file but doesn't show it, so the setting travels with shared vehicles.
+- The suspension's own travel also limits it: each wheel moves at most half of its arm's range, `arm length × travel angle / 2`. Pitch reaches about `atan(that / half the wheelbase)`; ±10° of pitch on a 4 m wheelbase needs about 350 mm each way, from long arms with a wide travel angle.
+- Height and roll go through the game's own springs. Pitch is pushed in by equal and opposite forces at the loaded wheels, as struts would, so the hull never lifts off and the lighter end's wheels stay on the ground; a nose- or tail-heavy vehicle pitches less one way.
+- Keybinds (rebind them on the MadiLib tab, **Hydropneumatic** subtab): **Raise** PageUp, **Lower** PageDown, **Pitch up** Home, **Pitch down** End, **Roll left** Insert, **Roll right** Delete, held; **Level** Backspace returns to level at the set rate.
+- Only your own vehicle adjusts; AI vehicles stay level, and vehicles without the tag are unchanged.
+- A box in the bottom-left corner shows height, pitch and roll while you aren't level, such as `Suspension: +40 mm, pitch -2.0°, roll 0.0°`. Toggle it with **Show indicator** on the MadiLib tab, or in `BepInEx/config/madi.hydropneumatic.cfg` under `[Display]`.
+
+### Hull aiming
+
+For a gun with no traverse or elevation of its own, Strv 103 style. Tick **Hull aiming** in the cannon's edit panel; in battle, the hull turns and pitches to put that gun on your crosshair.
+
+- Azimuth: past 2° the tracks turn the hull through your own steering input. Within 1° a separate laying drive takes over, like the Strv 103's hydraulic steering. The engine is too coarse to lay a gun: it has to spool up and turns in steps. The laying drive is equal and opposite pushes along the two tracks, so it only turns the hull, and only while both tracks touch the ground.
+- Elevation: through the suspension's pitch, so it needs **Adjustable suspension** on the tracks (the panel says so when it's missing). Its range is the suspension's pitch range above.
+- Once ticked, **Laying speed** (°/s, default 3) and **Laying force** (% of the weight on each track, default 60) set the laying drive. Too little force and the hull sticks on its tracks' friction.
+- They're saved in the cannon's name, as **[hullaim 3 60]**, so they travel with shared vehicles. The first tagged gun on a vehicle is the one aimed.
+- The gun points straight at what's under the crosshair: no superelevation for range.
+- Any steering key wins for as long as you hold it. Holding the game's **lock turret** (default middle mouse) pauses hull aiming, so you can look around; the hull holds its heading and pitch.
+- **Toggle hull aiming** (default Alt+H, **Hydropneumatic** subtab) switches it off and on. While you have a tagged gun, the box in the bottom-left corner adds `hull aim on` or `hull aim off`.
+- Only your own vehicle; AI vehicles don't hull-aim.
 
 ## armourMaterial
 

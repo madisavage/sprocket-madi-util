@@ -58,9 +58,9 @@ namespace Stabilizer
         {
             Logger = Log;
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show whether your vehicle's stabilizers are on.");
-            SettingsTab.AddSection("Stabilizer", ShowIndicator);
+            SettingsTab.AddSection("Stabilizer", "Stabilizer", ShowIndicator);
             Hud.AddPanel(Indicator);
-            Keybinds.Register(this, "Toggle stabilizers", "Alt+S", () => PlayerEnabled = !PlayerEnabled);
+            Keybinds.Register(this, "Stabilizer", "Toggle stabilizers", "Alt+S", () => PlayerEnabled = !PlayerEnabled);
             new Harmony("madi.stabilizer").PatchAll();
         }
 

@@ -2,6 +2,8 @@ extern alias UnityCoreModule;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
@@ -22,7 +24,7 @@ namespace MadiLib
     public static class Keybinds
     {
         /// <summary>A registered keybind and the config entry holding its key.</summary>
-        private sealed record Bind(string Name, ConfigEntry<string> Entry, Action OnPressed);
+        private sealed record Bind(string Subtab, string Name, ConfigEntry<string> Entry, Action OnPressed);
 
         private static readonly List<Bind> binds = new();
         private static readonly List<UnityAction> callbacks = new(); // keeps button callbacks alive while the tab shows
@@ -31,18 +33,53 @@ namespace MadiLib
         // Bind text, parsed; polled every frame, so parsed once per text
         private static readonly Dictionary<string, (Key Key, bool Ctrl, bool Shift, bool Alt)> parsed = new();
 
-        /// <summary>Registers a keybind and shows it in the Settings tab.</summary>
+        /// <summary>Registers a keybind and shows it in the Settings tab, in the subtab named after the plugin.</summary>
         /// <param name="plugin">The plugin whose config file stores the key.</param>
         /// <param name="name">Shown in the Settings tab and used as the config key; keep it stable.</param>
         /// <param name="defaultKey">Default key, such as "S", "F9" or "Ctrl+S".</param>
         /// <param name="onPressed">Called on the frame the key is pressed.</param>
-        public static void Register(BasePlugin plugin, string name, string defaultKey, Action onPressed)
+        public static void Register(BasePlugin plugin, string name, string defaultKey, Action onPressed) =>
+            Register(plugin, MetadataHelper.GetMetadata(plugin).Name, name, defaultKey, onPressed);
+
+        /// <summary>Registers a keybind and shows it in the Keybinds section of <paramref name="subtab"/> in the Settings tab.</summary>
+        /// <param name="plugin">The plugin whose config file stores the key.</param>
+        /// <param name="subtab">The Settings subtab, as passed to <see cref="SettingsTab.AddSection(string, string, ConfigEntryBase[])"/>.</param>
+        /// <param name="name">Shown in the Settings tab and used as the config key; keep it stable.</param>
+        /// <param name="defaultKey">Default key, such as "S", "F9" or "Ctrl+S".</param>
+        /// <param name="onPressed">Called on the frame the key is pressed.</param>
+        public static void Register(BasePlugin plugin, string subtab, string name, string defaultKey, Action onPressed)
         {
-            binds.Add(new Bind(name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S or F9, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
+            binds.Add(new Bind(subtab, name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S or F9, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
+        }
+
+        /// <summary>
+        /// Registers a keybind that is held rather than pressed, shown and
+        /// rebound like the others, in the Keybinds section of <paramref name="subtab"/>.
+        /// </summary>
+        /// <param name="plugin">The plugin whose config file stores the key.</param>
+        /// <param name="subtab">The Settings subtab, as passed to <see cref="SettingsTab.AddSection(string, string, ConfigEntryBase[])"/>.</param>
+        /// <param name="name">Shown in the Settings tab and used as the config key; keep it stable.</param>
+        /// <param name="defaultKey">Default key, such as "S", "F9" or "Ctrl+S".</param>
+        /// <returns>True while the key is held; false while a key is being rebound or the player is typing.</returns>
+        public static Func<bool> RegisterHeld(BasePlugin plugin, string subtab, string name, string defaultKey)
+        {
+            Register(plugin, subtab, name, defaultKey, () => { });
+            ConfigEntry<string> entry = binds[^1].Entry;
+            return () =>
+            {
+                if (capturing != null || Keyboard.current is not { } keys || Typing())
+                    return false;
+                (Key key, bool ctrl, bool shift, bool alt) = Lookup(entry.Value);
+                return key != Key.None && keys[key].isPressed
+                    && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
+            };
         }
 
         /// <summary>Whether any keybinds are registered.</summary>
         internal static bool Any => binds.Count > 0;
+
+        /// <summary>The subtab of each keybind, in the order registered.</summary>
+        internal static IEnumerable<string> Subtabs => binds.Select(b => b.Subtab);
 
         /// <summary>
         /// Called every frame by <see cref="KeybindPoller"/>. Fires each bind
@@ -72,11 +109,17 @@ namespace MadiLib
         /// </summary>
         private static bool Pressed(Keyboard keys, string text)
         {
-            if (!parsed.TryGetValue(text, out var bind))
-                parsed[text] = bind = Parse(text);
-            (Key key, bool ctrl, bool shift, bool alt) = bind;
+            (Key key, bool ctrl, bool shift, bool alt) = Lookup(text);
             return key != Key.None && keys[key].wasPressedThisFrame
                 && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
+        }
+
+        /// <summary><paramref name="text"/> parsed, once per text.</summary>
+        private static (Key Key, bool Ctrl, bool Shift, bool Alt) Lookup(string text)
+        {
+            if (!parsed.TryGetValue(text, out var bind))
+                parsed[text] = bind = Parse(text);
+            return bind;
         }
 
         /// <summary>
@@ -133,23 +176,25 @@ namespace MadiLib
         }
 
         /// <summary>
-        /// Draws the keybinds section of the Settings tab: a row per bind with
-        /// its name and a button showing its key. Clicking the button starts
-        /// rebinding. Draws nothing when no keybinds are registered.
+        /// Draws a subtab's keybinds section: a row per bind with its name and
+        /// a button showing its key. Clicking the button starts rebinding.
+        /// Draws nothing when the subtab has no keybinds.
         /// </summary>
         /// <param name="page">The Settings tab being drawn.</param>
         /// <param name="ui">The drawer for the tab.</param>
-        internal static void Draw(MadiLibMenu page, IGUIElementDrawer ui)
+        /// <param name="subtab">The subtab whose keybinds to draw.</param>
+        internal static void Draw(MadiLibMenu page, IGUIElementDrawer ui, string subtab)
         {
             callbacks.Clear();
-            if (binds.Count == 0)
+            List<Bind> shown = binds.FindAll(b => b.Subtab == subtab);
+            if (shown.Count == 0)
                 return;
 
             ui.InfoField(capturing == null
                 ? "Click a key, then press the new one (with Ctrl, Shift or Alt if wanted). Saved at once."
                 : $"Press the new key for {capturing.Name}. Esc cancels, Backspace leaves it unbound.", 2);
             ui.ColumnCount = 2;
-            foreach (Bind bind in binds)
+            foreach (Bind bind in shown)
             {
                 Bind current = bind;
                 UnityAction onClick = DelegateSupport.ConvertDelegate<UnityAction>(new Action(() => { capturing = current; page.GUIRepaint = true; }))!;
@@ -166,13 +211,18 @@ namespace MadiLib
     }
 
     /// <summary>
-    /// Component added to the plugin's object to call <see cref="Keybinds.Poll"/> every frame.
+    /// Component added to the plugin's object to call <see cref="Keybinds.Poll"/>
+    /// and <see cref="EditorGui.EndHeaderDrag"/> every frame.
     /// </summary>
     internal sealed class KeybindPoller : MonoBehaviour
     {
         /// <summary>Wraps an existing native instance; used by Il2CppInterop.</summary>
         public KeybindPoller(IntPtr ptr) : base(ptr) { }
 
-        private void Update() => Keybinds.Poll();
+        private void Update()
+        {
+            Keybinds.Poll();
+            EditorGui.EndHeaderDrag();
+        }
     }
 }

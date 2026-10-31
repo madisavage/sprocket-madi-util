@@ -71,7 +71,7 @@ namespace StagedAmmo
                 "Scales every autoloader's speed, on top of each rack's own; 1 is a loader at 100% efficiency.",
                 new AcceptableValueRange<float>(0.1f, 100f), new SoftMax(10f), new Step(0.05f)));
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show ready/stowed counts and re-rack progress for your vehicle's guns.");
-            Keybinds.Register(this, "Toggle re-racking", "Alt+R", () => PlayerReRack = !PlayerReRack);
+            Keybinds.Register(this, "Staged ammo", "Toggle re-racking", "Alt+R", () => PlayerReRack = !PlayerReRack);
             LoadFromStowage = Config.Bind("Staging", "Load next round from stowage", true,
                 "With rounds installed: when no ready rack holds a gun's next round, its loader fetches it from stowage, which takes as long as the walk. Off, the gun waits for re-racking to bring one to a ready rack.");
             LoadFromStowage.SettingChanged += (_, _) => LoadControllerUpdatePatch.RefilterAll();
@@ -79,7 +79,7 @@ namespace StagedAmmo
             RoundsLink.ShareReady();
             new Harmony("madi.stagedammo").PatchAll();
             Hud.AddPanel(Indicator.Text);
-            SettingsTab.AddSection("Staged ammo", ReadyDistance, ReRackTimeMultiplier, AutoloaderSpeed, LoadFromStowage, ShowIndicator);
+            SettingsTab.AddSection("Staged ammo", "Staged ammo", ReadyDistance, ReRackTimeMultiplier, AutoloaderSpeed, LoadFromStowage, ShowIndicator);
         }
 
         /// <summary>Whether the rack at the end of <paramref name="path"/> is near enough the breech to be a ready rack.</summary>

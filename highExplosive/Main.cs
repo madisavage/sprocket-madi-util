@@ -56,14 +56,14 @@ namespace HighExplosive
             Normalization = Config.Bind("High explosive", "Normalization", 30f, new ConfigDescription(
                 "Degrees an HE hit turns toward the plate's normal on impact, as its blast spreads over the face: sloped plates and roofs count for less. 90 meets every plate square on; never less than the game's own.",
                 new AcceptableValueRange<float>(0f, 90f), new Step(5f)));
-            SettingsTab.AddSection("High explosive", ExplosivePower, Penetration, Spall, MaxBursts, Normalization);
+            SettingsTab.AddSection("Rounds", "High explosive", ExplosivePower, Penetration, Spall, MaxBursts, Normalization);
             HeshPenetration = Config.Bind("HESH", "Penetration", 25f, new ConfigDescription(
                 "Thickest plate in mm a 1 kg HESH shell blows through, as High explosive's Penetration; its squash head gets a little more from the plate.",
                 new AcceptableValueRange<float>(0f, 200f), new Step(1f)));
             HeshNormalization = Config.Bind("HESH", "Normalization", 90f, new ConfigDescription(
                 "Degrees a HESH hit turns toward the plate's normal, as its head squashes onto the face. 90 meets every plate square on, so slope doesn't help.",
                 new AcceptableValueRange<float>(0f, 90f), new Step(5f)));
-            SettingsTab.AddSection("HESH", HeshPenetration, HeshNormalization);
+            SettingsTab.AddSection("Rounds", "HESH", HeshPenetration, HeshNormalization);
             foreach (HeKind kind in new[] { HeKind.He, HeKind.Hesh })
                 using (var icon = Icon(kind.Type))
                     Loadout.Register(kind.Type, kind.Label, (drawer, cannon, id, changed) => Editor.Draw(drawer, cannon, id, changed, kind), (game, cannon, id, functions) =>
