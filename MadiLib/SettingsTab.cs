@@ -96,6 +96,8 @@ namespace MadiLib
             }
             if (entry.Description.Tags?.OfType<Step>().FirstOrDefault() is { } step)
                 property.Step = step.Value;
+            else if (entry.Description.AcceptableValues is AcceptableValueRange<float> stepless)
+                property.Step = (stepless.MaxValue - stepless.MinValue) / 100f;
             return floats[entry] = property;
         }
 
