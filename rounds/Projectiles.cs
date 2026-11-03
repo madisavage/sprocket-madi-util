@@ -126,17 +126,27 @@ namespace Rounds
             using var _ = MadiLib.Profile.Measure("rounds: fire prefix");
             __state = null;
             Tracker.Fired(__instance.Pointer);
-            IProjectileDefinitionSource? source = __instance.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource;
+            ProjectileRegister? register = __instance.projectileFactory?.TryCast<ProjectileRegister>();
+            IProjectileDefinitionSource? source = register?.definitionSource;
             ProjectileDefinition? game = source?.GetProjectileDefinition(__0);
-            if (game == null || Projectiles.For(__instance.Pointer, game) is not { } entry)
+            if (game == null)
                 return;
+            // The shot launches during this call, with the ID that's next now
+            int projectile = register!.nextID;
+            if (Projectiles.For(__instance.Pointer, game) is not { } entry)
+            {
+                Impacts.RaisePlayerFired(__instance.Pointer, game.Mass, game.Diameter, projectile);
+                return;
+            }
             if (source!.GetProjectileDefinition(entry.Def.ID)?.Pointer != entry.Def.Pointer)
             {
                 if (!warned)
                     Plugin.Logger.LogError($"The gun can't fire projectile type {entry.Def.ID.Value} ({entry.Def.Name}); rounds fire the game's shell.");
                 warned = true;
+                Impacts.RaisePlayerFired(__instance.Pointer, game.Mass, game.Diameter, projectile);
                 return;
             }
+            Impacts.RaisePlayerFired(__instance.Pointer, entry.Def.Mass, entry.Shape.Diameter, projectile);
             Projectiles.Size(entry, launch: true);
             __0 = entry.Def.ID;
             __state = entry;

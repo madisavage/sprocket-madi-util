@@ -23,6 +23,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "highExplosive", "highExplos
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "hydropneumatic", "hydropneumatic\hydropneumatic.csproj", "{5840743C-0100-47D1-B4BF-0AD18CF9B810}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "shellCam", "shellCam\shellCam.csproj", "{8773D569-5D2F-4722-BB5F-4760DF8A4C99}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -153,6 +155,18 @@ Global
 		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x64.Build.0 = Release|Any CPU
 		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x86.ActiveCfg = Release|Any CPU
 		{5840743C-0100-47D1-B4BF-0AD18CF9B810}.Release|x86.Build.0 = Release|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Debug|x64.Build.0 = Debug|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Debug|x86.Build.0 = Debug|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Release|x64.ActiveCfg = Release|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Release|x64.Build.0 = Release|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Release|x86.ActiveCfg = Release|Any CPU
+		{8773D569-5D2F-4722-BB5F-4760DF8A4C99}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

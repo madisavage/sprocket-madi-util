@@ -64,6 +64,14 @@ namespace Rounds
             {
                 Log.LogError($"Couldn't hook spall, rounds can't change it: {e}");
             }
+            try
+            {
+                ShellHitDetour.Apply();
+            }
+            catch (Exception e)
+            {
+                Log.LogError($"Couldn't hook shell hits, the shell cam won't see the player's: {e}");
+            }
         }
     }
 

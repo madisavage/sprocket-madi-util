@@ -77,15 +77,41 @@ namespace Rounds
         public static event FragmentHandler? FragmentSimulated;
 
         /// <summary>
-        /// Raised as each of a hit's entry points returns, innermost first,
-        /// with the simulation it ran (null from the outer ones), before
-        /// <see cref="HitEnded"/>. Use this rather than patching
-        /// <c>CompoundStructure.Penetrate</c>.
+        /// Raised once per hit as its simulation returns, with the simulation
+        /// (null if none ran), before <see cref="HitEnded"/>. Use this rather
+        /// than patching <c>CompoundStructure.Penetrate</c>.
         /// </summary>
         public static event SimulationHandler? HitSimulated;
 
         /// <summary>Raised once each hit, its simulation included, is done.</summary>
         public static event Action? HitEnded;
+
+        /// <summary>
+        /// The current hit's penetrator as it struck, before its round's hit
+        /// handler changed it (a HEAT shell into its jet, say); valid during
+        /// the hit, such as in <see cref="HitSimulated"/>, to tell which shell it was.
+        /// </summary>
+        public static PenetratorInfo Struck => StruckHolder.Value;
+
+        /// <summary>
+        /// The game's ID of the shell making the current hit, or -1 if the hit
+        /// isn't a shell's; valid during the hit, to compare with <see cref="PlayerFired"/>.
+        /// </summary>
+        public static int StruckProjectile = -1;
+
+        /// <summary>
+        /// Raised as one of the player's guns fires, with the mass and
+        /// diameter its shell's hits will have (<see cref="PenetratorInfo"/>)
+        /// and the shell's ID (<see cref="StruckProjectile"/>), so a hit can
+        /// be told to be the player's.
+        /// </summary>
+        public static event Action<float, float, int>? PlayerFired;
+
+        internal static void RaisePlayerFired(IntPtr gun, float mass, float diameter, int projectile)
+        {
+            if (PlayerFired != null && Tracker.Cannons.TryGetValue(gun, out var cannon) && MadiLib.PlayerVehicle.Contains(cannon))
+                PlayerFired(mass, diameter, projectile);
+        }
 
         /// <summary>Set while the armour view simulates a shot.</summary>
         internal static bool Simulating;
@@ -205,6 +231,16 @@ namespace Rounds
     }
 
     /// <summary>
+    /// Holds <see cref="Impacts.Struck"/>: a static field of a game type in
+    /// <see cref="Impacts"/> itself would make loading it need the game's
+    /// assemblies, which the tests run without.
+    /// </summary>
+    internal static class StruckHolder
+    {
+        internal static PenetratorInfo Value;
+    }
+
+    /// <summary>
     /// Hands each hit to its round's <see cref="RoundHit"/>, or to
     /// <see cref="Impacts.Simulated"/> for the armour view's. The structure
     /// is patched on every entry point a hit may come through; the first to
@@ -226,6 +262,7 @@ namespace Rounds
             if (Impacts.Hitting)
                 return;
             Impacts.Hitting = true;
+            StruckHolder.Value = __0;
             if (Impacts.Simulating)
             {
                 Impacts.Simulating = false;
@@ -242,6 +279,9 @@ namespace Rounds
         // A finalizer, not a postfix, so a throwing hit still ends; otherwise every later hit is skipped
         private static Exception? Finalizer(Exception? __exception, PenetratorInfo __0, IPenetrationSimulation? __result)
         {
+            // The innermost entry point already ended this hit; the outer ones return the same simulation
+            if (!Impacts.Hitting)
+                return __exception;
             try
             {
                 if (__exception == null)
@@ -258,6 +298,48 @@ namespace Rounds
                 Impacts.RaiseHitEnded();
             }
             return __exception;
+        }
+    }
+
+    /// <summary>
+    /// Sets <see cref="Impacts.StruckProjectile"/> around a shell's hit, by a
+    /// native detour on <c>ArmourPiercingProjectileFunction.HitDamageModel</c>,
+    /// the only caller that knows the shell: a hit's penetrator doesn't say.
+    /// </summary>
+    /// <remarks>Harmony can't patch it: its parameters are byref structs wrapped as classes (see <see cref="SpallDetour"/>).</remarks>
+    internal static class ShellHitDetour
+    {
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate byte HitDamageModel(IntPtr function, IntPtr projectile, IntPtr hit, IntPtr method);
+
+        // Kept alive for as long as the detour points at it
+        private static HitDamageModel? hook, original;
+        private static INativeDetour? detour;
+        private static int id;
+
+        internal static unsafe void Apply()
+        {
+            var field = Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(
+                AccessTools.Method(typeof(ArmourPiercingProjectileFunction), nameof(ArmourPiercingProjectileFunction.HitDamageModel)));
+            IntPtr method = (IntPtr)field!.GetValue(null)!;
+            // Field offsets count the object header, which a struct behind a pointer doesn't have
+            id = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(Il2CppClassPointerStore<ProjectileInstance>.NativeClassPtr, "ID")) - 2 * IntPtr.Size;
+            hook = Hook;
+            // MethodInfo starts with its native code pointer
+            detour = INativeDetour.CreateAndApply(*(IntPtr*)method, hook, out original);
+        }
+
+        private static byte Hook(IntPtr function, IntPtr projectile, IntPtr hit, IntPtr method)
+        {
+            Impacts.StruckProjectile = Marshal.ReadInt32(projectile, id);
+            try
+            {
+                return original!(function, projectile, hit, method);
+            }
+            finally
+            {
+                Impacts.StruckProjectile = -1;
+            }
         }
     }
 

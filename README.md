@@ -13,6 +13,7 @@ BepInEx 6 (IL2CPP) plugins for Sprocket, plus the library they share.
 | `composite/` | `composite.dll` | Pseudo-composite armour: stack thin plates behind selected faces, in add-ons that can each have their own material. |
 | `stabilizer/` | `stabilizer.dll` | Naive gun stabilization for traverse motors and laying drives. |
 | `hydropneumatic/` | `hydropneumatic.dll` | Adjustable suspension: change your vehicle's ride height, pitch and roll while driving. |
+| `shellCam/` | `shellCam.dll` | Replay your last hits in a panel: the shell's path and every spall fragment. Needs `rounds.dll`. |
 | `armourMaterial/` | `armourMaterial.dll` | Pick any armour material for a plate structure. |
 
 ## Install
@@ -238,6 +239,17 @@ For a gun with no traverse or elevation of its own, Strv 103 style. Tick **Hull 
 - Any steering key wins for as long as you hold it. Holding the game's **lock turret** (default middle mouse) pauses hull aiming, so you can look around; the hull holds its heading and pitch.
 - **Toggle hull aiming** (default Alt+H, **Hydropneumatic** subtab) switches it off and on. While you have a tagged gun, the box in the bottom-left corner adds `hull aim on` or `hull aim off`.
 - Only your own vehicle; AI vehicles don't hull-aim.
+
+## shellCam
+
+Replays your hits: after one of your shells hits, press **Alt+C** (Shell cam > Replay hit) to watch it play out in a panel in the bottom-right corner. The shell flies in, then its path through the armour and every spall fragment grow outward in the order they happened, slowed from the few milliseconds they really take: yellow for the shell, blue when it ricochets, red for spall (fainter when slower). Behind the lines, the vehicle hit is drawn as an X-ray of its armour as the hit saw it, turret turned as it was: each plate adds light, so where plates overlap is brighter. The panel looks from the side of the shell's path, slowly circling the vehicle, with a scale bar. The hit then stays a moment and fades.
+
+- Your last 5 hits are kept. Press the key again while one plays to step back to the one before.
+- The panel's title names the hit: `Hit 1 of 3: penetrated, 42 fragments`.
+- **Replay seconds** sets how long a hit takes to play out, **Panel size** the panel's size in pixels, and **Auto replay** replays each hit as it lands. Both are on the MadiLib tab, or in `BepInEx/config/madi.shellcam.cfg` under `[Replay]`.
+- Only your own shots are recorded: a hit counts as yours when its shell matches one your guns fired in the last 15 seconds.
+- Once the fragments are done, parts the hit damaged (crew, engine, ammo racks...) light up by the health they have left, yellow through orange to red, and a list in the panel's corner names them, worst first: `Crew: destroyed`, `Engine: 100% to 40%`. Parts damaged by earlier hits show faintly.
+- Your camera is left alone.
 
 ## armourMaterial
 
