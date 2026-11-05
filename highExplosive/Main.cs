@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using MadiLib;
@@ -36,6 +37,7 @@ namespace HighExplosive
         internal static ConfigEntry<float> Normalization = null!;
         internal static ConfigEntry<float> HeshPenetration = null!;
         internal static ConfigEntry<float> HeshNormalization = null!;
+        internal static ManualLogSource Logger = null!;
 
         /// <summary>Registers the HE round type and its settings.</summary>
         public override void Load()
@@ -63,7 +65,10 @@ namespace HighExplosive
             HeshNormalization = Config.Bind("HESH", "Normalization", 90f, new ConfigDescription(
                 "Degrees a HESH hit turns toward the plate's normal, as its head squashes onto the face. 90 meets every plate square on, so slope doesn't help.",
                 new AcceptableValueRange<float>(0f, 90f), new Step(5f)));
-            SettingsTab.AddSection("Rounds", "HESH", HeshPenetration, HeshNormalization);
+            Logger = Log;
+            AirBlast.Load(Config);
+            SettingsTab.AddSection("Rounds", "High explosive blast", AirBlast.Rays, AirBlast.Penetration, AirBlast.Radius, AirBlast.Mass, AirBlast.Cone);
+            SettingsTab.AddSection("Rounds", "HESH", HeshPenetration, HeshNormalization, AirBlast.HeshPenetration);
             foreach (HeKind kind in new[] { HeKind.He, HeKind.Hesh })
                 using (var icon = Icon(kind.Type))
                     Loadout.Register(kind.Type, kind.Label, (drawer, cannon, id, changed) => Editor.Draw(drawer, cannon, id, changed, kind), (game, cannon, id, functions) =>
@@ -115,6 +120,7 @@ namespace HighExplosive
             Impacts.SetPenetration(ref penetrator, kind.Penetration * MathF.Cbrt(penetrator.Mass));
             Blast(ref penetrator, Round(owner, id, kind).Mass, kind.Normalization);
             Fuze.StartAtExit();
+            AirBlast.Start(penetrator, kind);
         }
 
         /// <summary>
@@ -142,13 +148,16 @@ namespace HighExplosive
     }
 
     /// <summary>HE or HESH: the round type, and its penetration and normalization settings.</summary>
-    internal sealed record HeKind(string Type, string Label, Func<float> PenetrationOf, Func<float> NormalizationOf)
+    internal sealed record HeKind(string Type, string Label, Func<float> PenetrationOf, Func<float> NormalizationOf, Func<float> BlastOf)
     {
-        internal static readonly HeKind He = new(HeRound.Type, "HE", () => Plugin.Penetration.Value, () => Plugin.Normalization.Value);
-        internal static readonly HeKind Hesh = new("hesh", "HESH", () => Plugin.HeshPenetration.Value, () => Plugin.HeshNormalization.Value);
+        internal static readonly HeKind He = new(HeRound.Type, "HE", () => Plugin.Penetration.Value, () => Plugin.Normalization.Value, () => AirBlast.Penetration.Value);
+        internal static readonly HeKind Hesh = new("hesh", "HESH", () => Plugin.HeshPenetration.Value, () => Plugin.HeshNormalization.Value, () => AirBlast.HeshPenetration.Value);
 
         /// <summary>Penetration in mm of a 1 kg shell.</summary>
         internal float Penetration => PenetrationOf();
+
+        /// <summary>Penetration of its blast on nearby plates, over <see cref="Penetration"/>.</summary>
+        internal float Blast => BlastOf();
 
         internal float Normalization => NormalizationOf();
     }

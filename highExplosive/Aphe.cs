@@ -120,7 +120,8 @@ namespace HighExplosive
     /// forward and back as <see cref="Aphe.Fragments"/> fragments each way,
     /// copied from the hit's own plate spall. An HE hit (see
     /// <see cref="StartAtExit"/>) instead stops as it leaves the first plate,
-    /// with no burst: the plate's spall is all that gets in.
+    /// or meets another touching it, with no burst: the plate's spall is all
+    /// that gets in.
     /// </summary>
     /// <remarks>
     /// The shell's path is fragments flagged as the original penetrator,
@@ -179,13 +180,18 @@ namespace HighExplosive
         /// <summary>From <see cref="Impacts.FragmentSimulating"/>.</summary>
         internal static void Simulating(PenetrationSimulation __0, short __1)
         {
-            if (!active || cut.Count == 0 || __0 == null)
+            if (!active || cut.Count == 0 && !(atExit && armed) || __0 == null)
                 return;
             try
             {
-                if (Fragments.Get(__0.Pointer, __1).Parent is var parent and >= 0 && cut.Contains(parent))
+                FragmentInfo fragment = Fragments.Get(__0.Pointer, __1);
+                // An HE hit past its first plate with no gap to stop in: a plate touching it, or a ricochet out of the face
+                bool nextPlate = atExit && armed && fragment.IsJet && fragment.Material >= 0;
+                if (nextPlate || fragment.Parent >= 0 && cut.Contains(fragment.Parent))
                 {
                     FragmentArray.SetSpeed(__0.Pointer, __1, 0f);
+                    // It copied its parent's length, which stays if it never flies
+                    FragmentArray.SetTravel(__0.Pointer, __1, 0f);
                     cut.Add(__1);
                 }
             }
@@ -220,6 +226,10 @@ namespace HighExplosive
                 armed |= inPlate;
                 if (atExit)
                 {
+                    // Bursting on the plate isn't a ricochet: Deflected (0x10) becomes Embedded (0x20), for the game's hit effect and the shell cam
+                    ushort raw = FragmentArray.RawFlags(simulation, __1);
+                    if ((raw & 0x10) != 0)
+                        FragmentArray.SetRawFlags(simulation, __1, (ushort)(raw & ~0x10 | 0x20));
                     // Out of the first plate: the shell goes no further, what comes of this gap with it
                     if (armed && !inPlate)
                     {

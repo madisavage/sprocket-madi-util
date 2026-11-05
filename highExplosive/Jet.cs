@@ -157,6 +157,8 @@ namespace HighExplosive
 
         /// <summary>The fragment's own flags, as the game keeps them; <see cref="FragmentInfo.Flags"/> are converted.</summary>
         internal static ushort RawFlags(IntPtr simulation, int index) => (ushort)Marshal.ReadInt16(At(simulation, index, L.Flags));
+
+        internal static void SetRawFlags(IntPtr simulation, int index, ushort value) => Marshal.WriteInt16(At(simulation, index, L.Flags), (short)value);
     }
 
     /// <summary>

@@ -93,11 +93,13 @@ namespace HighExplosive
             {
                 Plugin.Blast(ref penetrator, 1f, Plugin.Normalization.Value);
                 Fuze.StartAtExit();
+                AirBlast.Start(penetrator, HeKind.He);
             }
             else if (mode == 4)
             {
                 Plugin.Blast(ref penetrator, 1f, Plugin.HeshNormalization.Value);
                 Fuze.StartAtExit();
+                AirBlast.Start(penetrator, HeKind.Hesh);
             }
             else if (mode == 2)
                 Heat.Jet(ref penetrator, Impacts.Penetration(penetrator), heatCone);

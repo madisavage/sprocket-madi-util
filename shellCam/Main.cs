@@ -231,6 +231,9 @@ namespace ShellCam
             for (int i = 0; i < count; i++)
             {
                 raw[i] = Native.Fragment(sim.Pointer, i);
+                // A fragment killed before it flew keeps the length it copied from its parent
+                if ((raw[i].Flags & FragmentFlag.Killed) != 0)
+                    raw[i].Travel = 0f;
                 parents[i] = raw[i].Parent;
                 durations[i] = raw[i].Travel / Math.Max(raw[i].Speed, 1f);
             }

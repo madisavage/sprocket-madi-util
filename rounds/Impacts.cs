@@ -34,7 +34,8 @@ namespace Rounds
     {
         /// <summary>
         /// Spall bursts per burst the game makes, for the hit being worked out:
-        /// 2 is two bursts, 1.25 one and a quarter-mass one, 0 none. Set it
+        /// 2 is two bursts, 1.25 one and a quarter-mass one, 0 none. Spall that
+        /// comes of spall stays the game's. Set it
         /// from a <see cref="RoundHit"/> or <see cref="Simulated"/>; it goes
         /// back to 1 after each hit.
         /// </summary>
@@ -202,7 +203,16 @@ namespace Rounds
         /// but not made as the game makes such fragments.
         /// </summary>
         public static bool Burst(IntPtr simulation, Vector3 point, Vector3 direction, float mass, int fragments, float speed, float spread, short parent, short from) =>
-            SpallDetour.Spawn(simulation, point, direction, mass, fragments, speed, spread, parent, from);
+            SpallDetour.Spawn(simulation, point, direction, mass, fragments, speed, spread, parent, from, fresh: false);
+
+        /// <summary>
+        /// As <see cref="Burst"/>, but needs no burst to copy, so it works before
+        /// the hit has perforated anything. Its fragments are steel and strike
+        /// as the hit's own penetrator (its penetrator constant, not spall's);
+        /// <paramref name="spread"/> is the tangent of the cone at its widest.
+        /// </summary>
+        public static bool FreshBurst(IntPtr simulation, Vector3 point, Vector3 direction, float mass, int fragments, float speed, float spread, short parent, short from) =>
+            SpallDetour.Spawn(simulation, point, direction, mass, fragments, speed, spread, parent, from, fresh: true);
 
         internal static void RaiseSimulated(ref PenetratorInfo penetrator) => Simulated?.Invoke(ref penetrator);
 
@@ -377,9 +387,9 @@ namespace Rounds
         private static CreateSpallBurst? hook, original;
         private static INativeDetour? detour;
         private static IntPtr method, template;
-        private static int size, volume, density, speed, spread, spallFactor, area, direction, planeNormal, spawnPoint, depthLookup, parentIndex;
+        private static int size, volume, density, speed, spread, spallFactor, area, direction, planeNormal, spawnPoint, depthLookup, parentIndex, materialIndex, pathIndex;
         private static int fragmentsField, fragCountField, fragmentSize, fragmentDepth;
-        internal static int FragmentFlags, FragmentDirection, FragmentMaterial;
+        internal static int FragmentFlags, FragmentDirection, FragmentMaterial, FragmentSpeed;
 
         // Set once the game makes a burst this hit, copied to template
         internal static bool HasTemplate;
@@ -402,6 +412,8 @@ namespace Rounds
             spawnPoint = Offset("spawnPoint");
             depthLookup = Offset("depthLookup");
             parentIndex = Offset("parentIndex");
+            materialIndex = Offset("materialIndex");
+            pathIndex = Offset("pathIndex");
             uint align = 0;
             size = IL2CPP.il2cpp_class_value_size(klass, ref align);
             IntPtr sim = Il2CppClassPointerStore<PenetrationSimulation>.NativeClassPtr;
@@ -414,6 +426,7 @@ namespace Rounds
             FragmentMaterial = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "materialIndex")) - 2 * IntPtr.Size;
             FragmentFlags = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "flags")) - 2 * IntPtr.Size;
             FragmentDirection = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "direction")) - 2 * IntPtr.Size;
+            FragmentSpeed = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "speed")) - 2 * IntPtr.Size;
             template = Marshal.AllocHGlobal(size);
             hook = Hook;
             // MethodInfo starts with its native code pointer
@@ -437,6 +450,9 @@ namespace Rounds
                 (bursts, mass) = first;
                 Impacts.FirstBurst = null;
             }
+            // Spall of spall stays the game's: scaled, each generation outweighs the last, and thin plates feed a chain reaction
+            else if (burst != IntPtr.Zero && *((byte*)burst + pathIndex) > 1)
+                bursts = mass = 1f;
             if (bursts == 1f && mass == 1f || burst == IntPtr.Zero)
             {
                 original!(simulation, burst, method);
@@ -463,13 +479,23 @@ namespace Rounds
             (byte*)Marshal.ReadIntPtr(simulation, fragmentsField) + 4 * IntPtr.Size + index * fragmentSize;
 
         /// <summary>See <see cref="Impacts.Burst"/>.</summary>
-        internal static unsafe bool Spawn(IntPtr simulation, Vector3 point, Vector3 dir, float kg, int count, float metresPerSecond, float cone, short parent, short from)
+        internal static unsafe bool Spawn(IntPtr simulation, Vector3 point, Vector3 dir, float kg, int count, float metresPerSecond, float cone, short parent, short from, bool fresh)
         {
-            if (!HasTemplate)
+            if (!fresh && !HasTemplate)
                 return false;
             // The template's arrays are the hit's own, alive until it ends
             byte* b = stackalloc byte[size];
-            Buffer.MemoryCopy((void*)template, b, size, size);
+            if (fresh)
+            {
+                new Span<byte>(b, size).Clear();
+                *(float*)(b + density) = 7850f;
+                *(float*)(b + spallFactor) = 1f;
+                *(float*)(b + spread) = 1f;
+                // The game strikes with profile material + 1: 0 is the penetrator's own
+                *(short*)(b + materialIndex) = -1;
+            }
+            else
+                Buffer.MemoryCopy((void*)template, b, size, size);
             *(float*)(b + volume) = kg / *(float*)(b + density);
             // The game makes area / spallFactor fragments, rounded up; a quarter under lands on the count, rounded either way
             *(float*)(b + area) = *(float*)(b + spallFactor) * (count - 0.25f);
@@ -519,6 +545,10 @@ namespace Rounds
         // The last plate's own normal the projectile met, before turning; null once used or for none
         private static Vector3? plate;
 
+        // Most fragments a hit makes before the rest are killed
+        private const int MaxFragments = 4096;
+        private static bool warned;
+
         internal static void Reset() => plate = null;
 
         [HarmonyPatch(typeof(CompoundStructure), "SimulateFragment"), HarmonyPrefix]
@@ -527,6 +557,14 @@ namespace Rounds
             direction = null;
             if (__0 == null)
                 return;
+            // The game's loop over fragments counts in a short: past 32767 it wraps negative and never ends, freezing the game
+            if (SpallDetour.Ready && __0.FragmentCount >= MaxFragments)
+            {
+                *(float*)(SpallDetour.Element(__0.Pointer, __1) + SpallDetour.FragmentSpeed) = 0f;
+                if (!warned)
+                    Plugin.Logger.LogWarning($"A hit made {MaxFragments} fragments; killing the rest of them. Logged once.");
+                warned = true;
+            }
             if ((Impacts.Normalization > 0f || Impacts.LineOfSight) && SpallDetour.Ready)
             {
                 byte* fragment = SpallDetour.Element(__0.Pointer, __1);
