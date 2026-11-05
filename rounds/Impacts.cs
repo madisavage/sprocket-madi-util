@@ -54,6 +54,19 @@ namespace Rounds
         // Degrees the hit being worked out turns toward each plate's normal, from Normalize; 0 for none
         internal static float Normalization;
 
+        /// <summary>
+        /// Makes the hit being worked out meet every plate as if square on,
+        /// without turning its path, as a shaped charge's jet does: its full
+        /// penetration goes against the plate's line-of-sight thickness, it goes
+        /// straight on, and it can't ricochet. Plate spall aims along its line.
+        /// Goes back to false after each hit.
+        /// </summary>
+        /// <remarks>
+        /// The game ricochets a penetrator only at 10 degrees or more from the
+        /// normal, and takes obliquity off its penetration from the same angle.
+        /// </remarks>
+        public static bool LineOfSight;
+
         /// <summary>Raised for each of the armour view's simulated shots, to change its penetrator or spall.</summary>
         public static event PenetratorHandler? Simulated;
 
@@ -294,6 +307,7 @@ namespace Rounds
                 NormalizePatch.Reset();
                 Impacts.FirstBurst = null;
                 Impacts.Normalization = 0f;
+                Impacts.LineOfSight = false;
                 SpallDetour.HasTemplate = false;
                 Impacts.RaiseHitEnded();
             }
@@ -513,7 +527,7 @@ namespace Rounds
             direction = null;
             if (__0 == null)
                 return;
-            if (Impacts.Normalization > 0f && SpallDetour.Ready)
+            if ((Impacts.Normalization > 0f || Impacts.LineOfSight) && SpallDetour.Ready)
             {
                 byte* fragment = SpallDetour.Element(__0.Pointer, __1);
                 // The original penetrator's flag
@@ -550,7 +564,7 @@ namespace Rounds
             plate = normal;
             // Toward the line on the normal's side: against the projectile going in, along it coming out
             Vector3 line = Vector3.Dot(normal, d) < 0f ? -d : d;
-            __result = Vector3.RotateTowards(normal, line, Impacts.Normalization * MathF.PI / 180f, 0f);
+            __result = Impacts.LineOfSight ? line : Vector3.RotateTowards(normal, line, Impacts.Normalization * MathF.PI / 180f, 0f);
         }
     }
 }

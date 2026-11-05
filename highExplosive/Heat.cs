@@ -15,14 +15,18 @@ namespace HighExplosive
     /// <summary>
     /// The HEAT round type: a full-bore shell like HE, detonating on contact,
     /// whose hit is its jet instead: <see cref="JetDiameter"/> of the caliber
-    /// wide, <see cref="JetMass"/> of the shell's mass, penetrating
-    /// <see cref="HeatRound.Penetration"/> calibers whatever the speed. The
-    /// game works out obliquity and spall for the jet; each plate takes its
-    /// line-of-sight thickness off the jet's penetration, and each gap after
-    /// a plate <see cref="AirLoss"/> (see <see cref="JetBudget"/>).
+    /// wide, <see cref="JetMass"/> of the shell's mass, penetrating what its
+    /// <see cref="ShapedCharge"/> design gives whatever the speed. The
+    /// game works out spall for the jet, but it meets every plate by
+    /// line of sight and can't ricochet (see <see cref="Impacts.LineOfSight"/>);
+    /// each plate takes its line-of-sight thickness off the jet's penetration,
+    /// and each gap after a plate <see cref="AirLoss"/> (see <see cref="JetBudget"/>).
     /// </summary>
     internal static class Heat
     {
+        internal static ConfigEntry<float> PeakPenetration = null!;
+        internal static ConfigEntry<float> StandoffDrag = null!;
+        internal static ConfigEntry<float> StandoffMass = null!;
         internal static ConfigEntry<float> JetDiameter = null!;
         internal static ConfigEntry<float> JetMass = null!;
         internal static ConfigEntry<float> FirstSpall = null!;
@@ -38,8 +42,19 @@ namespace HighExplosive
             Log = log;
             // A hit that throws skips HitSimulated, which ends the jet otherwise
             Impacts.HitEnded += JetBudget.End;
+            PeakPenetration = config.Bind("HEAT", "Peak penetration", 4.5f, new ConfigDescription(
+                "Penetration in calibers of a HEAT round at its best standoff with a 60 degree cone. Narrower cones go up to 1.4 times this. Lower it for early-war play: early HEAT is about 2 to 4, later rounds 5 to 7.",
+                new AcceptableValueRange<float>(1f, 10f), new Step(0.1f)));
+            StandoffDrag = config.Bind("HEAT", "Standoff drag", 0.2f, new ConfigDescription(
+                "Drag a HEAT round's nose adds per caliber of standoff past the first, over the game's shell: at 0.2, 2.5 calibers is 1.3 times the drag.",
+                new AcceptableValueRange<float>(0f, 1f), new Step(0.05f)));
+            StandoffDrag.SettingChanged += (_, _) => Loadout.Invalidate();
+            StandoffMass = config.Bind("HEAT", "Standoff mass", 0.2f, new ConfigDescription(
+                "Mass a HEAT round's nose adds per caliber of standoff past the first, over the shell's, which lowers its muzzle velocity: at 0.2, 2.5 calibers is 1.3 times the mass. Penetration doesn't change.",
+                new AcceptableValueRange<float>(0f, 1f), new Step(0.05f)));
+            StandoffMass.SettingChanged += (_, _) => Loadout.Invalidate();
             JetDiameter = config.Bind("HEAT", "Jet diameter", 0.2f, new ConfigDescription(
-                "Width of a HEAT round's jet as it hits, over the caliber. Narrower jets spall in a tighter cone.",
+                "Width of a HEAT round's jet as it hits with a 60 degree cone, over the caliber. Narrower jets spall in a tighter cone.",
                 new AcceptableValueRange<float>(0.05f, 1f), new Step(0.05f)));
             JetMass = config.Bind("HEAT", "Jet mass", 0.2f, new ConfigDescription(
                 "Mass of a HEAT round's jet as it hits, over the shell's. Spall goes with it.",
@@ -61,31 +76,59 @@ namespace HighExplosive
                 new AcceptableValueRange<float>(0.25f, 10f), new Step(0.25f)));
             LogHits = config.Bind("HEAT", "Log hits", false,
                 "Logs each HEAT jet's setup and its path through the armour: each plate's residual penetration and whether the jet perforated, stopped or left the vehicle.");
-            SettingsTab.AddSection("Rounds", "HEAT", JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, LogHits);
+            SettingsTab.AddSection("Rounds", "HEAT", PeakPenetration, StandoffDrag, StandoffMass, JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, LogHits);
             Impacts.FragmentSimulating += JetBudget.Simulating;
             Impacts.FragmentSimulated += JetBudget.Simulated;
             Impacts.HitSimulated += JetLog.Simulated;
             using (var icon = Plugin.Icon(HeatRound.Type))
                 Loadout.Register(HeatRound.Type, "HEAT", HeatEditor.Draw, (game, cannon, id, functions) =>
-                    cannon.Blueprint is { } owner ? Plugin.Shell(game, functions, Round(owner, id).Mass) : null, Hit, icon);
+                {
+                    if (cannon.Blueprint is not { } owner)
+                        return null;
+                    HeatRound round = Round(owner, id);
+                    RoundShape shape = Plugin.Shell(game, functions, round.Mass);
+                    shape.Drag *= ShapedCharge.Nose(round.Standoff, StandoffDrag.Value);
+                    // After Shell, which scales the explosive by its mass: the nose is empty
+                    float nose = ShapedCharge.Nose(round.Standoff, StandoffMass.Value);
+                    shape.Mass *= nose;
+                    shape.Length *= nose;
+                    shape.LaunchLength *= nose;
+                    return shape;
+                }, Hit, icon);
         }
 
-        internal static HeatRound Round(CannonBlueprint owner, string id) => Loadout.Get<HeatRound>(owner, id, HeatRound.Type) ?? new HeatRound();
+        internal static HeatRound Round(CannonBlueprint owner, string id)
+        {
+            HeatRound round = Loadout.Get<HeatRound>(owner, id, HeatRound.Type) ?? new HeatRound();
+            round.Upgrade();
+            return round;
+        }
+
+        /// <summary><paramref name="round"/>'s mass with its nose, over the game's full-bore shell's.</summary>
+        internal static float ShellMass(HeatRound round) => round.Mass * ShapedCharge.Nose(round.Standoff, StandoffMass.Value);
+
+        /// <summary><paramref name="round"/>'s penetration in calibers of its shell.</summary>
+        internal static float Calibers(HeatRound round) => ShapedCharge.Penetration(round.Standoff, round.Cone, PeakPenetration.Value);
 
         /// <summary>A HEAT hit: the shell's penetrator becomes its jet, with the round's penetration in calibers at any speed.</summary>
-        private static void Hit(ref PenetratorInfo penetrator, CannonBlueprint owner, string id) =>
-            Jet(ref penetrator, Round(owner, id).Penetration * penetrator.Diameter * 1000f);
+        private static void Hit(ref PenetratorInfo penetrator, CannonBlueprint owner, string id)
+        {
+            HeatRound round = Round(owner, id);
+            Jet(ref penetrator, Calibers(round) * penetrator.Diameter * 1000f, round.Cone);
+        }
 
         /// <summary>
         /// Makes <paramref name="penetrator"/>, a HEAT shell, its jet,
-        /// penetrating <paramref name="penetration"/> mm, with
+        /// penetrating <paramref name="penetration"/> mm, as wide as a liner of
+        /// <paramref name="cone"/> degrees makes it, with
         /// <see cref="FirstSpall"/> on the first plate it perforates.
         /// </summary>
-        internal static void Jet(ref PenetratorInfo penetrator, float penetration)
+        internal static void Jet(ref PenetratorInfo penetrator, float penetration, float cone)
         {
             Impacts.FirstBurst = Plugin.Split(FirstSpall.Value);
+            Impacts.LineOfSight = true;
             PenetratorInfo p = penetrator;
-            penetrator = new PenetratorInfo(p.Mass * JetMass.Value, p.Diameter * JetDiameter.Value, p.Density, p.MaxNormalizationAngle, p.PenetratorConstant, p.Position, p.Velocity);
+            penetrator = new PenetratorInfo(p.Mass * JetMass.Value, p.Diameter * MathF.Min(JetDiameter.Value * ShapedCharge.WidthFactor(cone), 1f), p.Density, p.MaxNormalizationAngle, p.PenetratorConstant, p.Position, p.Velocity);
             Impacts.SetPenetration(ref penetrator, penetration);
             PenetratorInfo j = penetrator;
             JetBudget.Start(j.PenetratorConstant);
@@ -106,15 +149,30 @@ namespace HighExplosive
         /// <summary>Shell mass over the game's full-bore shell for the gun.</summary>
         public float Mass { get; set; } = 1f;
 
-        /// <summary>Penetration in calibers of the shell, at any speed.</summary>
-        public float Penetration { get; set; } = 4.5f;
+        /// <summary>Nose length in calibers; see <see cref="ShapedCharge"/>.</summary>
+        public float Standoff { get; set; } = ShapedCharge.BestStandoff;
+
+        /// <summary>The liner's full angle in degrees; see <see cref="ShapedCharge"/>.</summary>
+        public float Cone { get; set; } = ShapedCharge.DefaultCone;
+
+        /// <summary>Penetration in calibers an older round was saved with, before <see cref="Upgrade"/>; null for any other.</summary>
+        public float? Penetration { get; set; }
+
+        /// <summary>Gives an older round the design closest to its saved penetration.</summary>
+        internal void Upgrade()
+        {
+            if (Penetration is not { } saved)
+                return;
+            (Standoff, Cone) = ShapedCharge.Fit(saved, Heat.PeakPenetration.Value);
+            Penetration = null;
+        }
     }
 
-    /// <summary>Draws a HEAT round's shell mass, penetration and performance in the cannon panel's <b>Rounds</b> section.</summary>
+    /// <summary>Draws a HEAT round's shell mass, standoff, cone and performance in the cannon panel's <b>Rounds</b> section.</summary>
     internal static class HeatEditor
     {
-        // Cannon blueprint and round id, (Mass, Penetration, Readouts); one entry for each HEAT round
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty Mass, FloatProperty Penetration, StringProperty[] Readouts)> properties = new();
+        // Cannon blueprint and round id, (Mass, Standoff, Cone, Readouts); one entry for each HEAT round
+        private static readonly Dictionary<(IntPtr, string), (FloatProperty Mass, FloatProperty Standoff, FloatProperty Cone, StringProperty[] Readouts)> properties = new();
 
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
@@ -126,13 +184,20 @@ namespace HighExplosive
                 const string description = "Penetration is the jet's, the same at any range.";
                 StringProperty[] readouts =
                 {
-                    EditorGui.Readout("Muzzle velocity", () => $"{Editor.Velocity(gun, Heat.Round(gun, id).Mass):0} m/s", description),
-                    EditorGui.Readout("Penetration", () => $"{Heat.Round(gun, id).Penetration * gun.Caliber:0} mm", description),
-                    EditorGui.Readout("Shell weight", () => $"{ShellProperties.GetProjectileMass(gun.Caliber) * Heat.Round(gun, id).Mass:0.00} kg", description),
+                    EditorGui.Readout("Muzzle velocity", () => $"{Editor.Velocity(gun, Heat.ShellMass(Heat.Round(gun, id))):0} m/s", description),
+                    EditorGui.Readout("Penetration", () => $"{Heat.Calibers(Heat.Round(gun, id)) * gun.Caliber:0} mm", description),
+                    EditorGui.Readout("Shell weight", () => $"{ShellProperties.GetProjectileMass(gun.Caliber) * Heat.ShellMass(Heat.Round(gun, id)):0.00} kg", description),
+                    EditorGui.Readout("Drag", () => $"{ShapedCharge.Nose(Heat.Round(gun, id).Standoff, Heat.StandoffDrag.Value):0.00} x the shell's", description),
+                    EditorGui.Readout("Spall", () => $"{MathF.Pow(ShapedCharge.WidthFactor(Heat.Round(gun, id).Cone), 3f):0.00} x a 60 degree cone's", description),
                 };
                 void Set(Action<HeatRound> change)
                 {
-                    Loadout.Edit(gun, id, change);
+                    // Edit keeps fields it isn't given, so an older round's design is fixed before its first change
+                    Loadout.Edit<HeatRound>(gun, id, round =>
+                    {
+                        round.Upgrade();
+                        change(round);
+                    });
                     changed();
                     EditorGui.Refresh(readouts);
                 }
@@ -148,19 +213,30 @@ namespace HighExplosive
                         Step = 0.05f
                     },
                     new FloatProperty(
-                        "Penetration",
-                        (Func<float>)(() => Heat.Round(gun, id).Penetration),
-                        (Action<float>)(value => Set(r => r.Penetration = value)),
-                        "Jet penetration in calibers of the shell, at any speed. Early HEAT is about 2 to 4, later rounds 5 to 7.")
+                        "Standoff",
+                        (Func<float>)(() => Heat.Round(gun, id).Standoff),
+                        (Action<float>)(value => Set(r => r.Standoff = value)),
+                        "Nose length in calibers, the distance the jet has to form. Penetration peaks at 2.5: too short and the jet hasn't formed, too long and it has broken up. A longer nose adds mass, so the shell leaves slower, and drag.")
                     {
-                        Min = 1f,
-                        Max = 10f,
+                        Min = ShapedCharge.MinStandoff,
+                        Max = ShapedCharge.MaxStandoff,
                         Step = 0.1f
+                    },
+                    new FloatProperty(
+                        "Cone angle",
+                        (Func<float>)(() => Heat.Round(gun, id).Cone),
+                        (Action<float>)(value => Set(r => r.Cone = value)),
+                        "Full angle of the charge's liner in degrees. Narrow makes a deep, thin jet with little spall; wide makes a shallower, fatter jet with much more.")
+                    {
+                        Min = ShapedCharge.MinCone,
+                        Max = ShapedCharge.MaxCone,
+                        Step = 5f
                     },
                     readouts);
             }
             drawer.Float(set.Mass);
-            drawer.Float(set.Penetration);
+            drawer.Float(set.Standoff);
+            drawer.Float(set.Cone);
             foreach (StringProperty readout in set.Readouts)
                 drawer.Readonly(readout);
         }

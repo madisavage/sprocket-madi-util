@@ -8,6 +8,7 @@
   <ItemGroup>
     <!-- Round icons for rounds' ammo bar, named by round type -->
     <EmbeddedResource Include="icons/*.png" LogicalName="%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="tests" />
   </ItemGroup>
 
   <ItemGroup>

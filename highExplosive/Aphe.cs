@@ -114,7 +114,8 @@ namespace HighExplosive
 
     /// <summary>
     /// Bursts an APHE shell once its path from the first plate it enters is
-    /// <see cref="ApheRound.Fuze"/> long: the shell stops there, nothing
+    /// <see cref="ApheRound.Fuze"/> long, or at the far face of the plate it
+    /// is in when that runs out: the shell stops there, nothing
     /// that comes of its piece of path past it happens, and the casing goes
     /// forward and back as <see cref="Aphe.Fragments"/> fragments each way,
     /// copied from the hit's own plate spall. An HE hit (see
@@ -237,11 +238,12 @@ namespace HighExplosive
                     return;
                 float before = travelled;
                 travelled += shell.Travel;
-                if (travelled < round!.Fuze)
+                // A fuze run out in a plate waits for its far face: bursting inside would cap penetration at the fuze delay
+                if (travelled < round!.Fuze || inPlate)
                     return;
 
                 burst = true;
-                float along = round.Fuze - before;
+                float along = MathF.Max(round.Fuze - before, 0f);
                 Vector3 direction = FragmentArray.Direction(simulation, __1);
                 Vector3 point = FragmentArray.Spawn(simulation, __1) + direction * along;
                 // The shell stops at the burst, and what its piece of path made past it with it
@@ -332,7 +334,7 @@ namespace HighExplosive
                         "Fuze delay",
                         (Func<float>)(() => R().Fuze),
                         (Action<float>)(value => Set(r => r.Fuze = value)),
-                        "Metres the shell goes past where it first enters a plate before it bursts. A shell that stops or leaves the vehicle sooner doesn't burst inside it.")
+                        "Metres the shell goes past where it first enters a plate before it bursts, waiting for the far face if that's inside a plate, so it doesn't change penetration. A shell that stops or leaves the vehicle sooner doesn't burst inside it.")
                     {
                         Min = 0.05f,
                         Max = 3f,

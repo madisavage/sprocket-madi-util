@@ -11,8 +11,9 @@ namespace HighExplosive
     /// <summary>
     /// Adds <b>Simulate as</b> to the armour view's penetration simulator: its
     /// shot hits as the game's shell, an HE shell (normalization and spall),
-    /// a HEAT jet, at the penetration the panel asks for, or an APHE shell
-    /// with the section's own <b>Filler</b> and <b>Fuze delay</b>.
+    /// a HEAT jet, at the penetration the panel asks for and the section's own
+    /// <b>Cone angle</b>, or an APHE shell with the section's own <b>Filler</b>
+    /// and <b>Fuze delay</b>.
     /// </summary>
     internal static class ArmourView
     {
@@ -20,7 +21,9 @@ namespace HighExplosive
         private static int mode;
         // The APHE shot's round, set from the section
         private static readonly ApheRound aphe = new();
-        private static FloatProperty? filler, fuze;
+        private static FloatProperty? filler, fuze, cone;
+        // The HEAT shot's cone, set from the section
+        private static float heatCone = ShapedCharge.DefaultCone;
 
         /// <summary>Draws the section, from <see cref="Impacts.ArmourPanel"/>.</summary>
         internal static void Draw(IGUIElementDrawer drawer, Action redraw)
@@ -31,7 +34,25 @@ namespace HighExplosive
             {
                 mode = i;
                 Impacts.Resimulate();
-            }, "HE: the shot turns toward the plate and spalls as a full-bore HE shell's. HEAT: the shot is a HEAT jet, at the panel's penetration. APHE: the shot bursts as an APHE round with the filler and fuze delay below. HESH: as HE, with HESH's normalization.");
+            }, "HE: the shot turns toward the plate and spalls as a full-bore HE shell's. HEAT: the shot is a HEAT jet, at the panel's penetration and the cone angle below. APHE: the shot bursts as an APHE round with the filler and fuze delay below. HESH: as HE, with HESH's normalization.");
+            if (mode == 2)
+            {
+                cone ??= new FloatProperty(
+                    "Cone angle",
+                    (Func<float>)(() => heatCone),
+                    (Action<float>)(value =>
+                    {
+                        heatCone = value;
+                        Impacts.Resimulate();
+                    }),
+                    "The HEAT shot's liner angle in degrees, which sets its jet's width and spall. Its penetration is the panel's.")
+                {
+                    Min = ShapedCharge.MinCone,
+                    Max = ShapedCharge.MaxCone,
+                    Step = 5f
+                };
+                drawer.Float(cone);
+            }
             if (mode != 3)
                 return;
             filler ??= new FloatProperty(
@@ -79,7 +100,7 @@ namespace HighExplosive
                 Fuze.StartAtExit();
             }
             else if (mode == 2)
-                Heat.Jet(ref penetrator, Impacts.Penetration(penetrator));
+                Heat.Jet(ref penetrator, Impacts.Penetration(penetrator), heatCone);
             else if (mode == 3)
                 Aphe.Shoot(ref penetrator, aphe);
         }
