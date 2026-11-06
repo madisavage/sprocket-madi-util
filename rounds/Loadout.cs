@@ -84,8 +84,9 @@ namespace Rounds
     /// Rounds a cannon can fire, saved with the vehicle. <c>"ap"</c>, the
     /// game's own shell, is built in; plugins add round types, such as a
     /// sabot round, with <see cref="Register"/>; the player
-    /// names rounds and picks their types in the cannon panel, gives each
-    /// ammo rack one, and picks the next round to load in game.
+    /// names rounds and picks their types in the cannon panel, assigns each
+    /// ammo rack's slots to rounds, or leaves them to an even balance, and
+    /// picks the next round to load in game.
     /// </summary>
     /// <remarks>
     /// Stored as JSON in the cannon blueprint's description (its
@@ -238,9 +239,8 @@ namespace Rounds
         /// <summary>
         /// Runs <paramref name="move"/>, which takes a shell from one rack and
         /// puts it in another, as a re-rack: it may take from a rack that
-        /// isn't holding the gun's next round. Move shells only between racks
-        /// of the same round (<see cref="RoundOf"/>): a rack's shells are all
-        /// its round.
+        /// isn't holding the gun's next round. Which rounds move isn't told, so
+        /// prefer <see cref="Rerack(AmmoRackBehaviour, AmmoRackBehaviour, string?)"/>.
         /// </summary>
         public static void Rerack(Action move)
         {
@@ -253,6 +253,34 @@ namespace Rounds
             {
                 Tracker.Reracking = false;
             }
+        }
+
+        /// <summary>
+        /// Moves one shell of round <paramref name="id"/> (see
+        /// <see cref="Contents"/>; null for a gun without rounds) from
+        /// <paramref name="from"/> to <paramref name="to"/>, as a re-rack.
+        /// Returns false if <paramref name="from"/> gave none.
+        /// </summary>
+        public static bool Rerack(AmmoRackBehaviour from, AmmoRackBehaviour to, string? id)
+        {
+            bool moved = false;
+            Tracker.Moving = id;
+            try
+            {
+                Rerack(() =>
+                {
+                    moved = from.TakeShell();
+                    if (moved)
+                        to.LoadAmmo(1);
+                });
+            }
+            finally
+            {
+                Tracker.Moving = null;
+            }
+            if (moved)
+                Tracker.Put(to, id);
+            return moved;
         }
 
         /// <summary>Whether <paramref name="rack"/> holds its gun's next round; false for a rack without rounds.</summary>
@@ -286,8 +314,19 @@ namespace Rounds
         /// <summary>Whether <paramref name="rack"/>'s gun has rounds, so its shells are told apart.</summary>
         public static bool HasRounds(AmmoRackBehaviour rack) => Tracker.RoundOf(rack) != null;
 
-        /// <summary>The id of the round <paramref name="rack"/> holds; null for a rack without rounds.</summary>
+        /// <summary>The id of the round <paramref name="rack"/> mostly holds by design (see <see cref="Contents"/> for its shells); null for a rack without rounds.</summary>
         public static string? RoundOf(AmmoRackBehaviour rack) => Tracker.RoundOf(rack);
+
+        /// <summary>The shells of each round id in <paramref name="rack"/> now, live; null for a rack without rounds.</summary>
+        public static IReadOnlyDictionary<string, int>? Contents(AmmoRackBehaviour rack) => Tracker.Contents(rack);
+
+        /// <summary>
+        /// The rounds a re-rack should bring to <paramref name="rack"/>, best
+        /// first: rounds short of their assigned slots, its gun's next round
+        /// leading, then with unassigned slots free an even balance of all
+        /// rounds. Null for a rack without rounds.
+        /// </summary>
+        public static IReadOnlyList<string>? Wanted(AmmoRackBehaviour rack) => Tracker.Wanted(rack);
 
         /// <summary>
         /// The blueprint holding <paramref name="cannon"/>'s rounds: its cannon

@@ -26,8 +26,8 @@ namespace Rounds
 {
     /// <summary>
     /// BepInEx entry point. Cannons get named rounds of types other plugins
-    /// add; each ammo rack holds one of them; the player picks the next round to
-    /// load, and the loader only loads it. See <see cref="Loadout"/>.
+    /// add; each ammo rack has slots for each round and any left unassigned; the player
+    /// picks the next round to load, and the loader only loads it. See <see cref="Loadout"/>.
     /// </summary>
     [BepInPlugin("madi.rounds", "rounds", ModInfo.Version)]
     [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
@@ -76,10 +76,11 @@ namespace Rounds
     }
 
     /// <summary>
-    /// Which round each rack holds, and which each gun has loaded and loads
-    /// next. Each rack holds one round, set in the rack panel, so its shells
-    /// are its <c>AmountStored</c>. A rack refuses a load unless it holds
-    /// the gun's next round, so the gun waits for one.
+    /// Which rounds each rack holds, and which each gun has loaded and loads
+    /// next. A rack's split is set in the rack panel; the game only keeps its
+    /// <c>AmountStored</c>, so <see cref="RackMix"/> tracks which shell is
+    /// which. A rack refuses a load unless it holds the gun's next round, so
+    /// the gun waits for one.
     /// </summary>
     internal static class Tracker
     {
@@ -89,6 +90,8 @@ namespace Rounds
         private static readonly Dictionary<(IntPtr Shell, IntPtr Vehicle), IntPtr> gunOfShell = new();
         // Rack behaviour, its rack
         private static readonly Dictionary<IntPtr, AmmoRack> racks = new();
+        // Rack behaviour and rounds' blueprint, its shells per round and the parsed descriptions they came from; guns of different blueprints sharing a rack each read it their own way
+        private static readonly Dictionary<(IntPtr Rack, IntPtr Owner), (JsonObject Rack, JsonObject Owner, RackMix Mix)> mixes = new();
         // Gun behaviour, round id it loads next / has loaded
         private static readonly Dictionary<IntPtr, string> selected = new(), loaded = new();
         // Gun behaviour, round id its loader has taken from a rack but not yet loaded, and that rack
@@ -102,6 +105,8 @@ namespace Rounds
         internal static IntPtr Loading;
         // Set during a re-rack, which may take from any rack
         internal static bool Reracking;
+        // The round a re-rack is moving, if it says
+        internal static string? Moving;
 
         internal static bool IsWaiting(IntPtr gun) => waiting.Contains(gun);
 
@@ -158,7 +163,16 @@ namespace Rounds
                 return;
             foreach (IntPtr old in racks.Where(r => r.Value.Pointer == rack.Pointer).Select(r => r.Key).ToList())
                 racks.Remove(old);
+            racks.Remove(rack.behaviour.Pointer);
+            ForgetMixes();
             racks[rack.behaviour.Pointer] = rack;
+        }
+
+        /// <summary>Drops the mixes of racks no longer known.</summary>
+        private static void ForgetMixes()
+        {
+            foreach (var key in mixes.Keys.Where(k => !racks.ContainsKey(k.Rack)).ToList())
+                mixes.Remove(key);
         }
 
         /// <summary>The round <paramref name="gun"/> loads next: the player's pick, or its first round.</summary>
@@ -191,9 +205,56 @@ namespace Rounds
             return (gun, Cannons.TryGetValue(gun, out Cannon? cannon) ? Loadout.Owner(cannon) : Loadout.OwnerOf(shell));
         }
 
-        /// <summary>The round <paramref name="rack"/> holds: its pick, or its gun's first round; null for a rack without rounds.</summary>
+        /// <summary>The round <paramref name="rack"/> was given: its pick, or its gun's first round; null for a rack without rounds.</summary>
         internal static string? RoundOf(AmmoRackBehaviour rack) =>
             racks.TryGetValue(rack.Pointer, out AmmoRack? component) ? RackRound.Get(component.Blueprint, GunOf(rack).Owner) : null;
+
+        /// <summary><paramref name="rack"/>'s mix as <paramref name="owner"/>'s rounds read it, without taking in changes to its count; null for a rack without rounds.</summary>
+        private static RackMix? MixOf(AmmoRackBehaviour rack, CannonBlueprint? owner)
+        {
+            if (owner == null || !racks.TryGetValue(rack.Pointer, out AmmoRack? component) || component.Blueprint is not { } blueprint)
+                return null;
+            JsonObject design = Loadout.Parsed(blueprint), rounds = Loadout.Parsed(owner);
+            var key = (rack.Pointer, owner.Pointer);
+            if (mixes.TryGetValue(key, out var known) && known.Rack == design && known.Owner == rounds)
+                return known.Mix;
+            if (RackMix.Read(design, Loadout.List(owner).Select(r => r.Id).ToList(), rack.Capacity) is not { } mix)
+                return null;
+            mixes[key] = (design, rounds, mix);
+            return mix;
+        }
+
+        /// <summary><paramref name="rack"/>'s mix, up to date with its count; a change <paramref name="round"/> says is that round's.</summary>
+        private static RackMix? Synced(AmmoRackBehaviour rack, CannonBlueprint? owner, string? round = null)
+        {
+            RackMix? mix = MixOf(rack, owner);
+            if (mix == null)
+                return null;
+            // The game puts a shell back by itself when a gun's request changes: that's the round its loader took, and the loader no longer holds it
+            if (round == null && rack.AmountStored > mix.Counts.Values.Sum())
+                foreach (var (gun, carry) in carried)
+                    if (carry.Rack == rack.Pointer)
+                    {
+                        round = carry.Id;
+                        carried.Remove(gun);
+                        break;
+                    }
+            mix.Sync(rack.AmountStored, round);
+            return mix;
+        }
+
+        /// <summary>Shells per round in <paramref name="rack"/>, live; null for a rack without rounds.</summary>
+        internal static IReadOnlyDictionary<string, int>? Contents(AmmoRackBehaviour rack) => Synced(rack, GunOf(rack).Owner)?.Counts;
+
+        /// <summary>The rounds to re-rack into <paramref name="rack"/>, best first; null for a rack without rounds.</summary>
+        internal static List<string>? Wanted(AmmoRackBehaviour rack)
+        {
+            var (gun, owner) = GunOf(rack);
+            return Synced(rack, owner)?.Wanted(Selected(gun, owner));
+        }
+
+        /// <summary>A re-rack put a shell of <paramref name="round"/> in <paramref name="rack"/>.</summary>
+        internal static void Put(AmmoRackBehaviour rack, string? round) => Synced(rack, GunOf(rack).Owner, round);
 
         /// <summary>
         /// Whether <paramref name="rack"/> holds its gun's next round, counting
@@ -203,25 +264,39 @@ namespace Rounds
         internal static bool HoldsNext(AmmoRackBehaviour rack)
         {
             var (gun, owner) = GunOf(rack);
-            return RoundOf(rack) is { } id && id == Selected(gun, owner)
-                && (rack.AmountStored > 0 || carried.TryGetValue(gun, out var carry) && carry.Rack == rack.Pointer);
+            return Selected(gun, owner) is { } next && Synced(rack, owner) is { } mix
+                && (mix.Count(next) > 0 || carried.TryGetValue(gun, out var carry) && carry.Rack == rack.Pointer && carry.Id == next);
         }
 
         /// <summary>
         /// Whether <paramref name="rack"/> may give a shell: always in a
-        /// re-rack, and for a load only if it holds the gun's next round. A
-        /// refused load marks the gun waiting.
+        /// re-rack, and for a load only if it holds the gun's next round and
+        /// the loader isn't holding another. A refused load marks the gun waiting.
         /// </summary>
         internal static bool MayTake(AmmoRackBehaviour rack)
         {
-            if (Reracking || RoundOf(rack) == null || HoldsNext(rack))
+            if (Reracking || RoundOf(rack) == null)
                 return true;
-            waiting.Add(GunOf(rack).Gun);
+            var (gun, owner) = GunOf(rack);
+            // The game may just have put the carried shell back in another rack, on its way to this one
+            if (carried.TryGetValue(gun, out var held) && racks.TryGetValue(held.Rack, out AmmoRack? from) && from != null && from.behaviour != null)
+                Synced(from.behaviour, owner);
+            // A mixed rack can hold the round just picked while its loader carries the one picked before
+            if (HoldsNext(rack) && (!carried.TryGetValue(gun, out var carry) || carry.Id == Selected(gun, owner)))
+                return true;
+            waiting.Add(gun);
             return false;
         }
 
-        /// <summary><paramref name="gun"/>'s load task no longer holds the shell its loader took.</summary>
-        internal static void Dropped(IntPtr gun) => carried.Remove(gun);
+        /// <summary>
+        /// <paramref name="gun"/>'s load task no longer holds the shell its
+        /// loader took; any the game put back in its rack is the round taken.
+        /// </summary>
+        internal static void Dropped(IntPtr gun)
+        {
+            if (carried.Remove(gun, out var carry) && racks.TryGetValue(carry.Rack, out AmmoRack? rack) && rack != null && rack.behaviour != null)
+                Synced(rack.behaviour, GunOf(rack.behaviour).Owner, carry.Id);
+        }
 
         /// <summary>A load from <paramref name="rack"/> was refused, so its gun's load task holds no shell.</summary>
         internal static void Refused(AmmoRackBehaviour rack) => Dropped(GunOf(rack).Gun);
@@ -229,12 +304,17 @@ namespace Rounds
         /// <summary>Whether <paramref name="gun"/>'s loader holds a shell it took from <paramref name="rack"/>.</summary>
         internal static bool Carries(IntPtr gun, AmmoRackBehaviour rack) => carried.TryGetValue(gun, out var carry) && carry.Rack == rack.Pointer;
 
-        /// <summary>A shell left <paramref name="rack"/>: for a load, its gun's loader now carries the rack's round.</summary>
+        /// <summary>
+        /// A shell left <paramref name="rack"/>: the round a re-rack moved, or
+        /// for a load the gun's next round, which its loader now carries.
+        /// </summary>
         internal static void Took(AmmoRackBehaviour rack)
         {
-            if (RoundOf(rack) is not { } id)
+            var (gun, owner) = GunOf(rack);
+            if (MixOf(rack, owner) is not { } mix)
                 return;
-            var (gun, _) = GunOf(rack);
+            string id = mix.Pick(Reracking ? Moving : Selected(gun, owner));
+            mix.Sync(rack.AmountStored, id);
             Log($"{Name(rack.Pointer)} gave {id}{(Reracking ? " for a re-rack" : $" to gun {gun.ToInt64():X}")}, {rack.AmountStored} left");
             if (Reracking)
                 return;
@@ -299,6 +379,7 @@ namespace Rounds
             foreach (var (behaviour, rack) in racks.ToList())
                 if (rack == null)
                     racks.Remove(behaviour);
+            ForgetMixes();
         }
 
         /// <summary>Drops a gun destroyed with its vehicle, so the lists don't grow each battle.</summary>
@@ -326,12 +407,15 @@ namespace Rounds
                         racks.Remove(behaviour);
                         continue;
                     }
-                    if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer || !PlayerVehicle.Contains(rack) || RoundOf(rack.behaviour) is not { } id)
+                    if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer || !PlayerVehicle.Contains(rack) || Contents(rack.behaviour) is not { } held)
                         continue;
-                    int count = rack.behaviour.AmountStored;
-                    left[id] = left.GetValueOrDefault(id) + count;
-                    if (ready != null && Loadout.IsReady?.Invoke(rack.behaviour) == true)
-                        ready[id] = ready.GetValueOrDefault(id) + count;
+                    bool isReady = ready != null && Loadout.IsReady?.Invoke(rack.behaviour) == true;
+                    foreach (var (id, count) in held)
+                    {
+                        left[id] = left.GetValueOrDefault(id) + count;
+                        if (isReady)
+                            ready![id] = ready.GetValueOrDefault(id) + count;
+                    }
                 }
                 catch (Exception)
                 {
@@ -403,23 +487,51 @@ namespace Rounds
         }
     }
 
-    /// <summary>The round an ammo rack holds, stored as <c>{"round": id}</c> in the rack blueprint's description.</summary>
+    /// <summary>
+    /// The rounds an ammo rack is designed with, stored as
+    /// <c>{"round": id, "split": {id: slots}}</c> in the rack blueprint's
+    /// description; see <see cref="RackMix"/>.
+    /// </summary>
     internal static class RackRound
     {
-        /// <summary><paramref name="rack"/>'s round among <paramref name="owner"/>'s: its pick, or the first; null if there are none.</summary>
+        private static List<string> Ids(CannonBlueprint? owner) => Loadout.List(owner).Select(r => r.Id).ToList();
+
+        /// <summary>The round <paramref name="rack"/> was given among <paramref name="owner"/>'s: its pick, or the first; null if there are none.</summary>
         internal static string? Get(AmmoRackBlueprint? rack, CannonBlueprint? owner)
         {
-            var ids = Loadout.List(owner).Select(r => r.Id).ToList();
-            string? pick = rack == null ? null : (string?)(Loadout.Parsed(rack)["round"] as JsonValue);
-            return pick != null && ids.Contains(pick) ? pick : ids.FirstOrDefault();
+            var ids = Ids(owner);
+            return rack == null ? ids.FirstOrDefault() : RackMix.FillOf(Loadout.Parsed(rack), ids);
         }
 
-        internal static void Set(AmmoRackBlueprint rack, string id)
+        /// <summary>The design of <paramref name="rack"/> at <paramref name="capacity"/>, fully loaded; null without rounds.</summary>
+        internal static RackMix? Design(AmmoRackBlueprint rack, CannonBlueprint? owner, int capacity) => RackMix.Read(Loadout.Parsed(rack), Ids(owner), capacity);
+
+        /// <summary>
+        /// Assigns <paramref name="count"/> slots to <paramref name="id"/>, with
+        /// the rest of <paramref name="design"/> as it is. An old rack's whole
+        /// count becomes its split. <c>"round"</c> stays the most assigned, for
+        /// older versions, which read only that.
+        /// </summary>
+        internal static void SetCount(AmmoRackBlueprint rack, RackMix design, string id, int count)
         {
             if (Loadout.Read(rack) is not { } root)
                 return;
             root.Remove("mix");
-            root["round"] = id;
+            var split = new JsonObject();
+            string? most = null;
+            int largest = 0;
+            foreach (var (round, assigned) in design.Targets)
+            {
+                int slots = round == id ? count : assigned;
+                if (slots <= 0)
+                    continue;
+                split[round] = slots;
+                if (slots > largest)
+                    (most, largest) = (round, slots);
+            }
+            root["split"] = split;
+            if (most != null)
+                root["round"] = most;
             rack.Description = root.ToJsonString();
         }
     }
@@ -551,26 +663,74 @@ namespace Rounds
         }
     }
 
-    /// <summary>Adds a <b>Round</b> dropdown to the ammo rack panel: which of its gun's rounds the rack holds.</summary>
+    /// <summary>
+    /// Adds to the ammo rack panel, with several rounds, a slider per round: the
+    /// rack's slots assigned to it, up to its own and those unassigned. A
+    /// readout shows what's left unassigned.
+    /// </summary>
     [HarmonyPatch(typeof(AmmoRackEditor), nameof(AmmoRackEditor.OnGUI))]
     internal static class AmmoRackEditorPatch
     {
+        // Rack, round id and name, its slider; the rack's unassigned readout
+        private static readonly Dictionary<(IntPtr, string, string), FloatProperty> counts = new();
+        private static readonly ObjectCache<StringProperty> unassigned = new();
+        // The sliders of the panel last drawn; cached sliders outlive a redraw, which may add a round
+        private static List<(string Id, FloatProperty Slider)> shown = new();
+
+        private static RackMix? Design(AmmoRack rack) =>
+            RackRound.Design(rack.Blueprint, Loadout.OwnerOf(rack.shellSlotBlueprintSlot?.Blueprint), rack.Capacity);
+
         private static void Postfix(AmmoRackEditor __instance, IGUILayout __0)
         {
             AmmoRack? rack = __instance.Component;
-            AmmoRackBlueprint? blueprint = rack?.Blueprint;
-            CannonBlueprint? owner = Loadout.OwnerOf(rack?.shellSlotBlueprintSlot?.Blueprint);
-            var rounds = Loadout.List(owner);
+            var rounds = Loadout.List(Loadout.OwnerOf(rack?.shellSlotBlueprintSlot?.Blueprint));
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (rack == null || blueprint == null || rounds.Count == 0 || drawer == null)
+            if (rack == null || rack.Blueprint == null || rounds.Count < 2 || drawer == null)
                 return;
-            string? current = RackRound.Get(blueprint, owner);
-            EditorGui.Dropdown(drawer, "Round", rounds.Select(r => r.Name).ToList(), rounds.FindIndex(r => r.Id == current), i =>
+            StringProperty readout = unassigned.Get(rack, () => EditorGui.Readout(
+                "Unassigned",
+                () => Design(rack) is { } mix ? $"{mix.Unassigned}" : "",
+                "Slots for no round in particular: they hold an even balance of all rounds, at the start and when re-racked."));
+            shown = new List<(string Id, FloatProperty Slider)>();
+            foreach (var (id, name, _) in rounds)
             {
-                RackRound.Set(blueprint, rounds[i].Id);
-                rack.blueprintReference?.MarkModified();
-                __instance.RequestRedraw();
-            }, "The round every shell in this rack is. Place a rack for each round you want to carry.");
+                if (!counts.TryGetValue((rack.Pointer, id, name), out FloatProperty? slider))
+                    counts[(rack.Pointer, id, name)] = slider = new FloatProperty(
+                        name,
+                        (Func<float>)(() => Design(rack)?.Targets.GetValueOrDefault(id) ?? 0),
+                        (Action<float>)(value =>
+                        {
+                            if (Design(rack) is not { } before)
+                                return;
+                            RackRound.SetCount(rack.Blueprint, before, id, Math.Clamp((int)Math.Round(value), 0, before.Limit(id)));
+                            rack.blueprintReference?.MarkModified();
+                            Limits(rack);
+                            EditorGui.Refresh(new Property[] { readout });
+                        }),
+                        "Slots in this rack for this round: it starts with them, and only this round is re-racked into them.")
+                    {
+                        Min = 0f,
+                        Step = 1f
+                    };
+                shown.Add((id, slider));
+            }
+            Limits(rack);
+            foreach (var (_, slider) in shown)
+                drawer.Float(slider);
+            drawer.Readonly(readout);
+        }
+
+        /// <summary>Caps each slider at its round's own slots and those unassigned.</summary>
+        private static void Limits(AmmoRack rack)
+        {
+            if (Design(rack) is not { } mix)
+                return;
+            foreach (var (id, slider) in shown)
+            {
+                slider.Max = mix.Limit(id);
+                slider.OnPropertyChanged(PropertyChangeType.Limit);
+                slider.OnPropertyChanged(PropertyChangeType.Value);
+            }
         }
     }
 }
