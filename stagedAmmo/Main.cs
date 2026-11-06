@@ -142,8 +142,9 @@ namespace StagedAmmo
         public bool IsPlayer;
         // The gun's WeaponBehaviour, as rounds keys guns
         public IntPtr Weapon;
-        // The ready rack being restocked, if any
+        // The ready rack being restocked, if any, and with rounds the round going into it
         public AmmoRackBehaviour? Target;
+        public string? Round;
 
         public float Progress, Required;
         public bool HasTarget, LoaderBusy;
@@ -299,6 +300,7 @@ namespace StagedAmmo
                 gunFinders[gun] = finder.Pointer;
             }
 
+            ProjectileSizeID size = loadTask.Request.SizeID;
             // New finder, or the game rebuilt its lists: take them as the full lists
             if (!Staged.TryGetValue(finder.Pointer, out Staging? staging) || finder.sources.Pointer != staging.Shown)
             {
@@ -307,9 +309,16 @@ namespace StagedAmmo
                 staging = new Staging
                 {
                     Finder = finder, Sources = finder.sources, Paths = finder.paths, LastSeen = now,
-                    Weapon = loadTask.target?.TryCast<WeaponBehaviour>()?.Pointer ?? IntPtr.Zero
+                    Weapon = loadTask.target?.TryCast<WeaponBehaviour>()?.Pointer ?? IntPtr.Zero,
+                    Size = size
                 };
                 Staged[finder.Pointer] = staging;
+                Filter(finder, staging, now);
+            }
+            else if (!size.Equals(staging.Size))
+            {
+                // Which racks are the gun's own depends on its shell size
+                staging.Size = size;
                 Filter(finder, staging, now);
             }
             else if (RoundsLink.Present && ShownKey(staging) != staging.ShownKey)
@@ -326,7 +335,6 @@ namespace StagedAmmo
             staging.LastSeen = now;
             staging.LoaderEfficiency = LoaderEfficiency(contributors, staging.LoaderEfficiency);
             staging.LoaderBusy = !staging.Auto && loadTask.State == LoadState.Loading;
-            staging.Size = loadTask.Request.SizeID;
             // The game keeps loading from the rack it last picked, which may be one picked before the finder was filtered
             if (loadTask.State != LoadState.Loading && loadTask.rack != null && !Shown(finder, loadTask.rack))
                 loadTask.rack = null;
@@ -417,14 +425,17 @@ namespace StagedAmmo
             var flagged = new bool[count];
             bool anyFlagged = false;
             staging.Auto = false;
+            // The finder lists every rack in the vehicle: another gun's [auto] or [ready] racks mustn't count for this one.
+            // Size 0 until the gun's first request: count them all until then.
             for (int i = 0; i < count; i++)
             {
                 // The finder only updates the paths it's shown, so keep hidden ones current too
                 if (staging.Paths[i]?.RequiresUpdate == true)
                     staging.Paths[i].Update();
-                auto[i] = Plugin.IsAuto(staging.Sources[i]);
+                bool fits = staging.Size.Value == 0 || staging.Sources[i]?.ShellSizeID.Equals(staging.Size) == true;
+                auto[i] = fits && Plugin.IsAuto(staging.Sources[i]);
                 staging.Auto |= auto[i];
-                flagged[i] = Plugin.IsFlagged(staging.Sources[i]?.AmmoSource?.RackIdentifier);
+                flagged[i] = fits && Plugin.IsFlagged(staging.Sources[i]?.AmmoSource?.RackIdentifier);
                 anyFlagged |= flagged[i];
             }
 
@@ -484,8 +495,8 @@ namespace StagedAmmo
             var paths = staging.Paths;
             int count = Math.Min(staging.Ready.Length, Math.Min(sources.Length, paths.Length));
             var racks = new AmmoRackBehaviour?[count];
-            // Which racks hold the gun's next round, found once rather than for every rack pair
-            var holds = new bool[count];
+            // With rounds, each rack's shells per round, found once rather than for every rack pair
+            var contents = new IReadOnlyDictionary<string, int>?[count];
             int readyShells = 0, stowedShells = 0, readyCapacity = 0;
             for (int i = 0; i < count; i++)
             {
@@ -495,7 +506,7 @@ namespace StagedAmmo
                     racks[i] = null;
                 if (racks[i] == null)
                     continue;
-                holds[i] = RoundsLink.HoldsNext(racks[i]!);
+                contents[i] = RoundsLink.Contents(racks[i]!);
                 if (staging.Ready[i])
                 {
                     readyShells += racks[i]!.AmountStored;
@@ -509,22 +520,25 @@ namespace StagedAmmo
             staging.ReadyCapacity = readyCapacity;
 
             int target = -1, from = -1;
+            string? round = null;
             float targetDistance = float.MaxValue;
             for (int i = 0; i < count; i++)
             {
                 AmmoRackBehaviour? ready = racks[i];
                 if (ready == null || !staging.Ready[i] || ready.AmountStored >= ready.Capacity || paths[i].Distance >= targetDistance)
                     continue;
-                int next = NextRackOut(i, racks, holds, staging);
+                var (next, id) = NextRackOut(i, racks, contents, staging);
                 if (next < 0)
                     continue;
                 target = i;
                 from = next;
+                round = id;
                 targetDistance = paths[i].Distance;
             }
 
             staging.HasTarget = target >= 0;
             staging.Target = target >= 0 ? racks[target] : null;
+            staging.Round = round;
             if (target < 0)
             {
                 staging.Progress = 0f;
@@ -539,17 +553,31 @@ namespace StagedAmmo
                 return;
             staging.Progress = 0f;
             int clip = Plugin.ClipSize(sources[target]!.AmmoSource?.RackIdentifier);
-            RoundsLink.Rerack(() =>
+            AmmoRackBehaviour goal = racks[target]!;
+            for (int n = 0; n < clip && goal.AmountStored < goal.Capacity; n++)
             {
-                AmmoRackBehaviour ready = racks[target]!;
-                for (int n = 0; n < clip && ready.AmountStored < ready.Capacity; n++)
-                {
-                    int src = n == 0 ? from : NextRackOut(target, racks, holds, staging);
-                    if (src < 0 || !racks[src]!.TakeShell())
-                        break;
-                    ready.LoadAmmo(1);
-                }
-            });
+                // A clip may be of different rounds
+                var (src, id) = n == 0 ? (from, round) : NextRackOut(target, racks, contents, staging);
+                if (src < 0 || !RoundsLink.Move(racks[src]!, goal, id))
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// A shell to bring to ready rack <paramref name="target"/>, and with
+        /// rounds which round: the first the rack wants that any rack can give.
+        /// </summary>
+        private static (int From, string? Round) NextRackOut(int target, AmmoRackBehaviour?[] racks, IReadOnlyDictionary<string, int>?[] contents, Staging staging)
+        {
+            if (RoundsLink.Wanted(racks[target]!) is not { } wanted)
+                return (NextRackOut(target, racks, staging, contents, null), null);
+            foreach (string id in wanted)
+            {
+                int next = NextRackOut(target, racks, staging, contents, id);
+                if (next >= 0)
+                    return (next, id);
+            }
+            return (-1, null);
         }
 
         /// <summary>
@@ -558,17 +586,10 @@ namespace StagedAmmo
         /// rack, or a ready rack farther out, except on an autoloaded gun: it
         /// loads from every autoloader rack, and guns sharing them would pass
         /// shells back and forth between them. Nor from a ready rack shared with
-        /// another gun, for the same reason. With rounds installed, a rack
-        /// holding the gun's next round comes first. -1 if none.
+        /// another gun, for the same reason. -1 if none.
         /// </summary>
-        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, bool[] holds, Staging staging)
-        {
-            int next = NextRackOut(target, racks, staging, holds);
-            return next >= 0 ? next : NextRackOut(target, racks, staging, null);
-        }
-
-        /// <param name="holds">Racks to take from; null for any.</param>
-        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging, bool[]? holds)
+        /// <param name="id">With rounds, the round it must hold; null for a rack without rounds, which can only fit another.</param>
+        private static int NextRackOut(int target, AmmoRackBehaviour?[] racks, Staging staging, IReadOnlyDictionary<string, int>?[] contents, string? id)
         {
             AmmoRackBehaviour ready = racks[target]!;
             float targetDistance = staging.Paths[target].Distance;
@@ -578,8 +599,9 @@ namespace StagedAmmo
             {
                 AmmoRackBehaviour? rack = racks[j];
                 float d = staging.Paths[j].Distance;
-                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance || Shared(rack)) || d >= distance || holds?[j] == false
-                    || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID) || !RoundsLink.SameRound(rack, ready))
+                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance || Shared(rack)) || d >= distance
+                    || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID)
+                    || (id == null ? contents[j] != null : contents[j]?.GetValueOrDefault(id) is null or 0))
                     continue;
                 nearest = j;
                 distance = d;
@@ -888,27 +910,33 @@ namespace StagedAmmo
     }
 
     /// <summary>
-    /// Rounds (madi.rounds), if installed: re-racks only move shells between
-    /// racks of the same round, and racks holding a gun's next round are
-    /// emptied into the ready racks first. Calls into rounds are in methods of their own, so nothing loads
-    /// rounds.dll when it isn't there.
+    /// Rounds (madi.rounds), if installed: re-racks bring a ready rack the
+    /// rounds its slots are assigned to, and an even balance for the rest. Calls into
+    /// rounds are in methods of their own, so nothing loads rounds.dll when it
+    /// isn't there.
     /// </summary>
     internal static class RoundsLink
     {
         internal static bool Present;
 
-        internal static void Rerack(Action move)
+        /// <summary>Moves a shell (with rounds, of <paramref name="round"/>) from <paramref name="from"/> to <paramref name="to"/>; false if there was none to take.</summary>
+        internal static bool Move(AmmoRackBehaviour from, AmmoRackBehaviour to, string? round)
         {
             if (Present)
-                RerackWithRounds(move);
-            else
-                move();
+                return MoveWithRounds(from, to, round);
+            if (!from.TakeShell())
+                return false;
+            to.LoadAmmo(1);
+            return true;
         }
 
         internal static bool HoldsNext(AmmoRackBehaviour rack) => Present && HoldsNextWithRounds(rack);
 
-        /// <summary>Whether a shell may move from <paramref name="from"/> to <paramref name="to"/>: with rounds, only between racks of the same round.</summary>
-        internal static bool SameRound(AmmoRackBehaviour from, AmmoRackBehaviour to) => !Present || SameRoundWithRounds(from, to);
+        /// <summary>With rounds, <paramref name="rack"/>'s shells per round; null without.</summary>
+        internal static IReadOnlyDictionary<string, int>? Contents(AmmoRackBehaviour rack) => Present ? ContentsWithRounds(rack) : null;
+
+        /// <summary>With rounds, the rounds to bring to <paramref name="rack"/>, best first; null without.</summary>
+        internal static IReadOnlyList<string>? Wanted(AmmoRackBehaviour rack) => Present ? WantedWithRounds(rack) : null;
 
         internal static bool HasRounds(AmmoRackBehaviour? rack) => Present && rack != null && HasRoundsWithRounds(rack);
 
@@ -934,8 +962,8 @@ namespace StagedAmmo
             Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.ContainsKey(rack.Pointer);
             Rounds.Loadout.GunBadge = Indicator.Badge;
             Rounds.Loadout.Reracking = gun =>
-                Indicator.Find(gun) is { Target: { } target } staging && Indicator.Of(staging) is Indicator.State.Running or Indicator.State.Paused
-                && Rounds.Loadout.RoundOf(target) is { } round ? (round, Indicator.Progress(staging)) : null;
+                Indicator.Find(gun) is { Target: not null, Round: { } round } staging && Indicator.Of(staging) is Indicator.State.Running or Indicator.State.Paused
+                    ? (round, Indicator.Progress(staging)) : null;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -945,13 +973,16 @@ namespace StagedAmmo
         private static void RequestAmmoWithRounds(WeaponBehaviour? weapon) => Rounds.Loadout.RequestAmmo(weapon);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void RerackWithRounds(Action move) => Rounds.Loadout.Rerack(move);
+        private static bool MoveWithRounds(AmmoRackBehaviour from, AmmoRackBehaviour to, string? round) => Rounds.Loadout.Rerack(from, to, round);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static bool HoldsNextWithRounds(AmmoRackBehaviour rack) => Rounds.Loadout.HoldsNext(rack);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static bool SameRoundWithRounds(AmmoRackBehaviour from, AmmoRackBehaviour to) => Rounds.Loadout.RoundOf(from) == Rounds.Loadout.RoundOf(to);
+        private static IReadOnlyDictionary<string, int>? ContentsWithRounds(AmmoRackBehaviour rack) => Rounds.Loadout.Contents(rack);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static IReadOnlyList<string>? WantedWithRounds(AmmoRackBehaviour rack) => Rounds.Loadout.Wanted(rack);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static bool HasRoundsWithRounds(AmmoRackBehaviour rack) => Rounds.Loadout.HasRounds(rack);
