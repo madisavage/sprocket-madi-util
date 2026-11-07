@@ -1,0 +1,10 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "transmission",
+	"date": "1950.01.01",
+	"properties": {
+		"maxGearCount": 16,
+		"allowableShearFactor": 0.1
+	}
+}

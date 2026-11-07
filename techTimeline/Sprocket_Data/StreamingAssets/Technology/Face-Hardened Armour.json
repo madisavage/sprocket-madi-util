@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "fha",
+	"date": "1935.01.01",
+	"properties": {
+		"rhaFactor": 1.05,
+		"hardness": 1.9,
+		"costMultiplier": 3.0,
+		"spallFactor": 0.001,
+		"density": 7850
+	}
+}

@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "cannon",
+	"date": "1943.01.01",
+	"properties": {
+		"operatingPressure": 40000,
+		"penetratorConstant": 1900,
+		"expectedMaxArmourThickness": 150,
+		"calibre": 88,
+		"propellantLength": 360
+	}
+}

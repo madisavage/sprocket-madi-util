@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "wha",
+	"date": "2010.01.01",
+	"properties": {
+		"rhaFactor": 2.35,
+		"hardness": 7,
+		"costMultiplier": 100,
+		"spallFactor": 0.2,
+		"density": 18200
+	}
+}

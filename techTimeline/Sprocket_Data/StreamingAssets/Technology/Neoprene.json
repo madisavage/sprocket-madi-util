@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "neo",
+	"date": "1920.01.01",
+	"properties": {
+		"rhaFactor": 0.05,
+		"hardness": 0.05,
+		"costMultiplier": 0.5,
+		"spallFactor": 0.99,
+		"density": 1330
+	}
+}

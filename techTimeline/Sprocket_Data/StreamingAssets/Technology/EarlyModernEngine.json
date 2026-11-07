@@ -1,0 +1,10 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "combustionEngine",
+	"date": "1991.12.26",
+	"properties": {
+		"torqueCoefficient": 1,
+		"technologyFactor": 2.1
+	}
+}

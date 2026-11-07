@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "kevlar",
+	"date": "1965.01.01",
+	"properties": {
+		"rhaFactor": 0.075,
+		"hardness": 0.025,
+		"costMultiplier": 10,
+		"spallFactor": 0,
+		"density": 1260
+	}
+}

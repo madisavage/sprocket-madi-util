@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "quartz",
+	"date": "1966.01.01",
+	"properties": {
+		"rhaFactor": 1.12,
+		"hardness": 1.95,
+		"costMultiplier": 4,
+		"spallFactor": 0.000005,
+		"density": 3925
+	}
+}

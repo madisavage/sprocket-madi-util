@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "uhha",
+	"date": "2000.01.01",
+	"properties": {
+		"rhaFactor": 1.16,
+		"hardness": 1.68,
+		"costMultiplier": 15,
+		"spallFactor": 0.00075,
+		"density": 7850
+	}
+}

@@ -6,6 +6,11 @@
 
 Run: uv run tools/techedit.py [game folder]
      uv run tools/techedit.py --check   (round-trips every file through the writer)
+     uv run tools/techedit.py --no-mirror   (saves to the game folder only)
+
+Reads the game folder. Saving also writes each changed file into the repo's techTimeline package
+(techTimeline/Sprocket_Data/StreamingAssets), and mirrors renames and deletes there, so the package
+follows what you edit.
 """
 import json
 import re
@@ -13,21 +18,25 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtCore import QDate, QPointF, QRectF, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDateEdit, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QMainWindow, QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+                               QTableWidgetItem, QTabWidget, QToolTip, QVBoxLayout, QWidget)
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 GAME = Path(args[0]) if args else Path(__file__).resolve().parents[2]
 ERAS = GAME / "Sprocket_Data" / "StreamingAssets" / "Eras"
 TECH = GAME / "Sprocket_Data" / "StreamingAssets" / "Technology"
+# The repo's distributable copy; saves are mirrored there unless --no-mirror
+MIRROR = Path(__file__).resolve().parents[1] / "techTimeline" / "Sprocket_Data" / "StreamingAssets"
+MIRRORING = MIRROR.is_dir() and "--no-mirror" not in sys.argv
 MAT_KEYS = ["rhaFactor", "hardness", "costMultiplier", "spallFactor", "density"]
 COLS = ["file", "type", "date", "era", *MAT_KEYS, "RHA/kg"]
 DATE = re.compile(r"(\d{4})\.(\d{2})\.(\d{2})")
 LIMIT = 3000  # eras starting later (limit.json's 9999) are sentinels, kept off the timeline
 TOP = 80
+GUTTER = 180  # left margin holding each timeline row group's name
 
 
 def load(path):
@@ -95,6 +104,11 @@ def buttons(layout, pairs):
     return layout
 
 
+def mirror_of(path):
+    """The package's copy of a game file (Eras/x.json or Technology/x.json), or None when not mirroring."""
+    return MIRROR / path.parent.name / path.name if MIRRORING else None
+
+
 def is_mat(e):
     return "rhaFactor" in e["data"].get("properties", {})
 
@@ -111,37 +125,68 @@ class Item(QTableWidgetItem):
 
 
 class Timeline(QWidget):
+    """Eras as bands over a year axis; under it every tech on its date, one row group per type.
+    Click a group's name to collapse it to one strip of date markers (remembered between runs)."""
     picked = Signal(object)
 
     def __init__(self):
         super().__init__()
-        self.ppy, self.eras, self.mats, self.marks, self.hits, self.sel = 14.0, [], [], [], [], None
+        self.ppy, self.eras, self.techs, self.marks, self.groups, self.hits, self.sel = 14.0, [], [], [], [], [], None
         self.lo, self.hi = 1900, 2000
+        self.settings = QSettings("madisavage", "techedit")
+        self.collapsed = set(self.settings.value("collapsed", [], type=list) or [])
+        self.setMouseTracking(True)
 
     def x(self, y):
-        return 20 + (y - self.lo) * self.ppy
+        return GUTTER + (y - self.lo) * self.ppy
 
-    def set(self, eras, mats):
-        self.eras, self.mats = eras, mats
-        ys = [year(e["data"].get("start")) for e in eras] + [year(m["data"].get("date")) for m in mats]
+    def set(self, eras, techs):
+        self.eras, self.techs = eras, techs
+        ys = [year(e["data"].get("start")) for e in eras] + [year(t["data"].get("date")) for t in techs]
         ys = [y for y in ys if y is not None and 1000 < y < LIMIT] or [1900, 2000]  # 0000.01.01 = always
         self.lo, self.hi = int(min(ys)) - 2, int(max(ys)) + 12
-        fm, lanes, self.marks = self.fontMetrics(), [], []
-        for m in sorted(mats, key=lambda m: m["data"].get("date", "")):
-            y = year(m["data"].get("date"))
-            if y is None:
-                continue
-            x, w = self.x(max(y, self.lo)), self.fontMetrics().horizontalAdvance(m["file"]) + 10
-            lane = next((i for i, end in enumerate(lanes) if end < x), len(lanes))
-            lanes[lane:lane + 1] = [x + w]
-            self.marks.append((m, QRectF(x, TOP + lane * 18, w, 16)))
-        self.resize(int(self.x(self.hi)) + 20, TOP + len(lanes) * 18 + 10)
+        groups = {}
+        for t in techs:
+            groups.setdefault("Materials" if is_mat(t) else t["data"].get("type", "?"), []).append(t)
+        fm, top, self.marks, self.groups = self.fontMetrics(), TOP, [], []
+        for name in sorted(groups, key=lambda g: (g != "Materials", min(t["data"].get("date", "") for t in groups[g]))):
+            folded, lanes = name in self.collapsed, []
+            for t in sorted(groups[name], key=lambda t: t["data"].get("date", "")):
+                y = year(t["data"].get("date"))
+                if y is None:
+                    continue
+                x = self.x(max(y, self.lo))
+                if folded:  # a marker only, all on the group's one row
+                    self.marks.append((t, QRectF(x - 5, top, 10, 16), top, False))
+                    continue
+                w = fm.horizontalAdvance(t["file"]) + 16
+                lane = next((i for i, end in enumerate(lanes) if end < x), len(lanes))
+                lanes[lane:lane + 1] = [x + w]
+                self.marks.append((t, QRectF(x - 5, top + 6 + lane * 20, w + 5, 18), top, True))
+            rows = 1 if folded else max(len(lanes), 1)
+            height = (16 if folded else 6 + rows * 20)
+            self.groups.append((name, top, height, len(groups[name])))
+            top += height + 10
+        self.resize(int(self.x(self.hi)) + 20, top + 10)
         self.update()
 
     def paintEvent(self, _):
         p, pal = QPainter(self), self.palette()
+        p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), pal.base())
-        self.hits = []
+        self.hits, bottom = [], self.height()
+        ink, faint = pal.text().color(), QColor(128, 128, 128, 45)
+        for i, (name, top, height, count) in enumerate(self.groups):
+            if i % 2:
+                p.fillRect(QRectF(0, top - 5, self.width(), height + 10), pal.alternateBase())
+        step = next(s for s in (1, 2, 5, 10, 25, 50, 100) if s * self.ppy >= 40)
+        for yr in range(self.lo - self.lo % step + step, self.hi + 1, step):
+            x = self.x(yr)
+            p.setPen(QPen(faint, 1))
+            p.drawLine(int(x), 56, int(x), bottom)  # a gridline down through every row
+            p.setPen(ink)
+            p.drawLine(int(x), 50, int(x), 56)
+            p.drawText(int(x) - 20, 58, 40, 16, Qt.AlignCenter, str(yr))
         eras = sorted(((year(e["data"].get("start")), e) for e in self.eras if year(e["data"].get("start"))),
                       key=lambda t: t[0])
         for i, (y, e) in enumerate(eras):
@@ -154,39 +199,69 @@ class Timeline(QWidget):
             p.drawRect(r)
             p.drawText(r.adjusted(4, 2, -2, -2), Qt.AlignLeft | Qt.AlignTop,
                        f"{e['data'].get('name', '')}\n{e['data'].get('start', '')}")
+            p.setPen(QPen(QColor(0, 0, 0, 90), 1, Qt.DashLine))
+            p.drawLine(int(r.left()), 48, int(r.left()), bottom)  # era start, down through every row
             self.hits.append((e, r))
-        p.setPen(pal.text().color())
-        step = next(s for s in (1, 2, 5, 10, 25, 50, 100) if s * self.ppy >= 40)
-        for yr in range(self.lo - self.lo % step + step, self.hi + 1, step):
-            x = self.x(yr)
-            p.drawLine(int(x), 50, int(x), 56)
-            p.drawText(int(x) - 20, 58, 40, 16, Qt.AlignCenter, str(yr))
-        for m, r in self.marks:
-            p.setPen(QColor(128, 128, 128, 90))
-            p.drawLine(int(r.left()), 74, int(r.left()), int(r.top()))
-            if m is self.sel:
-                p.fillRect(r, pal.highlight())
-            p.setPen(pal.highlightedText().color() if m is self.sel else pal.text().color())
-            p.drawText(r.adjusted(4, 0, 0, 0), Qt.AlignVCenter, m["file"])
+        for name, top, height, count in self.groups:
+            r = QRectF(6, top, GUTTER - 12, 16)
+            p.setPen(ink)
+            p.drawText(r, Qt.AlignVCenter | Qt.AlignLeft, f"{'▸' if name in self.collapsed else '▾'} {name} ({count})")
+            self.hits.append((("group", name), r))
+        accent = pal.highlight().color()
+        # the row background under each group, so a label can cover the leaders it overlaps
+        shade = {top: pal.alternateBase() if i % 2 else pal.base() for i, (_, top, _, _) in enumerate(self.groups)}
+        for m, r, group_top, labelled in self.marks:  # leaders first, labels over them
+            x, cy = r.left() + 5, r.center().y()
+            if m is self.sel:  # the selected tech: a line up to the axis
+                p.setPen(QPen(accent, 2))
+                p.drawLine(int(x), 56, int(x), int(cy))
+            elif labelled:
+                p.setPen(QPen(QColor(110, 110, 110), 2))
+                p.drawLine(int(x), int(group_top) - 4, int(x), int(cy))
+        for m, r, group_top, labelled in self.marks:
+            x, cy, chosen = r.left() + 5, r.center().y(), m is self.sel
+            p.setPen(Qt.NoPen)
+            p.setBrush(accent if chosen else ink)
+            p.drawPolygon(QPolygonF([QPointF(x, cy - 5), QPointF(x + 5, cy), QPointF(x, cy + 5), QPointF(x - 5, cy)]))
+            if labelled:
+                text = r.adjusted(11, 0, 0, 0)
+                p.fillRect(text, pal.highlight() if chosen else shade[group_top])
+                p.setPen(pal.highlightedText().color() if chosen else ink)
+                p.drawText(text.adjusted(2, 0, 0, 0), Qt.AlignVCenter, m["file"])
             self.hits.append((m, r))
 
+    def hit(self, pos):
+        return next((e for e, r in reversed(self.hits) if r.contains(pos)), None)
+
     def mousePressEvent(self, ev):
-        for e, r in self.hits:
-            if r.contains(ev.position()):
-                self.picked.emit(e)
-                return
+        e = self.hit(ev.position())
+        if isinstance(e, tuple):
+            self.collapsed ^= {e[1]}
+            self.settings.setValue("collapsed", sorted(self.collapsed))
+            self.set(self.eras, self.techs)
+        elif e is not None:
+            self.picked.emit(e)
+
+    def mouseMoveEvent(self, ev):
+        e = self.hit(ev.position())
+        if isinstance(e, dict) and "date" in e["data"]:
+            QToolTip.showText(ev.globalPosition().toPoint(), f"{e['file']}\n{e['data'].get('type', '')} · {e['data']['date']}", self)
+        elif isinstance(e, tuple):
+            QToolTip.showText(ev.globalPosition().toPoint(), "Click to collapse or expand", self)
+        else:
+            QToolTip.hideText()
 
     def wheelEvent(self, ev):
         if not ev.modifiers() & Qt.ControlModifier:
             return ev.ignore()
         self.ppy = max(2.0, min(200.0, self.ppy * (1.2 if ev.angleDelta().y() > 0 else 1 / 1.2)))
-        self.set(self.eras, self.mats)
+        self.set(self.eras, self.techs)
 
 
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Sprocket eras & materials — {GAME}")
+        self.setWindowTitle(f"Sprocket eras & materials — {GAME}" + (f" (saves mirrored to {MIRROR})" if MIRRORING else ""))
         self.eras, self.techs, self.loading = entries(ERAS), entries(TECH), False
         self.timeline = Timeline()
         self.timeline.picked.connect(self.pick)
@@ -201,7 +276,7 @@ class Main(QMainWindow):
         split.setSizes([300, 600])
         self.setCentralWidget(split)
         self.addToolBar("File").addAction("Save all (Ctrl+S)", self.save).setShortcut("Ctrl+S")
-        self.statusBar().showMessage("Ctrl+wheel on the timeline zooms. Click a band or material to jump to it.")
+        self.statusBar().showMessage("Ctrl+wheel on the timeline zooms. Click a band or technology to jump to it; click a row name to collapse it.")
         self.refresh()
 
     def mats(self):
@@ -210,7 +285,7 @@ class Main(QMainWindow):
     def refresh(self, era=None):
         self.refresh_eras(era)
         self.refresh_mats()
-        self.timeline.set(self.eras, self.mats())
+        self.timeline.set(self.eras, self.techs)
 
     # ---- eras ----
 
@@ -388,7 +463,7 @@ class Main(QMainWindow):
         def go():
             self.refresh_era_techs()
             self.refresh_mats()
-            self.timeline.set(self.eras, self.mats())
+            self.timeline.set(self.eras, self.techs)
         QTimer.singleShot(0, go)
 
     def edit_tech(self, item):
@@ -541,7 +616,7 @@ class Main(QMainWindow):
             QMessageBox.warning(self, "Invalid value", str(err))
         self.fill_row(e)
         if k in ("file", "date"):
-            self.timeline.set(self.eras, self.mats())
+            self.timeline.set(self.eras, self.techs)
         self.refresh_era_techs()
 
     def set_field(self, e, k, text):
@@ -603,6 +678,14 @@ class Main(QMainWindow):
         if any(e is x for x in self.eras):
             self.tabs.setCurrentIndex(0)
             self.era_list.setCurrentRow(next(i for i, x in enumerate(self.eras) if x is e))
+        elif not is_mat(e):
+            # a non-material tech: its era, then its row in that era's technology list
+            self.tabs.setCurrentIndex(0)
+            era = self.era_entry(e["data"].get("date", ""))
+            self.era_list.setCurrentRow(next((i for i, x in enumerate(self.eras) if x is era), -1))
+            if e.get("ecells"):
+                self.era_techs.setCurrentItem(e["ecells"][0])
+                self.era_techs.scrollToItem(e["ecells"][0])
         else:
             self.tabs.setCurrentIndex(1)
             self.table.setCurrentItem(e["cells"][0])
@@ -616,6 +699,8 @@ class Main(QMainWindow):
         for e in es:
             if e["path"]:
                 e["path"].rename(e["path"].with_suffix(".json.bak"))
+                if (copy := mirror_of(e["path"])) and copy.exists():
+                    copy.unlink()
         return True
 
     def save(self):
@@ -631,8 +716,13 @@ class Main(QMainWindow):
                     errs.append(f"{target.name} already exists; rename the {folder.name} entry")
                 else:
                     target.write_text(dump(e["data"]) + "\n", encoding="utf-8")
+                    if copy := mirror_of(target):
+                        copy.parent.mkdir(parents=True, exist_ok=True)
+                        copy.write_text(dump(e["data"]) + "\n", encoding="utf-8")
                     if e["path"] and e["path"] != target:
                         e["path"].unlink()
+                        if (old := mirror_of(e["path"])) and old.exists():
+                            old.unlink()
                     e["path"], e["dirty"] = target, False
         self.refresh()
         self.statusBar().showMessage("Saved." if not errs else "Saved with problems.", 5000)

@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "Future",
+	"start": "2025.01.01",
+	"playable": true,
+	"mediumVehicleMass": 50000,
+	"heavyVehicleMass": 90000
+}

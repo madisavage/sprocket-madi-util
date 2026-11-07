@@ -1,0 +1,9 @@
+{
+  "v": "0.0",
+  "id": "",
+  "type": "traverseMotor",
+  "date": "2025.01.01",
+  "properties": {
+	"maxMotorTorque": 30000,
+  }
+}

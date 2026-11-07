@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "PostColdwar",
+	"start": "1991.12.26",
+	"playable": true,
+	"mediumVehicleMass": 40000,
+	"heavyVehicleMass": 90000
+}

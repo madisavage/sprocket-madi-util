@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "b4c",
+	"date": "1965.01.01",
+	"properties": {
+		"rhaFactor": 1.79,
+		"hardness": 8.6,
+		"costMultiplier": 182.0,
+		"spallFactor": 0.000005,
+		"density": 2520
+	}
+}

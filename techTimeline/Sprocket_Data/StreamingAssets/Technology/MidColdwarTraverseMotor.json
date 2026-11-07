@@ -1,0 +1,10 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "traverseMotor",
+	"date": "1966.01.01",
+	"properties": {
+		"resistance": 0.35,
+		"maxMotorTorque": 10500
+	}
+}

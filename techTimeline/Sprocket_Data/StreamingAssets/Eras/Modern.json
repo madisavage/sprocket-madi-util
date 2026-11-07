@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "Modern",
+	"start": "2016.01.01",
+	"playable": true,
+	"mediumVehicleMass": 45000,
+	"heavyVehicleMass": 90000
+}

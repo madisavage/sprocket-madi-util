@@ -1,0 +1,11 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "cannon",
+	"date": "2018.01.01",
+	"properties": {
+		"operatingPressure": 101500,
+		"calibre": 120,
+		"propellantLength": 600
+	}
+}

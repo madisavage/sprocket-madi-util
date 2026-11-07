@@ -1,0 +1,11 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "trackAssembly",
+	"date": "1958.01.01",
+	"properties": {
+		"rollingResistanceCoefficient": 0.95,
+		"viscousDragCoefficient": 0.95,
+		"bendingResistanceCoefficient": 0.95
+	}
+}

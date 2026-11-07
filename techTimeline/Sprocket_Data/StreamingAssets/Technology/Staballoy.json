@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "sta",
+	"date": "2015.01.01",
+	"properties": {
+		"rhaFactor": 2.6,
+		"hardness": 2.2,
+		"costMultiplier": 48,
+		"spallFactor": 0.2,
+		"density": 19000
+	}
+}

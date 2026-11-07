@@ -5,6 +5,7 @@
 #
 # The tag is <Version> from Directory.Build.props, so tag and plugin versions always match.
 # The assets are the DLLs the registry packages list (registry/packages/*/*.json), plus MadiLib.xml.
+# A listed .zip is a data package: the repo folder of the same name, lowercase first letter (TechTimeline.zip -> techTimeline/), zipped.
 # Needs dotnet, git, python3 and the GitHub CLI (gh, logged in with `gh auth login`).
 # --dry-run builds and lists the assets, but tags and publishes nothing.
 # --game sets the game versions the release supports, in the mod manager's range syntax
@@ -61,6 +62,18 @@ for path in sorted(glob.glob("registry/packages/*/*.json")):
     for name in json.load(open(path))["release"]["assets"]["include"]:
         print(name)
 '); do
+    if [[ "$dll" == *.zip ]]; then
+        # A data package: its folder (TechTimeline.zip -> techTimeline/) zipped with its game-relative paths
+        folder="$(tr '[:upper:]' '[:lower:]' <<< "${dll:0:1}")${dll:1}"
+        folder=${folder%.zip}
+        [[ -d "$folder" ]] || { echo "Missing folder $folder for $dll" >&2; exit 1; }
+        mkdir -p build
+        built="build/$dll"
+        rm -f "$built"
+        python3 -c 'import shutil, sys; shutil.make_archive(sys.argv[1][:-4], "zip", sys.argv[2])' "$built" "$folder"
+        assets+=("$built")
+        continue
+    fi
     project=${dll%.dll}
     built="$project/bin/Release/net6.0/$dll"
     [[ -f "$built" ]] || { echo "Missing $built" >&2; exit 1; }

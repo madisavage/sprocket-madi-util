@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "MidColdwar",
+	"start": "1966.01.01",
+	"playable": true,
+	"mediumVehicleMass": 25000,
+	"heavyVehicleMass": 60000
+}

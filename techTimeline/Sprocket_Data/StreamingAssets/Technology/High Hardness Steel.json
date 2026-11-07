@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "hha",
+	"date": "1982.01.01",
+	"properties": {
+		"rhaFactor": 1.08,
+		"hardness": 1.47,
+		"costMultiplier": 8,
+		"spallFactor": 0.00075,
+		"density": 7775
+	}
+}

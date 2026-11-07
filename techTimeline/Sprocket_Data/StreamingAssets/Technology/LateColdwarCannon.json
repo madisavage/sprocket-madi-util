@@ -1,0 +1,11 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "cannon",
+	"date": "1979.01.01",
+	"properties": {
+		"operatingPressure": 97000,
+		"calibre": 110,
+		"propellantLength": 600
+	}
+}

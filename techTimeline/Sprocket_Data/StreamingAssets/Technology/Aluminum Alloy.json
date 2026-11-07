@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "al32375",
+	"date": "1966.01.01",
+	"properties": {
+		"rhaFactor": 0.43,
+		"hardness": 0.865,
+		"costMultiplier": 10,
+		"spallFactor": 0.0015,
+		"density": 2850
+	}
+}

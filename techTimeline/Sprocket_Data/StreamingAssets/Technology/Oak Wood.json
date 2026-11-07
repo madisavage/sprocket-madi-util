@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "oak",
+	"date": "1920.01.01",
+	"properties": {
+		"rhaFactor": 0.03,
+		"hardness": 0.1,
+		"costMultiplier": 0.05,
+		"spallFactor": 0.5,
+		"density": 750
+	}
+}

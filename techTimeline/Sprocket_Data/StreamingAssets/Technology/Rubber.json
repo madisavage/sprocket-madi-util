@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "epdm",
+	"date": "1920.01.01",
+	"properties": {
+		"rhaFactor": 0.035,
+		"hardness": 0.075,
+		"costMultiplier": 1,
+		"spallFactor": 0.995,
+		"density": 1050
+	}
+}

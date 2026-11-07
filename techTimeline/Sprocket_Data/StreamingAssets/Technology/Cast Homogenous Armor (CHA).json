@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "cha",
+	"date": "1940.01.01",
+	"properties": {
+		"rhaFactor": 0.9,
+		"hardness": 0.87,
+		"costMultiplier": 1.25,
+		"spallFactor": 0.0006,
+		"density": 7850
+	}
+}

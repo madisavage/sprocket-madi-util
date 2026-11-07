@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "LateColdwar",
+	"start": "1979.01.01",
+	"playable": true,
+	"mediumVehicleMass": 30000,
+	"heavyVehicleMass": 70000
+}

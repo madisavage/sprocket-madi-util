@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "alumina",
+	"date": "1978.01.01",
+	"properties": {
+		"rhaFactor": 1.8,
+		"hardness": 4.25,
+		"costMultiplier": 18,
+		"spallFactor": 0.000005,
+		"density": 3925
+	}
+}

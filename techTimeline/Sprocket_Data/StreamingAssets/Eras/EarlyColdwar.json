@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "EarlyColdwar",
+	"start": "1958.01.01",
+	"playable": true,
+	"mediumVehicleMass": 20000,
+	"heavyVehicleMass": 50000
+}

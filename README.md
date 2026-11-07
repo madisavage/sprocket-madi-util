@@ -43,6 +43,9 @@ Selecting a crew seat in the vehicle designer shows a **Base efficiency** slider
 ### Laying drive torque
 Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth torque multiplier** sliders (0–100, type up to 1000; step 0.25). They read and write `LayingDriveBlueprint.Elevation.TorqueMultiplier` and `LayingDriveBlueprint.Azimuth.TorqueMultiplier`.
 
+### Vehicle year
+The designer's era dropdown (renamed **Year**) lists every year of each era ("1943 (Midwar)") in place of the eras, up to the year of the latest tech in the game's Technology folder (read at launch, so added tech counts). A year row sets the vehicle's tech date to 1 January of that year (the era's start in its first year), so only tech invented by then is available. A vehicle from without madiUtil (dated its era's last day) shows its year, and keeps its date until a year is picked. The game saves the date in the vehicle file, so the year stays with shared vehicles, also for players without madiUtil.
+
 ### Save keybind
 **Save vehicle** (default Ctrl+S) saves the vehicle open in the designer, the same as its save button. Rebind it on the MadiLib tab.
 
@@ -52,13 +55,16 @@ Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth tor
 ### Era and material editor
 `tools/techedit.py` is a Qt app for the game's `StreamingAssets/Eras` and `StreamingAssets/Technology` folders. Run it with `uv run tools/techedit.py` (uv installs PySide6); pass the game folder if the repo isn't inside it.
 
-- A timeline of eras (greyed when not playable) with every armour material under its invention date. Ctrl+wheel zooms; click to jump to the entry.
+- A timeline of eras (greyed when not playable) with every technology as a marker on its date, one row group per type (materials first); year gridlines and dashed era starts run through every row, and hovering a marker shows its date. Click a row name to collapse it to one strip of markers (remembered between runs). Ctrl+wheel zooms; click an entry to jump to it.
 - **Eras**: create, copy, delete and edit file name, name, start date, playable and the medium/heavy vehicle masses.
   Below the form, every technology in the selected era (dated from its start up to the next era's) with its properties: edit file, type and date in place (a new date can move it to another era), edit, rename, add and remove properties, and copy or delete technologies.
 - **Materials**: a sortable table of every tech with an `rhaFactor`. Edit cells in place; a blank optional cell removes the key. New copies the selected material.
-- **Save all** (Ctrl+S) writes changed files. Deleting renames the file to `.json.bak`.
+- **Save all** (Ctrl+S) writes changed files to the game folder and to the repo's `techTimeline/` package, mirroring renames and deletes there (`--no-mirror` saves to the game folder only). It always reads the game folder. Deleting renames the game file to `.json.bak` and removes the package copy.
 
 `uv run tools/techedit.py --check` round-trips every file through the writer.
+
+### Tech timeline
+`techTimeline/` holds the era and technology files of the tech timeline overhaul, laid out as they go under the game folder (`Sprocket_Data/StreamingAssets/Eras`, `.../Technology`). It adds a Postwar era (1945.09.03), moves the Cold War eras to 1958, 1966 and 1979, turns EarlyModern into PostColdwar (1991.12.26) and moves Modern to 2016; gun pressure, engine, drivetrain and traverse tiers and the post-war armour materials are dated to the years real tanks got them. It replaces some of the game's own files (e.g. `MidwarCannon.json`, `LatewarCannon.json`), so install it through the mod manager (package `madisavage.tech-timeline`) or copy the folder over the game folder after a backup. The release zips it as `TechTimeline.zip`.
 
 ### Penetration plot
 `tools/penetration.py` plots real rounds' penetration against the game's de Marre, Lanz-Odermatt and subcaliber's Lanz-Odermatt with its length factor, and sweeps a rod's length in a 105 mm gun against the full-bore round. Run it with `uv run tools/penetration.py` (uv installs matplotlib), or pass a file name to save a PNG. The rounds' figures are rough; replace them in its `ROUNDS` list with sourced values. Keep its `FACTOR` in step with `LongRod.LengthFactor`.

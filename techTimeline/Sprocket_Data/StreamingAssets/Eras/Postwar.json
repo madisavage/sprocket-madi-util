@@ -1,0 +1,8 @@
+{
+	"v": "0.0",
+	"name": "Postwar",
+	"start": "1945.09.03",
+	"playable": true,
+	"mediumVehicleMass": 20000,
+	"heavyVehicleMass": 45000
+}

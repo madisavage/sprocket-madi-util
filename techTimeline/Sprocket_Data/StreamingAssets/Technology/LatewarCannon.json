@@ -1,0 +1,14 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "cannon",
+	"date": "1944.01.01",
+	"properties": {
+		"operatingPressure": 45000,
+		"penetratorConstant": 1800,
+		"minCalibre": 7,
+		"minPropellantLength": 5,
+		"calibre": 90,
+		"propellantLength": 600
+	}
+}

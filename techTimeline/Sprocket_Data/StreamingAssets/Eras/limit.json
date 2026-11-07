@@ -1,0 +1,8 @@
+{
+  "v": "0.0",
+  "name": "Modern Era",
+  "start": "9999.01.01",
+  "playable": false,
+  "mediumVehicleMass": 39000,
+  "heavyVehicleMass": 78000,
+}

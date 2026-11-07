@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "lam",
+	"date": "1965.01.01",
+	"properties": {
+		"rhaFactor": 0.095,
+		"hardness": 0.035,
+		"costMultiplier": 15,
+		"spallFactor": 0,
+		"density": 1520
+	}
+}

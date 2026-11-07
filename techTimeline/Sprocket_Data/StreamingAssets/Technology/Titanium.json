@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "ti",
+	"date": "1988.01.01",
+	"properties": {
+		"rhaFactor": 0.925,
+		"hardness": 0.98,
+		"costMultiplier": 68,
+		"spallFactor": 0.0045,
+		"density": 4430
+	}
+}

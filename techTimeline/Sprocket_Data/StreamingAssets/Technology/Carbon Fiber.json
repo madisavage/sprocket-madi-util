@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "cfb",
+	"date": "1997.04.22",
+	"properties": {
+		"rhaFactor": 1.32,
+		"hardness": 0.26,
+		"costMultiplier": 42,
+		"spallFactor": 0.0001,
+		"density": 1850
+	}
+}

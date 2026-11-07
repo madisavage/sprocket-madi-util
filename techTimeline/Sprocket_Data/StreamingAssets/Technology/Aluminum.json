@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "al",
+	"date": "1960.01.01",
+	"properties": {
+		"rhaFactor": 0.19,
+		"hardness": 0.66,
+		"costMultiplier": 3,
+		"spallFactor": 0.0015,
+		"density": 2820
+	}
+}

@@ -1,0 +1,13 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "sic",
+	"date": "1985.01.01",
+	"properties": {
+		"rhaFactor": 2.18,
+		"hardness": 7.05,
+		"costMultiplier": 78,
+		"spallFactor": 0.00001,
+		"density": 3210
+	}
+}
