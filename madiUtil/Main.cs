@@ -31,6 +31,8 @@ namespace MadiUtil
         public override void Load()
         {
             Logger = Log;
+            EraYears.LastTech = EraYears.LatestTech(System.IO.Path.Combine(Paths.GameRootPath, "Sprocket_Data", "StreamingAssets", "Technology"));
+            Logger.LogInfo($"Latest tech: {EraYears.LastTech:yyyy.MM.dd}; era dropdown years stop there.");
             new Harmony("madi.madiutil").PatchAll();
             Keybinds.Register(this, "madiUtil", "Save vehicle", "Ctrl+S", SaveVehicle);
             SettingsTab.AddSection("madiUtil", "madiUtil", ui => ui.Bool(unlockEras));
