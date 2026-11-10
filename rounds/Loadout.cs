@@ -29,7 +29,7 @@ namespace Rounds
     /// </summary>
     /// <param name="drawer">The cannon panel.</param>
     /// <param name="cannon">The cannon selected.</param>
-    /// <param name="id">The round's id, for <see cref="Loadout.Get"/> and <see cref="Loadout.Edit"/>.</param>
+    /// <param name="id">The round's id, for <see cref="Loadout.Get{T}(CannonBlueprint, string, string)"/> and <see cref="Loadout.Edit"/>.</param>
     /// <param name="changed">Marks the vehicle modified.</param>
     public delegate void RoundDrawer(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed);
 
@@ -56,6 +56,22 @@ namespace Rounds
     /// </summary>
     public delegate void RoundHit(ref PenetratorInfo penetrator, CannonBlueprint owner, string id);
 
+    /// <summary>
+    /// Changes any round's projectile after its type made it, such as a rocket
+    /// motor added to a round of any type. For a type that fires the game's
+    /// own projectile (<c>"ap"</c>), <paramref name="shape"/> is the game's.
+    /// Return true if it changed anything: a round no modifier changes and
+    /// whose type has no projectile fires the game's.
+    /// </summary>
+    public delegate bool RoundModifier(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions);
+
+    /// <summary>
+    /// A gun launched one of a round's own projectiles: the game's projectile
+    /// register firing it (its pointer), the projectile's id there, its
+    /// definition, and its round.
+    /// </summary>
+    public delegate void RoundLaunched(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id);
+
     /// <summary>A round's projectile in flight, in kg and m, and what the charge pushes at launch.</summary>
     public sealed class RoundShape
     {
@@ -78,6 +94,13 @@ namespace Rounds
 
         /// <summary>The definition's drag constant.</summary>
         public float Drag;
+
+        /// <summary>
+        /// Velocity the gunner AI leads and drops its shots by, m/s; 0 for the
+        /// muzzle velocity <see cref="LaunchLength"/> gives, as for a round
+        /// that speeds up in flight.
+        /// </summary>
+        public float AimVelocity;
     }
 
     /// <summary>
@@ -103,6 +126,24 @@ namespace Rounds
 
         // Each registered round type, in registration order; IconOf picks a round's icon, or null for the type's
         internal static readonly List<(string Type, string Label, RoundDrawer Draw, RoundProjectile? Projectile, RoundHit? Hit, Func<CannonBlueprint, string, string?>? IconOf)> Types = new();
+
+        // Changes any round's projectile, in registration order
+        internal static readonly List<RoundModifier> Modifiers = new();
+
+        // Draw more fields under every round, after its type's, in registration order
+        internal static readonly List<RoundDrawer> Fields = new();
+
+        /// <summary>Raised when a gun launches a round's own projectile.</summary>
+        public static event RoundLaunched? Launched;
+
+        internal static void RaiseLaunched(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id) =>
+            Launched?.Invoke(register, projectile, definition, owner, id);
+
+        /// <summary>Adds a <see cref="RoundModifier"/>, run for every round of every type.</summary>
+        public static void Modify(RoundModifier modifier) => Modifiers.Add(modifier);
+
+        /// <summary>Draws more fields under every round in the cannon panel, whatever its type, such as a rocket motor's.</summary>
+        public static void AddFields(RoundDrawer draw) => Fields.Add(draw);
 
         // Icon key, its PNG: each type's under its type, and those from AddIcon
         internal static readonly Dictionary<string, byte[]> Icons = new();
@@ -181,14 +222,30 @@ namespace Rounds
         /// </summary>
         public static void Invalidate() => Projectiles.Invalidate();
 
+        /// <summary>
+        /// The round that fires projectile type <paramref name="type"/> (its
+        /// <c>ProjectileTypeID</c> value), and the projectile's mass in kg;
+        /// null for a type that isn't a round's own, such as the game's.
+        /// </summary>
+        public static (CannonBlueprint Owner, string Id, float Mass)? RoundOfProjectile(int type) =>
+            Projectiles.Of(type) is { } entry ? (entry.Owner, entry.Id, entry.Def.Mass) : null;
+
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as JSON text, and its type; null if there's none.</summary>
         internal static (string Json, string Type)? Raw(CannonBlueprint owner, string id) =>
             RoundsIn(Parsed(owner))[id] is JsonObject round ? (round.ToJsonString(), (string?)round["type"] ?? "") : null;
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as a <typeparamref name="T"/>, if it is of <paramref name="type"/>; otherwise null.</summary>
-        public static T? Get<T>(CannonBlueprint? owner, string? id, string type) where T : class
+        public static T? Get<T>(CannonBlueprint? owner, string? id, string type) where T : class =>
+            owner != null && id != null && RoundsIn(Parsed(owner))[id] is JsonObject round && (string?)round["type"] == type ? Get<T>(owner, id) : null;
+
+        /// <summary>
+        /// The round <paramref name="id"/> in <paramref name="owner"/> as a
+        /// <typeparamref name="T"/>, whatever its type, for fields any round
+        /// may have (see <see cref="AddFields"/>); null if there's none.
+        /// </summary>
+        public static T? Get<T>(CannonBlueprint? owner, string? id) where T : class
         {
-            if (owner == null || id == null || RoundsIn(Parsed(owner))[id] is not JsonObject round || (string?)round["type"] != type)
+            if (owner == null || id == null || RoundsIn(Parsed(owner))[id] is not JsonObject round)
                 return null;
             try
             {

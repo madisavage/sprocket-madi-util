@@ -13,6 +13,7 @@ Design focus on lightweight additions to the game, perserving the sandbox and gi
 | `rounds/` | `rounds.dll` | Named rounds per cannon, one or a split per ammo rack, picked in game with a keybind. Other plugins add round types. |
 | `subcaliber/` | `subcaliber.dll` | Discarding sabot rounds: a projectile narrower than the gun, with long-rod penetration. Needs `rounds.dll`. |
 | `highExplosive/` | `highExplosive.dll` | HE and HESH rounds that penetrate by mass alone and spall catastrophically, HEAT rounds whose jet penetrates the same at any range, and APHE rounds that burst into spall behind the armour. Needs `rounds.dll`. |
+| `rocketPropelled/` | `rocketPropelled.dll` | Rocket motors for any round: it leaves the gun slow and speeds up in flight, hitting as its own round type. Needs `rounds.dll`. |
 | `composite/` | `composite.dll` | Pseudo-composite armour: stack thin plates behind selected faces, in add-ons that can each have their own material. |
 | `stabilizer/` | `stabilizer.dll` | Naive gun stabilization for traverse motors and laying drives. |
 | `hydropneumatic/` | `hydropneumatic.dll` | Adjustable suspension: change your vehicle's ride height, pitch and roll while driving. |
@@ -59,12 +60,12 @@ The designer's era dropdown (renamed **Year**) lists every year of each era ("19
 - **Eras**: create, copy, delete and edit file name, name, start date, playable and the medium/heavy vehicle masses.
   Below the form, every technology in the selected era (dated from its start up to the next era's) with its properties: edit file, type and date in place (a new date can move it to another era), edit, rename, add and remove properties, and copy or delete technologies.
 - **Materials**: a sortable table of every tech with an `rhaFactor`. Edit cells in place; a blank optional cell removes the key. New copies the selected material.
-- **Save all** (Ctrl+S) writes changed files to the game folder and to the repo's `techTimeline/` package, mirroring renames and deletes there (`--no-mirror` saves to the game folder only). It always reads the game folder. Deleting renames the game file to `.json.bak` and removes the package copy.
+- **Save all** (Ctrl+S) writes changed files to the game folder and to the repo's `eraExpansion/` package, mirroring renames and deletes there (`--no-mirror` saves to the game folder only). It always reads the game folder. Deleting renames the game file to `.json.bak` and removes the package copy.
 
 `uv run tools/techedit.py --check` round-trips every file through the writer.
 
-### Tech timeline
-`techTimeline/` holds the era and technology files of the tech timeline overhaul, laid out as they go under the game folder (`Sprocket_Data/StreamingAssets/Eras`, `.../Technology`). It adds a Postwar era (1945.09.03), moves the Cold War eras to 1958, 1966 and 1979, turns EarlyModern into PostColdwar (1991.12.26) and moves Modern to 2016; gun pressure, engine, drivetrain and traverse tiers and the post-war armour materials are dated to the years real tanks got them. It replaces some of the game's own files (e.g. `MidwarCannon.json`, `LatewarCannon.json`), so install it through the mod manager (package `madisavage.tech-timeline`) or copy the folder over the game folder after a backup. The release zips it as `TechTimeline.zip`.
+### Era expansion
+`eraExpansion/` holds the era and technology files of the era expansion, laid out as they go under the game folder (`Sprocket_Data/StreamingAssets/Eras`, `.../Technology`). It adds a Postwar era (1945.09.03), moves the Cold War eras to 1958, 1966 and 1979, turns EarlyModern into PostColdwar (1991.12.26) and moves Modern to 2016; gun pressure, engine, drivetrain and traverse tiers and the post-war armour materials are dated to the years real tanks got them. It replaces some of the game's own files (e.g. `MidwarCannon.json`, `LatewarCannon.json`), so install it through the mod manager (package `madisavage.era-expansion`) or copy the folder over the game folder after a backup. The release zips it as `EraExpansion.zip`.
 
 ### Penetration plot
 `tools/penetration.py` plots real rounds' penetration against the game's de Marre, Lanz-Odermatt and subcaliber's Lanz-Odermatt with its length factor, and sweeps a rod's length in a 105 mm gun against the full-bore round. Run it with `uv run tools/penetration.py` (uv installs matplotlib), or pass a file name to save a PNG. The rounds' figures are rough; replace them in its `ROUNDS` list with sourced values. Keep its `FACTOR` in step with `LongRod.LengthFactor`.
@@ -203,6 +204,20 @@ An **APHE** round is the game's full-bore AP shell for the gun, carrying **Fille
 The armour view's penetration simulator gets an **Explosive rounds** section with **Simulate as**: **Shell** (the game's), **HE** (its normalization and spall), **HEAT** (the jet, at the panel's **Penetration** and the section's own **Cone angle**), **APHE** (bursting with the section's own **Filler** and **Fuze delay**). Set **Calibre** to the shell's and **Penetration** to the round's readout, and the view shows how deep it gets and the spall it makes. The simulated HEAT jet spends its budget as in game.
 
 The settings are on the MadiLib tab, and in `BepInEx/config/madi.highexplosive.cfg` under `[High explosive]`, `[HESH]`, `[HEAT]` and `[APHE]`.
+
+## rocketPropelled
+
+Adds a **Rocket motor** picker under every round in the cannon panel's **Rounds** section. With **Rocket** picked, a full-bore motor section sits behind the round, set by two fields:
+
+- **Motor length** (calibers): the propellant fills it, so a longer motor holds more. The gun's charge pushes the motor too, so the round leaves slower, and the motor's case stays on as dead weight after burnout.
+- **Burn time** (s): the total push stays the same. A short burn is high thrust and reaches top speed close in; a long burn keeps pushing further out.
+- **Ignition delay** (s): the round coasts at launch speed before the motor lights.
+
+Propellant mass, thrust, launch velocity, burnout velocity, range to burnout and launch weight are readouts. The round's type is the warhead: a HEAT rocket hits as a HEAT round and an AP rocket as AP, at whatever speed it arrives. Drag and gravity are the game's. The motor is saved in the round as `"motor"`, so it works with any round type.
+
+**Exhaust velocity** (impulse per kg of propellant, default 2000), **Propellant density** (kg per m³ of motor section, default 1300) and **Case mass** (case over propellant mass, default 0.5) are on the MadiLib tab, and in `BepInEx/config/madi.rocketpropelled.cfg` under `[Rocket]`.
+
+Readouts use a full-bore shell as the warhead and leave out drag and gravity; real flights use the round's own mass. The gunner AI leads rockets by their burnout velocity, so it overleads close shots. With Dynamic Gun Sight installed, its range ladder flies rockets under their motor (thrust only: its drag still uses the warhead's mass, as the game does). Changing a round's type drops its motor.
 
 ## composite
 

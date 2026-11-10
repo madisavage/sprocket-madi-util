@@ -55,7 +55,7 @@ namespace Rounds
                 || (round ?? Tracker.Loaded(gun, owner)) is not { } id || Loadout.Raw(owner, id) is not { } raw)
                 return null;
             var type = Loadout.Types.FirstOrDefault(t => t.Type == raw.Type);
-            if (type.Projectile == null || IProjectileTypeRegister.Instance is not { } register)
+            if (type.Projectile == null && Loadout.Modifiers.Count == 0 || IProjectileTypeRegister.Instance is not { } register)
                 return null;
 
             string key = $"{game.Guid}|{raw.Json}|{version}";
@@ -64,7 +64,14 @@ namespace Rounds
                 return entry;
 
             var functions = GameFunctions(shell, game);
-            if (type.Projectile(game, cannon, id, functions) is not { } shape)
+            RoundShape? shape = type.Projectile != null ? type.Projectile(game, cannon, id, functions)
+                : new RoundShape { Mass = game.Mass, Diameter = game.Diameter, Length = game.Length, LaunchLength = game.Length, Drag = game.dragConstant };
+            if (shape == null)
+                return null;
+            bool modified = false;
+            foreach (RoundModifier modifier in Loadout.Modifiers)
+                modified |= modifier(game, cannon, id, shape, functions);
+            if (type.Projectile == null && !modified)
                 return null;
             var guid = Il2CppSystem.Guid.Parse(new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key))).ToString());
             var list = new Il2CppSystem.Collections.Generic.List<ProjectileFunctionDefinition>();
@@ -147,6 +154,7 @@ namespace Rounds
                 return;
             }
             Impacts.RaisePlayerFired(__instance.Pointer, entry.Def.Mass, entry.Shape.Diameter, projectile);
+            Loadout.RaiseLaunched(register.Pointer, projectile, entry.Def, entry.Owner, entry.Id);
             Projectiles.Size(entry, launch: true);
             __0 = entry.Def.ID;
             __state = entry;
@@ -184,7 +192,7 @@ namespace Rounds
                 return;
             float velocity = blueprint.MuzzleVelocity;
             if (Projectiles.For(gun, game) is { } entry)
-                velocity *= Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
+                velocity = entry.Shape.AimVelocity > 0f ? entry.Shape.AimVelocity : velocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
             cannon.muzzleVelocity = velocity;
         }
     }

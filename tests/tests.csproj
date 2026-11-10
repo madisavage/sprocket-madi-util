@@ -17,6 +17,7 @@
     <ProjectReference Include="../stagedAmmo/stagedAmmo.csproj" />
     <ProjectReference Include="../stabilizer/stabilizer.csproj" />
     <ProjectReference Include="../subcaliber/subcaliber.csproj" />
+    <ProjectReference Include="../rocketPropelled/rocketPropelled.csproj" />
     <ProjectReference Include="../highExplosive/highExplosive.csproj" />
     <ProjectReference Include="../hydropneumatic/hydropneumatic.csproj" />
     <ProjectReference Include="../shellCam/shellCam.csproj" />

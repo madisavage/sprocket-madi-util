@@ -8,8 +8,8 @@ Run: uv run tools/techedit.py [game folder]
      uv run tools/techedit.py --check   (round-trips every file through the writer)
      uv run tools/techedit.py --no-mirror   (saves to the game folder only)
 
-Reads the game folder. Saving also writes each changed file into the repo's techTimeline package
-(techTimeline/Sprocket_Data/StreamingAssets), and mirrors renames and deletes there, so the package
+Reads the game folder. Saving also writes each changed file into the repo's eraExpansion package
+(eraExpansion/Sprocket_Data/StreamingAssets), and mirrors renames and deletes there, so the package
 follows what you edit.
 """
 import json
@@ -29,7 +29,7 @@ GAME = Path(args[0]) if args else Path(__file__).resolve().parents[2]
 ERAS = GAME / "Sprocket_Data" / "StreamingAssets" / "Eras"
 TECH = GAME / "Sprocket_Data" / "StreamingAssets" / "Technology"
 # The repo's distributable copy; saves are mirrored there unless --no-mirror
-MIRROR = Path(__file__).resolve().parents[1] / "techTimeline" / "Sprocket_Data" / "StreamingAssets"
+MIRROR = Path(__file__).resolve().parents[1] / "eraExpansion" / "Sprocket_Data" / "StreamingAssets"
 MIRRORING = MIRROR.is_dir() and "--no-mirror" not in sys.argv
 MAT_KEYS = ["rhaFactor", "hardness", "costMultiplier", "spallFactor", "density"]
 COLS = ["file", "type", "date", "era", *MAT_KEYS, "RHA/kg"]

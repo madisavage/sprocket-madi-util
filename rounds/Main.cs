@@ -645,6 +645,8 @@ namespace Rounds
                 }, "What kind of round this is.");
                 if (index >= 0)
                     Loadout.Types[index].Draw(drawer, cannon, id, changed);
+                foreach (RoundDrawer fields in Loadout.Fields)
+                    fields(drawer, cannon, id, changed);
                 var delete = new UITooltip($"Delete {name}", "Removes this round. Racks of it hold the first round instead.");
                 drawer.Button($"Delete {name}", (UnityAction)(() =>
                 {
