@@ -154,7 +154,8 @@ namespace Rounds
                 return;
             }
             Impacts.RaisePlayerFired(__instance.Pointer, entry.Def.Mass, entry.Shape.Diameter, projectile);
-            Loadout.RaiseLaunched(register.Pointer, projectile, entry.Def, entry.Owner, entry.Id);
+            if (Tracker.Cannons.TryGetValue(__instance.Pointer, out Cannon? cannon))
+                Loadout.RaiseLaunched(register.Pointer, projectile, entry.Def, entry.Owner, entry.Id, cannon);
             Projectiles.Size(entry, launch: true);
             __0 = entry.Def.ID;
             __state = entry;
@@ -176,6 +177,9 @@ namespace Rounds
     [HarmonyPatch(typeof(Cannon), nameof(Cannon.Build))]
     internal static class AiVelocity
     {
+        // Gun behaviour, the game's projectile for its shell, as last seen loaded; a gun waiting for a load has none loaded
+        internal static readonly Dictionary<IntPtr, ProjectileDefinition> Games = new();
+
         private static void Postfix(Cannon __instance)
         {
             if (__instance.behaviour != null)
@@ -190,10 +194,21 @@ namespace Rounds
                 || behaviour.LoadedProjectileTypeID.Value < 0
                 || behaviour.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource?.GetProjectileDefinition(behaviour.LoadedProjectileTypeID) is not { } game)
                 return;
+            Games[gun] = game;
+            cannon.muzzleVelocity = Speed(gun, blueprint, game);
+        }
+
+        /// <summary>
+        /// The speed the AI leads round <paramref name="round"/> (else the loaded
+        /// one) of <paramref name="gun"/> by: its projectile's aim velocity or launch
+        /// speed, or the gun's muzzle velocity for the game's shell or without <paramref name="game"/>.
+        /// </summary>
+        internal static float Speed(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition? game, string? round = null)
+        {
             float velocity = blueprint.MuzzleVelocity;
-            if (Projectiles.For(gun, game) is { } entry)
+            if (game != null && Projectiles.For(gun, game, round) is { } entry)
                 velocity = entry.Shape.AimVelocity > 0f ? entry.Shape.AimVelocity : velocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
-            cannon.muzzleVelocity = velocity;
+            return velocity;
         }
     }
 

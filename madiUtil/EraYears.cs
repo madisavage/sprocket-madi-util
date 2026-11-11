@@ -36,6 +36,8 @@ namespace MadiUtil
         private static bool warned, unlabelled;
         // Invention date of the latest tech in the game's Technology folder; years after it unlock nothing new
         internal static DateOnly LastTech = DateOnly.MaxValue;
+        // The designer, as of its last update; null before one runs
+        internal static VehicleDesignerCore? Designer;
 
         /// <summary>
         /// The latest <c>date</c> among the tech files in <paramref name="directory"/>,
@@ -79,7 +81,7 @@ namespace MadiUtil
             }
         }
 
-        private static DateOnly ToDate(TechDate date)
+        internal static DateOnly ToDate(TechDate date)
         {
             int year = Math.Clamp((int)date.Year, 1, 9999), month = Math.Clamp((int)date.Month, 1, 12);
             return new DateOnly(year, month, Math.Clamp((int)date.Day, 1, DateTime.DaysInMonth(year, month)));
@@ -244,6 +246,10 @@ namespace MadiUtil
     [HarmonyPatch(typeof(VehicleDesignerCore), nameof(VehicleDesignerCore.EditorUpdate))]
     internal static class EraSyncPatch
     {
-        private static void Postfix() => EraYears.Sync();
+        private static void Postfix(VehicleDesignerCore __instance)
+        {
+            EraYears.Designer = __instance;
+            EraYears.Sync();
+        }
     }
 }

@@ -12,6 +12,7 @@ using HarmonyLib;
 using MadiLib;
 using Properties;
 using Sprocket.Blueprints;
+using Sprocket.ProjectilePhysicsSystems;
 using Sprocket.UI;
 using Sprocket.Vehicles;
 using Sprocket.Vehicles.AmmunitionStorage;
@@ -36,6 +37,7 @@ namespace Rounds
         internal static ManualLogSource Logger = null!;
         internal static ConfigEntry<bool> ShowIndicator = null!;
         internal static ConfigEntry<bool> LogShells = null!;
+        internal static ConfigEntry<bool> LogAi = null!;
 
         /// <summary>Registers the keybind, HUD panel and patches.</summary>
         public override void Load()
@@ -43,7 +45,8 @@ namespace Rounds
             Logger = Log;
             ShowIndicator = Config.Bind("Display", "Show indicator", true, "Show the ammo bar: each of your guns' rounds with shells left, its loaded round and its next.");
             LogShells = Config.Bind("Debug", "Log shells", false, "Logs every shell taken from or put in a rack with rounds, which round it was and why, to BepInEx/LogOutput.log.");
-            SettingsTab.AddSection("Rounds", "Rounds", ShowIndicator, LogShells);
+            LogAi = Config.Bind("Debug", "Log AI", false, "Logs the AI's decisions to BepInEx/LogOutput.log: each round pick with every round's penetration, speed and shells left, and, with guidedMunitions, its guided shots and why their guidance ends.");
+            SettingsTab.AddSection("Rounds", "Rounds", ShowIndicator, LogShells, LogAi);
             Keybinds.Register(this, "Rounds", "Select gun", "B", Tracker.SelectGun);
             for (int n = 1; n <= 9; n++)
             {
@@ -51,7 +54,8 @@ namespace Rounds
                 Keybinds.Register(this, "Rounds", $"Round {n}", $"Digit{n}", () => Tracker.SelectRound(round));
             }
             using (var icon = typeof(Plugin).Assembly.GetManifestResourceStream("ap.png"))
-                Loadout.Register("ap", "AP", (_, _, _, _) => { }, icon: icon);
+                Loadout.Register("ap", "AP", (_, _, _, _) => { }, icon: icon,
+                    penetration: (owner, _, speed) => Impacts.DeMarre(owner.Caliber, ShellProperties.GetProjectileMass(owner.Caliber), speed, owner.PenetratorConstant));
             Hud.AddPanel(AmmoBar.Draw);
             var harmony = new Harmony("madi.rounds");
             harmony.PatchAll();
@@ -100,6 +104,8 @@ namespace Rounds
         private static readonly HashSet<IntPtr> waiting = new();
         // The player's gun the round keys pick for; zero or gone for their first
         private static IntPtr active;
+        // Guns found on the player's vehicle, which the AI doesn't pick for
+        private static readonly HashSet<IntPtr> players = new();
 
         // The gun whose load task is running, or zero
         internal static IntPtr Loading;
@@ -148,6 +154,8 @@ namespace Rounds
                 waiting.Remove(old);
                 if (selected.Remove(old, out string? pick))
                     selected[cannon.behaviour.Pointer] = pick;
+                if (players.Remove(old))
+                    players.Add(cannon.behaviour.Pointer);
             }
             Cannons[cannon.behaviour.Pointer] = cannon;
             if (cannon.ShellBlueprint != null)
@@ -175,8 +183,49 @@ namespace Rounds
                 mixes.Remove(key);
         }
 
-        /// <summary>The round <paramref name="gun"/> loads next: the player's pick, or its first round.</summary>
-        internal static string? Selected(IntPtr gun, CannonBlueprint? owner) => PickOrFirst(selected, gun, owner);
+        /// <summary>The round <paramref name="gun"/> loads next: the player's pick, the AI's (see <see cref="AiPick"/>), or its first round.</summary>
+        internal static string? Selected(IntPtr gun, CannonBlueprint? owner)
+        {
+            // Only once the player's vehicle is known, so theirs isn't taken for the AI's at spawn
+            if (!selected.ContainsKey(gun) && !players.Contains(gun) && owner != null && Cannons.TryGetValue(gun, out Cannon? cannon) && PlayerVehicle.Root != null)
+            {
+                if (PlayerVehicle.Contains(cannon))
+                    players.Add(gun);
+                else
+                    AiPick(gun, cannon, owner, "first load");
+            }
+            return PickOrFirst(selected, gun, owner);
+        }
+
+        /// <summary>
+        /// Picks an AI gun's next round: its most penetrating round with shells
+        /// left on its vehicle, rated at the speed the AI leads it by; ties go
+        /// to the panel's order. Keeps its pick if no round has shells.
+        /// </summary>
+        private static void AiPick(IntPtr gun, Cannon cannon, CannonBlueprint owner, string reason)
+        {
+            var left = Left(cannon);
+            CannonBlueprint blueprint = cannon.Blueprint ?? owner;
+            AiVelocity.Games.TryGetValue(gun, out var game);
+            var rounds = Loadout.List(owner);
+            // shortcut: rated at launch/burnout speed, not at the target's range; rate at its distance if the AI picks badly far out
+            var rated = rounds.Where(r => left.GetValueOrDefault(r.Id) > 0).Select(r =>
+            {
+                float speed = AiVelocity.Speed(gun, blueprint, game, r.Id);
+                return (r.Id, r.Name, Speed: speed, Penetration: Loadout.Penetration(owner, r.Id, speed));
+            }).OrderByDescending(r => r.Penetration).ToList();
+            string? best = rated.Count > 0 ? rated[0].Id : PickOrFirst(selected, gun, owner);
+            if (best == null)
+                return;
+            if (Plugin.LogAi.Value && (!selected.TryGetValue(gun, out string? before) || before != best))
+            {
+                var empty = rounds.Where(r => left.GetValueOrDefault(r.Id) == 0).Select(r => r.Name).ToList();
+                Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Vehicle>()?.name ?? "vehicle"} (gun {gun.ToInt64():X}), {reason}: picks \"{rounds.FirstOrDefault(r => r.Id == best).Name}\""
+                    + (rated.Count == 0 ? ", no round has shells left" : " from " + string.Join(", ", rated.Select(r => $"{r.Name} {r.Penetration:0} mm @{r.Speed:0} m/s ×{left[r.Id]}")))
+                    + (empty.Count > 0 ? $"; none left: {string.Join(", ", empty)}" : ""));
+            }
+            selected[gun] = best;
+        }
 
         /// <summary>
         /// The round <paramref name="gun"/> has loaded. Before a load is seen
@@ -320,6 +369,10 @@ namespace Rounds
                 return;
             waiting.Remove(gun);
             carried[gun] = (id, rack.Pointer);
+            // That may have been the AI's last shell of its pick
+            if (selected.TryGetValue(gun, out string? pick) && !players.Contains(gun) && owner != null && Cannons.TryGetValue(gun, out Cannon? ai)
+                && Left(ai).GetValueOrDefault(pick) == 0)
+                AiPick(gun, ai, owner, $"out of {Loadout.List(owner).FirstOrDefault(r => r.Id == pick).Name}");
             if (Cannons.TryGetValue(gun, out Cannon? cannon) && PlayerVehicle.Contains(cannon) && id != Loaded(gun, Loadout.Owner(cannon)))
                 DynamicSight.Clear();
         }
@@ -390,6 +443,8 @@ namespace Rounds
             loaded.Remove(gun);
             carried.Remove(gun);
             waiting.Remove(gun);
+            players.Remove(gun);
+            AiVelocity.Games.Remove(gun);
             foreach (var key in gunOfShell.Where(g => g.Value == gun).Select(g => g.Key).ToList())
                 gunOfShell.Remove(key);
         }
@@ -398,6 +453,8 @@ namespace Rounds
         private static Dictionary<string, int> Left(Cannon cannon, Dictionary<string, int>? ready = null)
         {
             var left = new Dictionary<string, int>();
+            if (cannon.GetComponentInParent<Vehicle>()?.transform is not { } vehicle)
+                return left;
             foreach (var (behaviour, rack) in racks.ToList())
             {
                 try
@@ -407,7 +464,7 @@ namespace Rounds
                         racks.Remove(behaviour);
                         continue;
                     }
-                    if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer || !PlayerVehicle.Contains(rack) || Contents(rack.behaviour) is not { } held)
+                    if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer || !rack.transform.IsChildOf(vehicle) || Contents(rack.behaviour) is not { } held)
                         continue;
                     bool isReady = ready != null && Loadout.IsReady?.Invoke(rack.behaviour) == true;
                     foreach (var (id, count) in held)
@@ -453,6 +510,8 @@ namespace Rounds
             if (n > ids.Count)
                 return;
             selected[gun] = ids[n - 1].Id;
+            // A pick before Selected first saw this gun would leave it out, and the AI's pick would replace it
+            players.Add(gun);
             Loadout.RequestAmmo(cannon.behaviour);
             waiting.Remove(gun);
         }
@@ -622,6 +681,7 @@ namespace Rounds
             if (!EditorGui.Section(drawer, "rounds.cannon", "Rounds", __instance.RequestRedraw))
                 return;
             Action changed = () => cannon.blueprintSlot?.MarkModified();
+            Loadout.redraw = __instance.RequestRedraw;
             List<string> labels = Loadout.Types.Select(t => t.Label).ToList();
             foreach (var (id, name, type) in Loadout.List(owner))
             {

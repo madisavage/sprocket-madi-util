@@ -16,6 +16,10 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.SettingsConfiguration.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.SettingsMenu.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.TechnologyFramework.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Cannons.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Cannons.Editor.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.Weapons.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.WeaponFramework.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Unity.TextMeshPro.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.dll" Private="false" />

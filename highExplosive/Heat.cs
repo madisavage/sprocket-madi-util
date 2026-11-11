@@ -94,7 +94,7 @@ namespace HighExplosive
                     shape.Length *= nose;
                     shape.LaunchLength *= nose;
                     return shape;
-                }, Hit, icon);
+                }, Hit, icon, penetration: (owner, id, _) => Calibers(Round(owner, id)) * owner.Caliber);
         }
 
         internal static HeatRound Round(CannonBlueprint owner, string id)

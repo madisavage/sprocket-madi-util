@@ -91,7 +91,7 @@ namespace Subcaliber
             // The type's own icon is a long rod's; shorter penetrators get APDS's
             using (var icon = typeof(Plugin).Assembly.GetManifestResourceStream("sabot.png"))
                 Loadout.Register(SabotRound.Type, "Sabot", SabotEditor.Draw, Shape, LongRod.Hit, icon,
-                    (owner, id) => Round(owner, id).Length < LongRod.MinCalibers ? "sabot.apds" : null);
+                    (owner, id) => Round(owner, id).Length < LongRod.MinCalibers ? "sabot.apds" : null, SabotEditor.Penetration);
             Impacts.Simulated += ArmourView.Simulate;
             Impacts.ArmourPanel += ArmourView.Draw;
             new Harmony("madi.subcaliber").PatchAll();
@@ -287,8 +287,15 @@ namespace Subcaliber
             Penetrator p = Penetrator(gun, id);
             float fullBore = ShellProperties.GetProjectileMass(gun.Caliber);
             float velocity = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, p.Launch);
-            float penetration = LongRod.Penetration(p.Ratio, p.Calibers, gun.Caliber * p.Ratio, fullBore * p.Mass, Plugin.Round(gun, id).Material, velocity, gun.PenetratorConstant);
-            return (velocity, penetration, fullBore * p.Mass, fullBore * p.Sabot);
+            return (velocity, Penetration(gun, id, velocity), fullBore * p.Mass, fullBore * p.Sabot);
+        }
+
+        /// <summary>The round's penetration in mm at <paramref name="speed"/> m/s, from the game's own formulas.</summary>
+        internal static float Penetration(CannonBlueprint gun, string id, float speed)
+        {
+            Penetrator p = Penetrator(gun, id);
+            return LongRod.Penetration(p.Ratio, p.Calibers, gun.Caliber * p.Ratio, ShellProperties.GetProjectileMass(gun.Caliber) * p.Mass,
+                Plugin.Round(gun, id).Material, speed, gun.PenetratorConstant);
         }
     }
 

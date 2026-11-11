@@ -1,0 +1,418 @@
+extern alias UnityCoreModule;
+extern alias UnityPhysicsModule;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using BepInEx;
+using BepInEx.Configuration;
+using BepInEx.Logging;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+using MadiLib;
+using Properties;
+using RocketPropelled;
+using Rounds;
+using Sprocket;
+using Sprocket.ArtificialIntelligence;
+using Sprocket.Blueprints;
+using Sprocket.DamageModelling;
+using Sprocket.Gameplay.VehicleControl;
+using Sprocket.ProjectilePhysicsSystems;
+using Sprocket.UI;
+using Sprocket.VehicleControl;
+using Sprocket.Vehicles;
+using Sprocket.Vehicles.Cannons;
+using LayerMask = UnityCoreModule::UnityEngine.LayerMask;
+using Physics = UnityPhysicsModule::UnityEngine.Physics;
+using Rigidbody = UnityPhysicsModule::UnityEngine.Rigidbody;
+using UnityObject = UnityCoreModule::UnityEngine.Object;
+using Time = UnityCoreModule::UnityEngine.Time;
+using UnityVector3 = UnityCoreModule::UnityEngine.Vector3;
+using Vector3 = System.Numerics.Vector3;
+
+namespace GuidedMunitions
+{
+    /// <summary>
+    /// BepInEx entry point. A round with a rocket motor (rocketPropelled) can
+    /// also carry SACLOS guidance: it steers onto its gunner's line of sight
+    /// (the player's crosshair, or the AI gunner's target), as far as its wire
+    /// reaches and while terrain doesn't cut the line to it.
+    /// </summary>
+    [BepInPlugin("madi.guidedmunitions", "guidedMunitions", ModInfo.Version)]
+    [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
+    [BepInDependency("madi.rounds", ">=" + ModInfo.Version)]
+    [BepInDependency("madi.rocketpropelled", ">=" + ModInfo.Version)]
+    public sealed class Plugin : BasePlugin
+    {
+        internal static ManualLogSource Logger = null!;
+        internal static ConfigEntry<float> WireLength = null!;
+        internal static ConfigEntry<float> FinDrag = null!;
+        internal static ConfigEntry<float> LiftToDrag = null!;
+        internal static ConfigEntry<float> Response = null!;
+        internal static ConfigEntry<float> UnitLength = null!;
+
+        // shortcut: a guidance unit is a full-bore section of this density, kg/m³; make it a config if it needs tuning
+        private const float UnitDensity = 1500f;
+
+        // shortcut: assumes the definition's Lifetime is in seconds; check the logged value in game
+        private const float MinLifetime = 60f;
+        private static bool loggedLifetime;
+
+        public override void Load()
+        {
+            Logger = Log;
+            WireLength = Config.Bind("Guidance", "Wire length", 3000f, new ConfigDescription(
+                "Metres a guided round flies from launch before its command wire runs out; it flies on unguided after.",
+                new AcceptableValueRange<float>(500f, 5000f), new Step(100f)));
+            FinDrag = Config.Bind("Guidance", "Fin drag", 0.1f, new ConfigDescription(
+                "Extra drag per g of max turn: bigger fins turn harder but slow the round. 0.1 is double the drag at 10 g.",
+                new AcceptableValueRange<float>(0f, 0.5f), new SoftMax(0.3f), new Step(0.01f)));
+            Response = Config.Bind("Guidance", "Response", 1.5f, new ConfigDescription(
+                "How fast guidance pulls a round back onto the sight line, rad/s: it settles in about 1/this s. Lower lags more, so it overshoots turns and needs more range to settle.",
+                new AcceptableValueRange<float>(0.5f, 5f), new Step(0.1f)));
+            UnitLength = Config.Bind("Guidance", "Unit length", 1f, new ConfigDescription(
+                "Length in calibers of a guided round's guidance unit, a full-bore section of 1500 kg/m³. The charge pushes it and it's dead weight all flight, so guided rounds leave slower and speed up less.",
+                new AcceptableValueRange<float>(0f, 4f), new Step(0.25f)));
+            UnitLength.SettingChanged += (_, _) => Loadout.Invalidate();
+            RocketPropelled.Plugin.Payload = (gun, id) => GuidanceOf(gun, id) == null ? 0f
+                : MathF.PI / 4f * MathF.Pow(gun.Caliber / 1000f, 3f) * UnitLength.Value * UnitDensity;
+            Saclos.Omega = Response.Value;
+            Response.SettingChanged += (_, _) => Saclos.Omega = Response.Value;
+            LiftToDrag = Config.Bind("Guidance", "Lift to drag", 4f, new ConfigDescription(
+                "Turning costs speed: every m/s² the fins pull, holding the round's weight too, slows it by 1/this m/s². Lower bleeds speed faster, so rounds without a motor sink sooner.",
+                new AcceptableValueRange<float>(1f, 20f), new Step(0.5f)));
+            FinDrag.SettingChanged += (_, _) => Loadout.Invalidate();
+            Hud.AddPanel(Indicator.Draw);
+            SettingsTab.AddSection("Rounds", "Guidance", WireLength, FinDrag, LiftToDrag, Response, UnitLength);
+            Loadout.Modify(Modify);
+            Loadout.AddFields(GuidanceEditor.Draw);
+            Loadout.Launched += Launch;
+            new Harmony("madi.guidedmunitions").PatchAll();
+        }
+
+        /// <summary>Round <paramref name="id"/>'s guidance in <paramref name="gun"/>; null without guidance or a motor to fly it.</summary>
+        internal static Guidance? GuidanceOf(CannonBlueprint gun, string id) =>
+            RocketPropelled.Plugin.HasMotor(gun, id) ? Loadout.Get<GuidedRound>(gun, id)?.Guidance : null;
+
+        /// <summary>A guided round's fins add drag.</summary>
+        private static bool Modify(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions)
+        {
+            if (cannon.Blueprint is not { } gun || GuidanceOf(gun, id) is not { } guidance)
+                return false;
+            shape.Drag *= 1f + FinDrag.Value * guidance.MaxG;
+            return true;
+        }
+
+        /// <summary>Guides a guided round: the player's by their crosshair now, the AI's once its gunner says what it fired at.</summary>
+        private static void Launch(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id, Cannon gun)
+        {
+            if (GuidanceOf(owner, id) is not { } guidance)
+                return;
+            if (!loggedLifetime)
+            {
+                Logger.LogInfo($"Guided round: projectile lifetime {definition.Lifetime}, min speed {definition.MinSpeed}");
+                loggedLifetime = true;
+            }
+            // Slow rounds flying 3 km need longer than a shell
+            if (definition.Lifetime < MinLifetime)
+                definition.Lifetime = MinLifetime;
+            float accel = guidance.MaxG * Saclos.Gravity;
+            // Max turn is rated at burnout speed, as the Turn radius readout shows it
+            float rated = RocketPropelled.Plugin.Speeds(owner, id)?.Burnout ?? 0f;
+            var burning = RocketPropelled.Plugin.Burning(owner, id) ?? (0f, 0f);
+            if (PlayerVehicle.Contains(gun))
+                Guide(register, projectile, accel, rated, burning, (_, _) => Sight.Line, null);
+            else
+                AiSight.Expect(register, projectile, accel, rated, burning);
+        }
+
+        private static bool stepFailed;
+
+        /// <summary>
+        /// Steers projectile <paramref name="projectile"/> onto <paramref name="sight"/>'s line
+        /// (origin, unit direction), given the round's position and velocity, each step, until the line is lost (null), terrain cuts it
+        /// from the round, or the wire runs out. With <b>Log AI</b>, logs why it ends under
+        /// <paramref name="label"/>; null logs nothing.
+        /// </summary>
+        internal static void Guide(IntPtr register, int projectile, float accel, float rated, (float From, float Until) burning, Func<Vector3, Vector3, (Vector3 Origin, Vector3 Direction)?> sight, string? label)
+        {
+            Vector3? start = null;
+            // The player's round (no AI label) shows on the HUD
+            Indicator.Shot? shot = label == null ? Indicator.Track() : null;
+            bool Ends(string why, float age, Vector3 position)
+            {
+                if (shot != null)
+                {
+                    shot.Lost = why;
+                    shot.LostAt = Time.time;
+                }
+                if (label != null && Loadout.LogAi)
+                    Logger.LogInfo($"{label}: guidance ends after {age:0.0} s, {Vector3.Distance(position, start!.Value):0} m: {why}");
+                return false;
+            }
+            Flight.Follow(register, projectile, (float age, float dt, Vector3 position, ref Vector3 velocity) =>
+            {
+                try
+                {
+                    start ??= position;
+                    if (shot != null)
+                    {
+                        shot.Position = position;
+                        shot.Seen = Time.time;
+                        shot.Lit = age >= burning.From;
+                        shot.Distance = Vector3.Distance(position, start.Value);
+                    }
+                    // The sight tracks the motor's flare: nothing to steer by before it lights or after it burns out
+                    if (age < burning.From)
+                        return true;
+                    if (age >= burning.Until)
+                        return Ends("motor burnt out", age, position);
+                    if (Vector3.Distance(position, start.Value) > WireLength.Value)
+                        return Ends("wire ran out", age, position);
+                    if (sight(position, velocity) is not { } line)
+                        return Ends("sight lost", age, position);
+                    if (!Saclos.InView(position, line.Origin, line.Direction))
+                        return Ends("out of the sight's view", age, position);
+                    if (Terrain.Cuts(line.Origin, position))
+                        return Ends("terrain cut the line", age, position);
+                    velocity = Saclos.Steer(position, velocity, line.Origin, line.Direction, accel, dt, rated, LiftToDrag.Value);
+                    return true;
+                }
+                catch (Exception e)
+                {
+                    // A dead gunner or target can throw; the round flies on, and other rockets keep flying
+                    if (!stepFailed)
+                        Logger.LogError($"Guidance step failed, round flies on unguided: {e}");
+                    stepFailed = true;
+                    return false;
+                }
+            });
+        }
+    }
+
+    /// <summary>Whether terrain stands between a sight and its round, which cuts the guidance.</summary>
+    internal static class Terrain
+    {
+        // The terrain layer's mask; 0 if the game has no "Terrain" layer, which turns the cut off
+        private static int? mask;
+
+        internal static bool Cuts(Vector3 from, Vector3 to)
+        {
+            if (mask == null)
+            {
+                int layer = LayerMask.NameToLayer("Terrain");
+                mask = layer < 0 ? 0 : 1 << layer;
+                if (layer < 0)
+                    Plugin.Logger.LogWarning("No \"Terrain\" layer, so terrain doesn't cut guidance. Layers: "
+                        + string.Join(", ", Enumerable.Range(0, 32).Select(i => $"{i} {LayerMask.LayerToName(i)}").Where(n => n.Length > 3)));
+            }
+            return mask != 0 && Physics.Linecast(new UnityVector3(from.X, from.Y, from.Z), new UnityVector3(to.X, to.Y, to.Z), mask.Value);
+        }
+    }
+
+    /// <summary>
+    /// The AI gunner's line of sight: from its gun to the vehicle it fired
+    /// at, taken as the vehicle nearest the round's launch direction. A guided
+    /// round the AI fires waits here until the gunner's fire event names its projectile.
+    /// </summary>
+    /// <remarks>
+    /// Not the AI's own target tracking: its <c>ShortTargetInfo</c> lives in
+    /// native arrays and works out its id and position in native methods,
+    /// which threw when read through the interop (2026-11-10).
+    /// </remarks>
+    [HarmonyPatch(typeof(GunnerAI), nameof(GunnerAI.OnGunnerFired))]
+    internal static class AiSight
+    {
+        // Widest angle off the launch direction a vehicle can be to be taken as the target, degrees; covers the AI's lead and superelevation
+        private const float MaxOffAngle = 15f;
+
+        // Projectile id, its register, max turn and when it launched
+        private static readonly Dictionary<int, (IntPtr Register, float Accel, float Rated, (float From, float Until) Burning, float Time)> pending = new();
+
+        internal static void Expect(IntPtr register, int projectile, float accel, float rated, (float From, float Until) burning)
+        {
+            // A round no gunner claimed, such as one the AI didn't fire, is dropped
+            foreach (int old in pending.Where(p => Time.time - p.Value.Time > 1f).Select(p => p.Key).ToList())
+                pending.Remove(old);
+            pending[projectile] = (register, accel, rated, burning, Time.time);
+        }
+
+        private static void Postfix(GunnerAI __instance, GunnerFireEventArgs e)
+        {
+            if (pending.Count == 0 || e == null || !pending.Remove(e.ProjectileID, out var shot))
+                return;
+            IGunnerControl gunner = __instance.Gunner;
+            Vehicle? own = gunner?.WeaponGameObject?.GetComponentInParent<Vehicle>();
+            string label = $"AI {own?.name ?? "vehicle"} guided round {e.ProjectileID}";
+            if (gunner == null)
+                return;
+            Vehicle? target = null;
+            bool picked = false;
+            Plugin.Guide(shot.Register, e.ProjectileID, shot.Accel, shot.Rated, shot.Burning, (position, velocity) =>
+            {
+                if (!picked)
+                {
+                    picked = true;
+                    target = Nearest(own, position, velocity, out float angle);
+                    if (target == null)
+                    {
+                        Log($"{label}: no vehicle within {MaxOffAngle}° of its launch direction, flies unguided");
+                        return null;
+                    }
+                    Log($"{label}: steering at {target.name}, {Vector3.Distance(position, Aim(target)):0} m away, {angle:0.0}° off its launch direction");
+                }
+                if (target == null)
+                {
+                    Log($"{label}: target gone");
+                    return null;
+                }
+                if (!gunner.Functioning)
+                {
+                    Log($"{label}: gunner out of action");
+                    return null;
+                }
+                Vector3 origin = N(gunner.FirePosition), direction = Aim(target) - origin;
+                return direction.LengthSquared() < 1f ? null : (origin, Vector3.Normalize(direction));
+            }, label);
+        }
+
+        /// <summary>The vehicle other than <paramref name="own"/> and its team nearest the line from <paramref name="position"/> along <paramref name="velocity"/> by angle, within <see cref="MaxOffAngle"/>; null for none.</summary>
+        private static Vehicle? Nearest(Vehicle? own, Vector3 position, Vector3 velocity, out float angle)
+        {
+            Vehicle? best = null;
+            angle = MaxOffAngle;
+            Vector3 forward = Vector3.Normalize(velocity);
+            foreach (Vehicle vehicle in UnityObject.FindObjectsOfType<Vehicle>())
+            {
+                if (vehicle == null || own != null && (vehicle.Pointer == own.Pointer || SameTeam(own, vehicle)))
+                    continue;
+                Vector3 to = Aim(vehicle) - position;
+                float off = MathF.Acos(Math.Clamp(Vector3.Dot(forward, Vector3.Normalize(to)), -1f, 1f)) * 180f / MathF.PI;
+                if (off < angle)
+                {
+                    angle = off;
+                    best = vehicle;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>Whether both vehicles are spawned on the same team; false while either has no behaviour.</summary>
+        private static bool SameTeam(Vehicle a, Vehicle b) =>
+            a.behaviour is { } x && x != null && b.behaviour is { } y && y != null && x.ID.TeamID == y.ID.TeamID;
+
+        /// <summary>Where a round aims on <paramref name="vehicle"/>: its centre of mass, else its origin.</summary>
+        private static Vector3 Aim(Vehicle vehicle) =>
+            N(vehicle.GetComponent<Rigidbody>() is { } body && body != null ? body.worldCenterOfMass : vehicle.transform.position);
+
+        private static Vector3 N(UnityVector3 v) => new(v.x, v.y, v.z);
+
+        private static void Log(string message)
+        {
+            if (Loadout.LogAi)
+                Plugin.Logger.LogInfo(message);
+        }
+    }
+
+    /// <summary>The gunner's line of sight, from the player's aim each frame of control.</summary>
+    [HarmonyPatch(typeof(VehicleController), nameof(VehicleController.UpdateControl))]
+    internal static class Sight
+    {
+        // A sight line older than this, s, is lost: the player left the vehicle or it died
+        private const float Stale = 0.5f;
+        private static (Vector3 Origin, Vector3 Direction) line;
+        private static float seen = float.NegativeInfinity;
+
+        /// <summary>The player's sight line, origin and unit direction; null when lost.</summary>
+        internal static (Vector3 Origin, Vector3 Direction)? Line =>
+            Time.time - seen <= Stale && PlayerVehicle.Root != null ? line : null;
+
+        private static void Postfix(VehicleController __instance)
+        {
+            seen = Time.time;
+            // The game's "lock turret": the sight looks around, the line holds
+            if (__instance.GunnerAimLocked)
+                return;
+            var ray = __instance.aimRay;
+            var direction = new Vector3(ray.direction.x, ray.direction.y, ray.direction.z);
+            line = (new Vector3(ray.origin.x, ray.origin.y, ray.origin.z), Vector3.Normalize(direction));
+        }
+    }
+
+    /// <summary>
+    /// Draws a <b>Guidance</b> picker under a rocket round's motor in the
+    /// cannon panel and, with guidance, its max turn and readouts.
+    /// </summary>
+    internal static class GuidanceEditor
+    {
+        private static readonly string[] options = { "None", "SACLOS" };
+
+        // Cannon blueprint and round id, its field and readouts
+        private static readonly Dictionary<(IntPtr, string), (FloatProperty Field, StringProperty[] Readouts)> properties = new();
+
+        internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
+        {
+            if (cannon.Blueprint is not { } gun || !RocketPropelled.Plugin.HasMotor(gun, id))
+                return;
+            bool has = Loadout.Get<GuidedRound>(gun, id)?.Guidance != null;
+            EditorGui.Dropdown(drawer, "Guidance", options, has ? 1 : 0, i =>
+            {
+                Loadout.Edit<GuidedRound>(gun, id, r => r.Guidance = i == 0 ? null : r.Guidance ?? new Guidance());
+                changed();
+                Loadout.Redraw();
+            }, "SACLOS: the round steers onto its gunner's sight line, so it hits what the sight stays on, until its wire runs out or terrain cuts the line to it. The AI's gunners guide theirs onto their target.");
+            if (!has)
+                return;
+            if (!properties.TryGetValue((gun.Pointer, id), out var set))
+                properties[(gun.Pointer, id)] = set = Make(gun, id, changed);
+            drawer.Float(set.Field);
+            foreach (StringProperty readout in set.Readouts)
+                drawer.Readonly(readout);
+        }
+
+        private static (FloatProperty, StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
+        {
+            float MaxG() => Loadout.Get<GuidedRound>(gun, id)?.Guidance?.MaxG ?? new Guidance().MaxG;
+            StringProperty[] readouts =
+            {
+                EditorGui.Readout("Turn radius", () =>
+                {
+                    float v = RocketPropelled.Plugin.Speeds(gun, id)?.Burnout ?? 0f;
+                    return $"{v * v / (MaxG() * Saclos.Gravity):0} m";
+                }, "Tightest turn at burnout velocity, without drag or gravity."),
+                EditorGui.Readout("Hits at", () =>
+                {
+                    var speeds = RocketPropelled.Plugin.Speeds(gun, id);
+                    var burning = RocketPropelled.Plugin.Burning(gun, id) ?? (0f, 0f);
+                    var (min, max) = Saclos.HitRanges(speeds?.Launch ?? 0f, MaxG() * Saclos.Gravity, Plugin.WireLength.Value, speeds?.Burnout ?? 0f,
+                        Plugin.LiftToDrag.Value, burning.From, burning.Until, RocketPropelled.Plugin.Thrust(gun, id));
+                    return float.IsInfinity(min) ? "misses" : $"{min:0}-{max:0} m";
+                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a target under the crosshair, out to the wire length. It's only guided while its motor burns. Its motor, guidance unit, ignition delay and turn costs count; drag doesn't, and a full-bore shell is the warhead."),
+                EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * MaxG() * 100f:0}%", "Extra drag from the fins, over the round's own."),
+            };
+            var field = new FloatProperty("Max turn", (Func<float>)MaxG, (Action<float>)(value =>
+            {
+                Loadout.Edit<GuidedRound>(gun, id, r => (r.Guidance ??= new Guidance()).MaxG = value);
+                changed();
+                EditorGui.Refresh(readouts);
+            }), "Hardest turn the fins pull, in g, holding up the round's weight too. More turns tighter and holds the line better, but the fins add drag.")
+            { Min = 1f, Max = 50f, SoftMin = 1f, SoftMax = 20f, UseSoftLimits = true, Step = 0.5f };
+            return (field, readouts);
+        }
+    }
+
+    /// <summary>The fields guidance adds to a round of any type, as stored in the vehicle file through <see cref="Loadout"/>.</summary>
+    internal sealed class GuidedRound
+    {
+        /// <summary>The round's guidance; null for none.</summary>
+        public Guidance? Guidance { get; set; }
+    }
+
+    /// <summary>SACLOS guidance: the round steers onto the gunner's sight line.</summary>
+    internal sealed class Guidance
+    {
+        /// <summary>Hardest turn, g.</summary>
+        public float MaxG { get; set; } = 10f;
+    }
+}

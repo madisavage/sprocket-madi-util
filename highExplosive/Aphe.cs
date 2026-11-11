@@ -62,7 +62,11 @@ namespace HighExplosive
             SettingsTab.AddSection("Rounds", "APHE", Fragmentation, MaxFragments, Spread, Gurney, FragmentMass, PenetrationLoss, LogBursts);
             using (var icon = Plugin.Icon(ApheRound.Type))
                 Loadout.Register(ApheRound.Type, "APHE", ApheEditor.Draw, (game, cannon, id, functions) =>
-                    cannon.Blueprint is { } owner ? Plugin.Shell(game, functions, 1f, explode: false) : null, Hit, icon);
+                    cannon.Blueprint is { } owner ? Plugin.Shell(game, functions, 1f, explode: false) : null, Hit, icon, penetration: (owner, id, speed) =>
+                    {
+                        float kg = ShellProperties.GetProjectileMass(owner.Caliber);
+                        return Impacts.DeMarre(owner.Caliber, kg, speed, owner.PenetratorConstant) * Penetration(Share(Round(owner, id).Filler, kg));
+                    });
             Impacts.HitEnded += Fuze.End;
             Impacts.FragmentSimulating += Fuze.Simulating;
             Impacts.FragmentSimulated += Fuze.Simulated;

@@ -1,6 +1,7 @@
 extern alias UnityCoreModule;
 
 using System;
+using System.Linq;
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
@@ -33,6 +34,8 @@ namespace MadiUtil
             Logger = Log;
             EraYears.LastTech = EraYears.LatestTech(System.IO.Path.Combine(Paths.GameRootPath, "Sprocket_Data", "StreamingAssets", "Technology"));
             Logger.LogInfo($"Latest tech: {EraYears.LastTech:yyyy.MM.dd}; era dropdown years stop there.");
+            Pressure.Eras = Pressure.Read(System.IO.Path.Combine(Paths.GameRootPath, "Sprocket_Data", "StreamingAssets", "Technology"));
+            Logger.LogInfo($"Cannon pressures: {string.Join(", ", Pressure.Eras.Select(e => $"{e.Date:yyyy}: {e.Pressure}"))}");
             new Harmony("madi.madiutil").PatchAll();
             Keybinds.Register(this, "madiUtil", "Save vehicle", "Ctrl+S", SaveVehicle);
             SettingsTab.AddSection("madiUtil", "madiUtil", ui => ui.Bool(unlockEras));

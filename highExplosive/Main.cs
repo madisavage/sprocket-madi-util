@@ -73,7 +73,8 @@ namespace HighExplosive
                 using (var icon = Icon(kind.Type))
                     Loadout.Register(kind.Type, kind.Label, (drawer, cannon, id, changed) => Editor.Draw(drawer, cannon, id, changed, kind), (game, cannon, id, functions) =>
                         cannon.Blueprint is { } owner ? Shell(game, functions, Round(owner, id, kind).Mass) : null,
-                        (ref PenetratorInfo penetrator, CannonBlueprint owner, string id) => Hit(ref penetrator, owner, id, kind), icon);
+                        (ref PenetratorInfo penetrator, CannonBlueprint owner, string id) => Hit(ref penetrator, owner, id, kind), icon,
+                        penetration: (owner, id, _) => kind.Penetration * MathF.Cbrt(ShellProperties.GetProjectileMass(owner.Caliber) * Round(owner, id, kind).Mass));
             Heat.Load(Config, Log);
             Aphe.Load(Config, Log);
             Impacts.Simulated += ArmourView.Simulate;

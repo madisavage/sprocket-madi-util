@@ -68,9 +68,9 @@ namespace Rounds
     /// <summary>
     /// A gun launched one of a round's own projectiles: the game's projectile
     /// register firing it (its pointer), the projectile's id there, its
-    /// definition, and its round.
+    /// definition, its round, and the gun that fired it.
     /// </summary>
-    public delegate void RoundLaunched(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id);
+    public delegate void RoundLaunched(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id, Cannon gun);
 
     /// <summary>A round's projectile in flight, in kg and m, and what the charge pushes at launch.</summary>
     public sealed class RoundShape
@@ -125,7 +125,7 @@ namespace Rounds
         private static readonly JsonSerializerOptions json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
         // Each registered round type, in registration order; IconOf picks a round's icon, or null for the type's
-        internal static readonly List<(string Type, string Label, RoundDrawer Draw, RoundProjectile? Projectile, RoundHit? Hit, Func<CannonBlueprint, string, string?>? IconOf)> Types = new();
+        internal static readonly List<(string Type, string Label, RoundDrawer Draw, RoundProjectile? Projectile, RoundHit? Hit, Func<CannonBlueprint, string, string?>? IconOf, Func<CannonBlueprint, string, float, float>? Penetration)> Types = new();
 
         // Changes any round's projectile, in registration order
         internal static readonly List<RoundModifier> Modifiers = new();
@@ -136,14 +136,23 @@ namespace Rounds
         /// <summary>Raised when a gun launches a round's own projectile.</summary>
         public static event RoundLaunched? Launched;
 
-        internal static void RaiseLaunched(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id) =>
-            Launched?.Invoke(register, projectile, definition, owner, id);
+        internal static void RaiseLaunched(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id, Cannon gun) =>
+            Launched?.Invoke(register, projectile, definition, owner, id, gun);
 
         /// <summary>Adds a <see cref="RoundModifier"/>, run for every round of every type.</summary>
         public static void Modify(RoundModifier modifier) => Modifiers.Add(modifier);
 
         /// <summary>Draws more fields under every round in the cannon panel, whatever its type, such as a rocket motor's.</summary>
         public static void AddFields(RoundDrawer draw) => Fields.Add(draw);
+
+        // Rebuilds the cannon panel last drawn; set by its draw
+        internal static Action? redraw;
+
+        /// <summary>
+        /// Rebuilds the cannon panel, for a field that adds or removes others,
+        /// such as a dropdown: <c>changed</c> doesn't, as sliders call it every step.
+        /// </summary>
+        public static void Redraw() => redraw?.Invoke();
 
         // Icon key, its PNG: each type's under its type, and those from AddIcon
         internal static readonly Dictionary<string, byte[]> Icons = new();
@@ -164,13 +173,24 @@ namespace Rounds
         /// <see cref="AddIcon"/>, from its gun and id; null, or returning null,
         /// uses <paramref name="icon"/>.
         /// </param>
+        /// <param name="penetration">
+        /// A round's penetration in mm from its gun, id and speed (m/s), as its
+        /// panel shows it, by which the AI picks its rounds; null ranks the type last.
+        /// </param>
         public static void Register(string type, string label, RoundDrawer draw, RoundProjectile? projectile = null, RoundHit? hit = null, Stream? icon = null,
-            Func<CannonBlueprint, string, string?>? iconOf = null)
+            Func<CannonBlueprint, string, string?>? iconOf = null, Func<CannonBlueprint, string, float, float>? penetration = null)
         {
             if (icon != null)
                 AddIcon(type, icon);
-            Types.Add((type, label, draw, projectile, hit, iconOf));
+            Types.Add((type, label, draw, projectile, hit, iconOf, penetration));
         }
+
+        /// <summary>Whether the player asked for the AI's decisions to be logged (rounds' <b>Log AI</b>).</summary>
+        public static bool LogAi => Plugin.LogAi.Value;
+
+        /// <summary>Round <paramref name="id"/>'s penetration in mm at <paramref name="speed"/> m/s, as its type works it out; 0 if its type doesn't say.</summary>
+        internal static float Penetration(CannonBlueprint owner, string id, float speed) =>
+            Raw(owner, id) is { } raw && Types.FirstOrDefault(t => t.Type == raw.Type).Penetration is { } of ? of(owner, id, speed) : 0f;
 
         /// <summary>
         /// Adds another icon, as <see cref="Register"/>'s, under
