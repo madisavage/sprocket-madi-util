@@ -58,6 +58,7 @@ namespace StagedAmmo
         // Tags match with the space before them, so removing one from mid-name leaves no double space
         private static readonly Regex tag = new(@"\s*\[auto(?:\s*x\s*([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
         internal static readonly Regex ReadyTag = new(@"\s*\[ready\]", RegexOptions.IgnoreCase);
+        internal static readonly Regex PauseTag = new(@"\s*\[pause\]", RegexOptions.IgnoreCase);
         internal static readonly Regex ClipTag = new(@"\s*\[clip\s*([0-9]+)\]", RegexOptions.IgnoreCase);
 
         public override void Load()
@@ -133,6 +134,8 @@ namespace StagedAmmo
         // Rack behaviours this gun marked ready, unmarked if it's dropped
         public List<IntPtr> ReadyRacks = new();
         public bool Auto;
+        // An [auto] rack of this gun is tagged [pause]: its loader doesn't re-rack while the autoloader loads
+        public bool Pause;
         public IntPtr Shown;
         public ProjectileSizeID Size;
         public float NextFilter;
@@ -334,7 +337,7 @@ namespace StagedAmmo
             float elapsed = Math.Min(now - staging.LastSeen, 0.5f);
             staging.LastSeen = now;
             staging.LoaderEfficiency = LoaderEfficiency(contributors, staging.LoaderEfficiency);
-            staging.LoaderBusy = !staging.Auto && loadTask.State == LoadState.Loading;
+            staging.LoaderBusy = (!staging.Auto || staging.Pause) && loadTask.State == LoadState.Loading;
             // The game keeps loading from the rack it last picked, which may be one picked before the finder was filtered
             if (loadTask.State != LoadState.Loading && loadTask.rack != null && !Shown(finder, loadTask.rack))
                 loadTask.rack = null;
@@ -425,6 +428,7 @@ namespace StagedAmmo
             var flagged = new bool[count];
             bool anyFlagged = false;
             staging.Auto = false;
+            staging.Pause = false;
             // The finder lists every rack in the vehicle: another gun's [auto] or [ready] racks mustn't count for this one.
             // Size 0 until the gun's first request: count them all until then.
             for (int i = 0; i < count; i++)
@@ -435,6 +439,7 @@ namespace StagedAmmo
                 bool fits = staging.Size.Value == 0 || staging.Sources[i]?.ShellSizeID.Equals(staging.Size) == true;
                 auto[i] = fits && Plugin.IsAuto(staging.Sources[i]);
                 staging.Auto |= auto[i];
+                staging.Pause |= auto[i] && Plugin.PauseTag.IsMatch(staging.Sources[i]?.AmmoSource?.RackIdentifier ?? "");
                 flagged[i] = fits && Plugin.IsFlagged(staging.Sources[i]?.AmmoSource?.RackIdentifier);
                 anyFlagged |= flagged[i];
             }
@@ -787,6 +792,15 @@ namespace StagedAmmo
                 "The gun loads itself from this rack; its loader only re-racks. Adds or removes [auto] in the rack's name.");
             if (speed == null)
                 return;
+            drawer.ToggleField(
+                "Pause re-racking while loading",
+                Plugin.PauseTag.IsMatch(name.Value ?? ""),
+                (Action<bool>)(pause =>
+                {
+                    name.Value = Plugin.WithTag(name.Value ?? "", Plugin.PauseTag, pause ? "[pause]" : null);
+                    __instance.RequestRedraw();
+                }),
+                "The loader stops re-racking while the autoloader loads the gun from this rack. Adds or removes [pause] in the rack's name.");
             FloatProperty reloadSpeed = speeds.Get(name, () => new FloatProperty(
                 "Reload speed",
                 (Func<float>)(() => Plugin.RackSpeed(name.Value) ?? 1f),

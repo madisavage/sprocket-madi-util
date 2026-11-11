@@ -159,7 +159,8 @@ namespace MadiUtil
         // Cannon blueprint, its breech sliders
         private static readonly ObjectCache<FloatProperty[]> breechFields = new();
 
-        private static void Postfix(CannonEditor __instance, IGUILayout __0)
+        // Before the game's fields, so the section sits at the top of the panel
+        private static void Prefix(CannonEditor __instance, IGUILayout __0)
         {
             var cannon = __instance.Component;
             var blueprint = cannon?.Blueprint;
@@ -171,6 +172,8 @@ namespace MadiUtil
                 return;
             if (Pressure.Restore(blueprint) | Breech.Apply(blueprint))
                 slot.MarkModified();
+            if (!EditorGui.Section(drawer, "madiUtil.gun", "Gun settings", __instance.RequestRedraw, open: true))
+                return;
             void Change(Func<Breech.Settings, Breech.Settings> change)
             {
                 Breech.Set(blueprint, change(Breech.Of(blueprint)));

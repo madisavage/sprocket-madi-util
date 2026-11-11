@@ -31,10 +31,12 @@ namespace MadiLib
         /// <c>RequestRedraw</c>, or setting an overlay config's
         /// <c>GUIRedrawRequired</c>. Called when the header is clicked.
         /// </param>
+        /// <param name="open">Whether the section starts expanded.</param>
         /// <returns>Whether the section is expanded.</returns>
-        public static bool Section(IGUIElementDrawer drawer, string id, string header, Action redraw)
+        public static bool Section(IGUIElementDrawer drawer, string id, string header, Action redraw, bool open = false)
         {
-            sections.TryGetValue(id, out bool shown);
+            if (!sections.TryGetValue(id, out bool shown))
+                shown = open;
             drawer.HeaderBar(header, shown, (Action<bool>)(value =>
             {
                 sections[id] = value;

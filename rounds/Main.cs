@@ -512,7 +512,9 @@ namespace Rounds
             selected[gun] = ids[n - 1].Id;
             // A pick before Selected first saw this gun would leave it out, and the AI's pick would replace it
             players.Add(gun);
-            Loadout.RequestAmmo(cannon.behaviour);
+            // Only a waiting gun: re-requesting one mid-reload starts a load with no shell taken, and its drop puts back a phantom (bug 25)
+            if (waiting.Contains(gun))
+                Loadout.RequestAmmo(cannon.behaviour);
             waiting.Remove(gun);
         }
 
@@ -789,7 +791,8 @@ namespace Rounds
                 return;
             foreach (var (id, slider) in shown)
             {
-                slider.Max = mix.Limit(id);
+                // An empty 0..0 range drops the slider and leaves the pooled field's old text (another panel's value); the setter clamps to the real limit
+                slider.Max = Math.Max(mix.Limit(id), 1);
                 slider.OnPropertyChanged(PropertyChangeType.Limit);
                 slider.OnPropertyChanged(PropertyChangeType.Value);
             }
