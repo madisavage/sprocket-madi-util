@@ -37,7 +37,7 @@ namespace GuidedMunitions
     /// BepInEx entry point. A round with a rocket motor (rocketPropelled) can
     /// also carry SACLOS guidance: it steers onto its gunner's line of sight
     /// (the player's crosshair, or the AI gunner's target), as far as its wire
-    /// reaches and while terrain doesn't cut the line to it.
+    /// reaches and while terrain doesn't cut the line to it, burning or coasting.
     /// </summary>
     [BepInPlugin("madi.guidedmunitions", "guidedMunitions", ModInfo.Version)]
     [BepInDependency("madi.madilib", ">=" + ModInfo.Version)]
@@ -46,10 +46,8 @@ namespace GuidedMunitions
     public sealed class Plugin : BasePlugin
     {
         internal static ManualLogSource Logger = null!;
-        internal static ConfigEntry<float> WireLength = null!;
         internal static ConfigEntry<float> FinDrag = null!;
         internal static ConfigEntry<float> LiftToDrag = null!;
-        internal static ConfigEntry<float> Response = null!;
         internal static ConfigEntry<float> UnitLength = null!;
 
         // shortcut: a guidance unit is a full-bore section of this density, kg/m³; make it a config if it needs tuning
@@ -62,29 +60,21 @@ namespace GuidedMunitions
         public override void Load()
         {
             Logger = Log;
-            WireLength = Config.Bind("Guidance", "Wire length", 3000f, new ConfigDescription(
-                "Metres a guided round flies from launch before its command wire runs out; it flies on unguided after.",
-                new AcceptableValueRange<float>(500f, 5000f), new Step(100f)));
             FinDrag = Config.Bind("Guidance", "Fin drag", 0.1f, new ConfigDescription(
                 "Extra drag per g of max turn: bigger fins turn harder but slow the round. 0.1 is double the drag at 10 g.",
                 new AcceptableValueRange<float>(0f, 0.5f), new SoftMax(0.3f), new Step(0.01f)));
-            Response = Config.Bind("Guidance", "Response", 1.5f, new ConfigDescription(
-                "How fast guidance pulls a round back onto the sight line, rad/s: it settles in about 1/this s. Lower lags more, so it overshoots turns and needs more range to settle.",
-                new AcceptableValueRange<float>(0.5f, 5f), new Step(0.1f)));
             UnitLength = Config.Bind("Guidance", "Unit length", 1f, new ConfigDescription(
                 "Length in calibers of a guided round's guidance unit, a full-bore section of 1500 kg/m³. The charge pushes it and it's dead weight all flight, so guided rounds leave slower and speed up less.",
                 new AcceptableValueRange<float>(0f, 4f), new Step(0.25f)));
             UnitLength.SettingChanged += (_, _) => Loadout.Invalidate();
             RocketPropelled.Plugin.Payload = (gun, id) => GuidanceOf(gun, id) == null ? 0f
                 : MathF.PI / 4f * MathF.Pow(gun.Caliber / 1000f, 3f) * UnitLength.Value * UnitDensity;
-            Saclos.Omega = Response.Value;
-            Response.SettingChanged += (_, _) => Saclos.Omega = Response.Value;
             LiftToDrag = Config.Bind("Guidance", "Lift to drag", 4f, new ConfigDescription(
                 "Turning costs speed: every m/s² the fins pull, holding the round's weight too, slows it by 1/this m/s². Lower bleeds speed faster, so rounds without a motor sink sooner.",
                 new AcceptableValueRange<float>(1f, 20f), new Step(0.5f)));
             FinDrag.SettingChanged += (_, _) => Loadout.Invalidate();
             Hud.AddPanel(Indicator.Draw);
-            SettingsTab.AddSection("Rounds", "Guidance", WireLength, FinDrag, LiftToDrag, Response, UnitLength);
+            SettingsTab.AddSection("Rounds", "Guidance", FinDrag, LiftToDrag, UnitLength);
             Loadout.Modify(Modify);
             Loadout.AddFields(GuidanceEditor.Draw);
             Loadout.Launched += Launch;
@@ -117,29 +107,30 @@ namespace GuidedMunitions
             // Slow rounds flying 3 km need longer than a shell
             if (definition.Lifetime < MinLifetime)
                 definition.Lifetime = MinLifetime;
-            float accel = guidance.MaxG * Saclos.Gravity;
             // Max turn is rated at burnout speed, as the Turn radius readout shows it
             float rated = RocketPropelled.Plugin.Speeds(owner, id)?.Burnout ?? 0f;
-            var burning = RocketPropelled.Plugin.Burning(owner, id) ?? (0f, 0f);
             if (PlayerVehicle.Contains(gun))
-                Guide(register, projectile, accel, rated, burning, (_, _) => Sight.Line, null);
+                Guide(register, projectile, guidance, rated, (_, _) => Sight.Line, null);
             else
-                AiSight.Expect(register, projectile, accel, rated, burning);
+                AiSight.Expect(register, projectile, guidance, rated);
         }
 
         private static bool stepFailed;
 
         /// <summary>
-        /// Steers projectile <paramref name="projectile"/> onto <paramref name="sight"/>'s line
+        /// Steers projectile <paramref name="projectile"/> by <paramref name="guidance"/> onto <paramref name="sight"/>'s line
         /// (origin, unit direction), given the round's position and velocity, each step, until the line is lost (null), terrain cuts it
-        /// from the round, or the wire runs out. With <b>Log AI</b>, logs why it ends under
+        /// from the round, or the wire runs out; the sight tracks a beacon on the round, so it steers burning or not.
+        /// Max turn is rated at <paramref name="rated"/> m/s. With <b>Log AI</b>, logs why it ends under
         /// <paramref name="label"/>; null logs nothing.
         /// </summary>
-        internal static void Guide(IntPtr register, int projectile, float accel, float rated, (float From, float Until) burning, Func<Vector3, Vector3, (Vector3 Origin, Vector3 Direction)?> sight, string? label)
+        internal static void Guide(IntPtr register, int projectile, Guidance guidance, float rated, Func<Vector3, Vector3, (Vector3 Origin, Vector3 Direction)?> sight, string? label)
         {
             Vector3? start = null;
+            float accel = guidance.MaxG * Saclos.Gravity, wire = guidance.WireLength, omega = guidance.Response;
+            var motion = new LineMotion();
             // The player's round (no AI label) shows on the HUD
-            Indicator.Shot? shot = label == null ? Indicator.Track() : null;
+            Indicator.Shot? shot = label == null ? Indicator.Track(wire) : null;
             bool Ends(string why, float age, Vector3 position)
             {
                 if (shot != null)
@@ -160,15 +151,9 @@ namespace GuidedMunitions
                     {
                         shot.Position = position;
                         shot.Seen = Time.time;
-                        shot.Lit = age >= burning.From;
                         shot.Distance = Vector3.Distance(position, start.Value);
                     }
-                    // The sight tracks the motor's flare: nothing to steer by before it lights or after it burns out
-                    if (age < burning.From)
-                        return true;
-                    if (age >= burning.Until)
-                        return Ends("motor burnt out", age, position);
-                    if (Vector3.Distance(position, start.Value) > WireLength.Value)
+                    if (Vector3.Distance(position, start.Value) > wire)
                         return Ends("wire ran out", age, position);
                     if (sight(position, velocity) is not { } line)
                         return Ends("sight lost", age, position);
@@ -176,7 +161,9 @@ namespace GuidedMunitions
                         return Ends("out of the sight's view", age, position);
                     if (Terrain.Cuts(line.Origin, position))
                         return Ends("terrain cut the line", age, position);
-                    velocity = Saclos.Steer(position, velocity, line.Origin, line.Direction, accel, dt, rated, LiftToDrag.Value);
+                    motion.Update(line.Origin, line.Direction, dt);
+                    velocity = Saclos.Steer(position, velocity, line.Origin, line.Direction, accel, dt, rated, LiftToDrag.Value, omega,
+                        motion.OriginVelocity, motion.TurnRate);
                     return true;
                 }
                 catch (Exception e)
@@ -227,15 +214,15 @@ namespace GuidedMunitions
         // Widest angle off the launch direction a vehicle can be to be taken as the target, degrees; covers the AI's lead and superelevation
         private const float MaxOffAngle = 15f;
 
-        // Projectile id, its register, max turn and when it launched
-        private static readonly Dictionary<int, (IntPtr Register, float Accel, float Rated, (float From, float Until) Burning, float Time)> pending = new();
+        // Projectile id, its register, guidance, rated speed and when it launched
+        private static readonly Dictionary<int, (IntPtr Register, Guidance Guidance, float Rated, float Time)> pending = new();
 
-        internal static void Expect(IntPtr register, int projectile, float accel, float rated, (float From, float Until) burning)
+        internal static void Expect(IntPtr register, int projectile, Guidance guidance, float rated)
         {
             // A round no gunner claimed, such as one the AI didn't fire, is dropped
             foreach (int old in pending.Where(p => Time.time - p.Value.Time > 1f).Select(p => p.Key).ToList())
                 pending.Remove(old);
-            pending[projectile] = (register, accel, rated, burning, Time.time);
+            pending[projectile] = (register, guidance, rated, Time.time);
         }
 
         private static void Postfix(GunnerAI __instance, GunnerFireEventArgs e)
@@ -249,7 +236,7 @@ namespace GuidedMunitions
                 return;
             Vehicle? target = null;
             bool picked = false;
-            Plugin.Guide(shot.Register, e.ProjectileID, shot.Accel, shot.Rated, shot.Burning, (position, velocity) =>
+            Plugin.Guide(shot.Register, e.ProjectileID, shot.Guidance, shot.Rated, (position, velocity) =>
             {
                 if (!picked)
                 {
@@ -348,8 +335,8 @@ namespace GuidedMunitions
     {
         private static readonly string[] options = { "None", "SACLOS" };
 
-        // Cannon blueprint and round id, its field and readouts
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty Field, StringProperty[] Readouts)> properties = new();
+        // Cannon blueprint and round id, its fields and readouts
+        private static readonly Dictionary<(IntPtr, string), (FloatProperty[] Fields, StringProperty[] Readouts)> properties = new();
 
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
@@ -361,44 +348,56 @@ namespace GuidedMunitions
                 Loadout.Edit<GuidedRound>(gun, id, r => r.Guidance = i == 0 ? null : r.Guidance ?? new Guidance());
                 changed();
                 Loadout.Redraw();
-            }, "SACLOS: the round steers onto its gunner's sight line, so it hits what the sight stays on, until its wire runs out or terrain cuts the line to it. The AI's gunners guide theirs onto their target.");
+            }, "SACLOS: the round steers onto its gunner's sight line, so it hits what the sight stays on, burning or coasting, until its wire runs out or terrain cuts the line to it. The AI's gunners guide theirs onto their target.");
             if (!has)
                 return;
             if (!properties.TryGetValue((gun.Pointer, id), out var set))
                 properties[(gun.Pointer, id)] = set = Make(gun, id, changed);
-            drawer.Float(set.Field);
+            foreach (FloatProperty field in set.Fields)
+                drawer.Float(field);
             foreach (StringProperty readout in set.Readouts)
                 drawer.Readonly(readout);
         }
 
-        private static (FloatProperty, StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
+        private static (FloatProperty[], StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
         {
-            float MaxG() => Loadout.Get<GuidedRound>(gun, id)?.Guidance?.MaxG ?? new Guidance().MaxG;
+            Guidance G() => Loadout.Get<GuidedRound>(gun, id)?.Guidance ?? new Guidance();
             StringProperty[] readouts =
             {
                 EditorGui.Readout("Turn radius", () =>
                 {
                     float v = RocketPropelled.Plugin.Speeds(gun, id)?.Burnout ?? 0f;
-                    return $"{v * v / (MaxG() * Saclos.Gravity):0} m";
+                    return $"{v * v / (G().MaxG * Saclos.Gravity):0} m";
                 }, "Tightest turn at burnout velocity, without drag or gravity."),
                 EditorGui.Readout("Hits at", () =>
                 {
+                    Guidance g = G();
                     var speeds = RocketPropelled.Plugin.Speeds(gun, id);
-                    var burning = RocketPropelled.Plugin.Burning(gun, id) ?? (0f, 0f);
-                    var (min, max) = Saclos.HitRanges(speeds?.Launch ?? 0f, MaxG() * Saclos.Gravity, Plugin.WireLength.Value, speeds?.Burnout ?? 0f,
-                        Plugin.LiftToDrag.Value, burning.From, burning.Until, RocketPropelled.Plugin.Thrust(gun, id));
+                    var (min, max) = Saclos.HitRanges(speeds?.Launch ?? 0f, g.MaxG * Saclos.Gravity, g.WireLength, speeds?.Burnout ?? 0f,
+                        Plugin.LiftToDrag.Value, g.Response, RocketPropelled.Plugin.Thrust(gun, id));
                     return float.IsInfinity(min) ? "misses" : $"{min:0}-{max:0} m";
-                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a target under the crosshair, out to the wire length. It's only guided while its motor burns. Its motor, guidance unit, ignition delay and turn costs count; drag doesn't, and a full-bore shell is the warhead."),
-                EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * MaxG() * 100f:0}%", "Extra drag from the fins, over the round's own."),
+                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire length. Its motor, guidance unit, ignition delay and turn costs count; drag doesn't, so it's hopeful for long coasts, and a full-bore shell is the warhead."),
+                EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * G().MaxG * 100f:0}%", "Extra drag from the fins, over the round's own."),
             };
-            var field = new FloatProperty("Max turn", (Func<float>)MaxG, (Action<float>)(value =>
+            FloatProperty Field(string name, Func<Guidance, float> get, Action<Guidance, float> set, string tooltip, float min, float softMax, float max, float step) =>
+                new(name, (Func<float>)(() => get(G())), (Action<float>)(value =>
+                {
+                    Loadout.Edit<GuidedRound>(gun, id, r => set(r.Guidance ??= new Guidance(), value));
+                    changed();
+                    EditorGui.Refresh(readouts);
+                }), tooltip)
+                // The slider spans min to softMax; typing goes up to max
+                { Min = min, Max = max, SoftMin = min, SoftMax = softMax, UseSoftLimits = true, Step = step };
+            FloatProperty[] fields =
             {
-                Loadout.Edit<GuidedRound>(gun, id, r => (r.Guidance ??= new Guidance()).MaxG = value);
-                changed();
-                EditorGui.Refresh(readouts);
-            }), "Hardest turn the fins pull, in g, holding up the round's weight too. More turns tighter and holds the line better, but the fins add drag.")
-            { Min = 1f, Max = 50f, SoftMin = 1f, SoftMax = 20f, UseSoftLimits = true, Step = 0.5f };
-            return (field, readouts);
+                Field("Max turn", g => g.MaxG, (g, v) => g.MaxG = v,
+                    "Hardest turn the fins pull, in g, holding up the round's weight too. More turns tighter and holds the line better, but the fins add drag.", 1f, 20f, 50f, 0.5f),
+                Field("Wire length", g => g.WireLength, (g, v) => g.WireLength = v,
+                    "Metres the round flies from launch before its command link runs out; it flies on unguided after.", 500f, 5000f, 10000f, 100f),
+                Field("Response", g => g.Response, (g, v) => g.Response = v,
+                    "How fast guidance pulls the round onto the sight line, rad/s: it settles in about 1/this s. Lower lags more, so it overshoots turns and needs more range to settle; higher snaps on but pulls harder.", 0.5f, 5f, 10f, 0.1f),
+            };
+            return (fields, readouts);
         }
     }
 
@@ -414,5 +413,11 @@ namespace GuidedMunitions
     {
         /// <summary>Hardest turn, g.</summary>
         public float MaxG { get; set; } = 10f;
+
+        /// <summary>Metres from launch before the command link runs out.</summary>
+        public float WireLength { get; set; } = 3000f;
+
+        /// <summary>How fast it settles onto the sight line, rad/s.</summary>
+        public float Response { get; set; } = Saclos.DefaultOmega;
     }
 }

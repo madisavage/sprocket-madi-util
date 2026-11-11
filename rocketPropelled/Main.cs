@@ -93,10 +93,6 @@ namespace RocketPropelled
             return age => burn.Acceleration(age, dry);
         }
 
-        /// <summary>Seconds from launch round <paramref name="id"/>'s motor in <paramref name="gun"/> lights and burns out; null without a motor.</summary>
-        public static (float From, float Until)? Burning(CannonBlueprint gun, string id) =>
-            BurnOf(gun, id) is { } burn ? (burn.Delay, burn.BurnOut) : null;
-
         /// <summary>Whether round <paramref name="id"/> in <paramref name="gun"/> has a rocket motor.</summary>
         public static bool HasMotor(CannonBlueprint gun, string id) => Loadout.Get<RocketRound>(gun, id)?.Motor != null;
 
@@ -110,8 +106,35 @@ namespace RocketPropelled
                 return null;
             // shortcut: assumes a full-bore shell's mass, not the round type's; pass each type's mass through rounds if they mislead
             float shell = ShellProperties.GetProjectileMass(gun.Caliber);
-            float launch = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, 1f + burn.Mass / shell);
+            float launch = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, 1f + burn.Mass / shell, Charge(gun, id));
             return (launch, launch + burn.DeltaV(shell + burn.Case));
+        }
+
+        /// <summary>Share of the gun's charge that launches round <paramref name="id"/>; 1 without a motor.</summary>
+        private static float Charge(CannonBlueprint gun, string id) =>
+            Math.Clamp(Loadout.Get<RocketRound>(gun, id)?.Motor?.Charge ?? 1f, 0.05f, 1f);
+
+        /// <summary>
+        /// The length over full-bore, from <paramref name="from"/> up, that the full charge fires at
+        /// <paramref name="ratio"/> of the muzzle velocity; <paramref name="from"/> if none does.
+        /// </summary>
+        private static float LengthFor(CannonBlueprint gun, float ratio, float from)
+        {
+            float lo = from, hi = from;
+            // shortcut: assumes velocity falls as length grows; gives up past 1024x, where the game's formula may flatten out
+            for (int i = 0; i < 10 && Loadout.VelocityRatio(gun, hi) > ratio; i++)
+                (lo, hi) = (hi, hi * 2f);
+            if (Loadout.VelocityRatio(gun, hi) > ratio)
+                return from;
+            for (int i = 0; i < 20; i++)
+            {
+                float mid = (lo + hi) / 2f;
+                if (Loadout.VelocityRatio(gun, mid) > ratio)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            return hi;
         }
 
         /// <summary>
@@ -124,7 +147,11 @@ namespace RocketPropelled
                 return false;
             // Launch length is mass as a full-bore projectile's length
             shape.LaunchLength += game.Length * burn.Mass / game.Mass;
-            float launch = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, shape.LaunchLength / game.Length);
+            float ratio = Loadout.VelocityRatio(gun, shape.LaunchLength / game.Length, Charge(gun, id));
+            float launch = gun.MuzzleVelocity * ratio;
+            // The game fires the full charge: a reduced charge's speed is a longer (heavier) projectile's at full charge
+            if (Charge(gun, id) < 1f)
+                shape.LaunchLength = game.Length * LengthFor(gun, ratio, shape.LaunchLength / game.Length);
             LaunchSpeeds[(gun.Pointer, id)] = launch;
             // shortcut: AI leads by burnout speed, no drag, so it overleads short shots; a drop table per round would fix it
             shape.AimVelocity = launch + burn.DeltaV(shape.Mass + burn.Case);
@@ -326,8 +353,9 @@ namespace RocketPropelled
             const string note = "With a full-bore shell as warhead, without drag or gravity.";
             StringProperty[] readouts =
             {
-                EditorGui.Readout("Propellant", () => $"{B().Propellant:0.00} kg", "Fills the motor section."),
-                EditorGui.Readout("Thrust", () => $"{B().Thrust / 1000f:0.0} kN", "The propellant's impulse over the burn time."),
+                EditorGui.Readout("Propellant", () => $"{B().Propellant + B().SustainPropellant:0.00} kg", "Fills the motor and sustainer sections."),
+                EditorGui.Readout("Thrust", () => B().SustainPropellant > 0f ? $"{B().Thrust / 1000f:0.0} kN, then {B().SustainThrust / 1000f:0.00} kN" : $"{B().Thrust / 1000f:0.0} kN",
+                    "The propellant's impulse over the burn time; then the sustainer's, with one."),
                 EditorGui.Readout("Launch velocity", () => $"{Launch():0} m/s", note),
                 EditorGui.Readout("Burnout velocity", () => $"{Plugin.Speeds(gun, id)?.Burnout ?? 0f:0} m/s", note),
                 EditorGui.Readout("Burnout range", () => $"{B().BurnDistance(Launch(), Shell() + B().Case):0} m", note),
@@ -354,6 +382,12 @@ namespace RocketPropelled
                     "Seconds the motor burns. Same total push: short burns hard and reaches top speed close in, long burns gently and keeps pushing far out.", 0.1f, 4f, 30f, 0.1f),
                 Field("Ignition delay", m => m.Delay, (m, v) => m.Delay = v,
                     "Seconds from launch until the motor lights. The round coasts at launch speed until then, so it reaches top speed further out.", 0f, 1f, 10f, 0.05f),
+                Field("Sustainer length", m => m.SustainLength, (m, v) => m.SustainLength = v,
+                    "Sustainer section length in calibers; 0 for none. It lights as the motor burns out and pushes gently for its burn time, holding speed over a long flight.", 0f, 6f, 20f, 0.25f),
+                Field("Sustainer burn time", m => m.SustainTime, (m, v) => m.SustainTime = v,
+                    "Seconds the sustainer burns. Longer is gentler: it holds the round's speed further out rather than speeding it up.", 0.5f, 30f, 60f, 0.5f),
+                Field("Launch charge", m => m.Charge, (m, v) => m.Charge = v,
+                    "Share of the gun's charge that launches the round. Gun-launched missiles use a reduced charge: they leave slower and let the motor do the work.", 0.05f, 1f, 1f, 0.05f),
             };
             return (fields, readouts);
         }

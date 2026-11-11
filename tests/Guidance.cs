@@ -63,19 +63,43 @@ namespace Tests
         }
 
         [Fact]
-        public void FasterAndLaterIgnitionSettleFurtherOut()
+        public void FasterAndSlowerResponseSettleFurtherOut()
         {
             float slow = Saclos.HitRanges(150f, 10f * Saclos.Gravity, 3000f, 150f, 4f).Min;
             Assert.True(Saclos.HitRanges(500f, 10f * Saclos.Gravity, 3000f, 500f, 4f).Min > slow);
-            Assert.True(Saclos.HitRanges(150f, 10f * Saclos.Gravity, 3000f, 150f, 4f, 3f).Min > slow);
+            Assert.True(Saclos.HitRanges(150f, 10f * Saclos.Gravity, 3000f, 150f, 4f, 0.5f).Min > slow);
         }
 
         [Fact]
-        public void BurnsOutAndStopsGuiding()
+        public void CoastsGuidedAfterBurnout()
         {
-            float full = Saclos.HitRanges(150f, 10f * Saclos.Gravity, 3000f, 150f, 4f).Max;
-            float brief = Saclos.HitRanges(150f, 10f * Saclos.Gravity, 3000f, 150f, 4f, 0f, 0.5f).Max;
-            Assert.True(brief < full / 2f, $"{brief} m guided 0.5 s vs {full} m");
+            // A TOW-like flight: a 1.5 s boost to 300 m/s, then 20 s coasting, guided all the way out
+            float Boost(float t) => t < 1.5f ? 150f : 0f;
+            Assert.Equal(3000f, Saclos.HitRanges(75f, 10f * Saclos.Gravity, 3000f, 300f, 4f, thrust: Boost).Max);
+        }
+
+        [Theory]
+        [InlineData(10f, 0f)]
+        [InlineData(0f, 10f)]
+        public void KeepsUpWithAMovingLine(float crossing, float shooter)
+        {
+            // The gunner tracks a target crossing at 2 km, or drives sideways under a still one; without following the line it misses by ~2v/ω, 13 m at 10 m/s
+            const float range = 2000f;
+            var motion = new LineMotion();
+            Vector3 p = Vector3.Zero, v = new(0f, 0f, 250f), target = new(0f, 0f, range);
+            float t = 0f;
+            while (p.Z < range)
+            {
+                t += Dt;
+                Vector3 origin = new(shooter * t, 0f, 0f), at = target + new Vector3(crossing * t, 0f, 0f);
+                Vector3 direction = Vector3.Normalize(at - origin);
+                motion.Update(origin, direction, Dt);
+                v += Down * Dt;
+                p += v * Dt;
+                v = Saclos.Steer(p, v, origin, direction, 10f * Saclos.Gravity, Dt, 0f, 0f, Saclos.DefaultOmega, motion.OriginVelocity, motion.TurnRate);
+            }
+            float miss = MathF.Abs(p.X - (target.X + crossing * t));
+            Assert.True(miss < 1f, $"missed by {miss} m");
         }
 
         [Fact]

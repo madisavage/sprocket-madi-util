@@ -9,10 +9,10 @@ namespace GuidedMunitions
     /// </summary>
     internal static class Saclos
     {
-        /// <summary>Response of the guidance loop, rad/s: it settles onto the line in about 1/ω s, critically damped. Set from the <c>Response</c> config.</summary>
-        internal static float Omega = 1.5f;
-
         internal const float Gravity = 9.81f;
+
+        /// <summary>Default <see cref="Steer"/> response, rad/s.</summary>
+        internal const float DefaultOmega = 1.5f;
 
         /// <summary>Half-angle of the sight's tracker, degrees: a round further off the sight line than this is lost.</summary>
         internal const float TrackerAngle = 15f;
@@ -38,8 +38,12 @@ namespace GuidedMunitions
         /// motor and drag set that. Fin lift goes with speed squared, so below <paramref name="ratedSpeed"/> m/s
         /// (where <paramref name="maxAccel"/> is rated; 0 for any speed) it turns less, and a slow round can't hold itself up.
         /// Pulling costs speed: each m/s² of turn (holding up its weight too) loses 1/<paramref name="liftToDrag"/> m/s² to drag; 0 for none.
+        /// It settles onto the line in about 1/<paramref name="omega"/> s, critically damped. A moving line
+        /// (its origin moving at <paramref name="originVelocity"/> m/s, its direction turning at <paramref name="turnRate"/> per s,
+        /// as <see cref="LineMotion"/> measures) is followed without lagging behind it.
         /// </summary>
-        internal static Vector3 Steer(Vector3 position, Vector3 velocity, Vector3 origin, Vector3 direction, float maxAccel, float dt, float ratedSpeed = 0f, float liftToDrag = 0f)
+        internal static Vector3 Steer(Vector3 position, Vector3 velocity, Vector3 origin, Vector3 direction, float maxAccel, float dt, float ratedSpeed = 0f,
+            float liftToDrag = 0f, float omega = DefaultOmega, Vector3 originVelocity = default, Vector3 turnRate = default)
         {
             float speed = velocity.Length();
             if (ratedSpeed > 0f && speed < ratedSpeed)
@@ -47,10 +51,14 @@ namespace GuidedMunitions
             if (speed < 1f || maxAccel <= 0f)
                 return velocity;
             Vector3 offset = position - origin;
-            // Off the line, and drifting away from it (the line taken as still)
-            Vector3 error = offset - Vector3.Dot(offset, direction) * direction;
-            Vector3 drift = velocity - Vector3.Dot(velocity, direction) * direction;
-            Vector3 command = -(Omega * Omega * error + 2f * Omega * drift) + new Vector3(0f, Gravity, 0f);
+            float along = Vector3.Dot(offset, direction);
+            // Off the line, and drifting away from the point of it beside the round, which moves as the line does
+            Vector3 error = offset - along * direction;
+            Vector3 relative = velocity - (originVelocity + along * turnRate);
+            Vector3 drift = relative - Vector3.Dot(relative, direction) * direction;
+            // Flying out along a turning line takes a sideways push to keep up with it (Coriolis)
+            Vector3 follow = 2f * Vector3.Dot(velocity - originVelocity, direction) * turnRate;
+            Vector3 command = -(omega * omega * error + 2f * omega * drift) + follow + new Vector3(0f, Gravity, 0f);
             Vector3 forward = velocity / speed;
             command -= Vector3.Dot(command, forward) * forward;
             float size = command.Length();
@@ -66,12 +74,12 @@ namespace GuidedMunitions
         /// The ranges in m at which a round hits: fired from <paramref name="offset"/> m below the sight
         /// at a target on the sight line, as the gun aims at the crosshair, it passes within <paramref name="tolerance"/> m
         /// of the target. Each target range up to <paramref name="maxRange"/> is flown in 25 m steps, under gravity, with
-        /// <paramref name="thrust"/> (m/s² along its path at each second after launch; null for none) and steering from
-        /// <paramref name="ignition"/> s until <paramref name="burnout"/> s, as in <see cref="Steer"/>. Min is where the run of hits ending at the longest
+        /// <paramref name="thrust"/> (m/s² along its path at each second after launch; null for none), steering all the way
+        /// as in <see cref="Steer"/>. Min is where the run of hits ending at the longest
         /// hit starts; both are infinity if none hit.
         /// </summary>
         internal static (float Min, float Max) HitRanges(float launch, float maxAccel, float maxRange, float ratedSpeed = 0f, float liftToDrag = 0f,
-            float ignition = 0f, float burnout = float.PositiveInfinity, Func<float, float>? thrust = null, float offset = 2f, float tolerance = 0.5f)
+            float omega = DefaultOmega, Func<float, float>? thrust = null, float offset = 2f, float tolerance = 0.5f)
         {
             const float step = 25f;
             int count = (int)(maxRange / step);
@@ -105,13 +113,45 @@ namespace GuidedMunitions
                     float speed = v.Length();
                     if (thrust != null && speed >= 1f)
                         v *= 1f + thrust(t) * dt / speed;
-                    if (t >= ignition && t < burnout)
-                        v = Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag);
+                    v = Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag, omega);
                     if (v.Z <= 0f)
                         break;
                 }
                 return float.PositiveInfinity;
             }
+        }
+    }
+
+    /// <summary>
+    /// How a sight line moves, from where it is each step: its origin's
+    /// velocity and its direction's turn rate, smoothed, as <see cref="Saclos.Steer"/> takes them.
+    /// </summary>
+    internal sealed class LineMotion
+    {
+        // Smoothing time, s: the sight updates each frame, not each physics step, so raw rates jump
+        private const float Smoothing = 0.1f;
+
+        // An origin moving faster than this, m/s, jumped (a camera change), and isn't followed
+        private const float MaxOriginSpeed = 50f;
+
+        private Vector3? origin, direction;
+        internal Vector3 OriginVelocity { get; private set; }
+        internal Vector3 TurnRate { get; private set; }
+
+        /// <summary>Takes the line's origin and unit direction <paramref name="dt"/> s after the last.</summary>
+        internal void Update(Vector3 newOrigin, Vector3 newDirection, float dt)
+        {
+            if (origin is { } o && direction is { } d && dt > 0f)
+            {
+                Vector3 velocity = (newOrigin - o) / dt;
+                if (velocity.Length() > MaxOriginSpeed)
+                    velocity = Vector3.Zero;
+                float k = MathF.Min(dt / Smoothing, 1f);
+                OriginVelocity += (velocity - OriginVelocity) * k;
+                TurnRate += ((newDirection - d) / dt - TurnRate) * k;
+            }
+            origin = newOrigin;
+            direction = newDirection;
         }
     }
 }

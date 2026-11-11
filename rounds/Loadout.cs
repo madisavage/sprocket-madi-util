@@ -432,12 +432,13 @@ namespace Rounds
         /// Muzzle velocity of a projectile <paramref name="length"/> times the
         /// full-bore length over a full-bore projectile's, from the game's
         /// interior ballistics. One formula for editor readouts, AI lead and shots.
+        /// Launched by <paramref name="charge"/> of the gun's charge (its propellant length).
         /// </summary>
-        public static float VelocityRatio(CannonBlueprint gun, float length)
+        public static float VelocityRatio(CannonBlueprint gun, float length, float charge = 1f)
         {
             float caliber = gun.Caliber;
-            float Velocity(float l) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * l, gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
-            return Velocity(length) / Velocity(1f);
+            float Velocity(float l, float c) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * l, c * gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
+            return Velocity(length, charge) / Velocity(1f, 1f);
         }
 
         // Shell slot, the cannon using it, for racks, which only know their shell slot

@@ -63,5 +63,30 @@ namespace Tests
             // Coasts the delay at launch speed, then burns as without it
             Assert.Equal(new Burn(2f, 0f, 5000f, 2f).BurnDistance(300f, 6f) + 150f, b.BurnDistance(300f, 6f), 1);
         }
+
+        [Fact]
+        public void SustainerBurnsAfterTheBoost()
+        {
+            Burn b = new Motor { Length = 1f, BurnTime = 1f, SustainLength = 2f, SustainTime = 10f }.Build(100f, 1000f, 0.5f, 2000f);
+            Assert.Equal(11f, b.BurnOut, 4);
+            Assert.Equal((b.Propellant + b.SustainPropellant) / 2f, b.Case, 4);
+            // The boost carries the sustainer's propellant; the sustainer pushes gently
+            Assert.Equal(b.Thrust / (6f + b.SustainPropellant + b.Propellant), b.Acceleration(0f, 6f), 3);
+            Assert.True(b.Acceleration(5f, 6f) < b.Acceleration(0.5f, 6f));
+            Assert.Equal(0f, b.Acceleration(11f, 6f));
+            // Two stages of the rocket equation: integrate the burn and compare
+            float v = 0f, dt = 0.0005f;
+            for (float t = 0f; t < 11f; t += dt)
+                v += b.Acceleration(t + dt / 2f, 6f) * dt;
+            Assert.Equal(v, b.DeltaV(6f), 0);
+        }
+
+        [Fact]
+        public void NoSustainerNoSustainTime()
+        {
+            Burn b = new Motor { Length = 2f, BurnTime = 2f }.Build(100f, 1000f, 0.5f, 2000f);
+            Assert.Equal(2f, b.BurnOut);
+            Assert.Equal(0f, b.SustainPropellant);
+        }
     }
 }

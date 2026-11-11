@@ -15,7 +15,7 @@ namespace GuidedMunitions
 {
     /// <summary>
     /// Shows the player's guided rounds: a HUD panel line per round (guided and
-    /// how far along the wire, waiting for its motor, or why guidance ended) and
+    /// how far along the wire, or why guidance ended) and
     /// a box around each on screen, green while guided, red once lost.
     /// </summary>
     internal static class Indicator
@@ -24,8 +24,7 @@ namespace GuidedMunitions
         internal sealed class Shot
         {
             internal Vector3 Position;
-            internal float Distance, Seen;
-            internal bool Lit;
+            internal float Distance, Seen, Wire;
             internal string? Lost;
             internal float LostAt;
         }
@@ -36,9 +35,9 @@ namespace GuidedMunitions
         private static readonly List<Shot> shots = new();
 
         /// <summary>Starts showing a new guided round of the player's.</summary>
-        internal static Shot Track()
+        internal static Shot Track(float wire)
         {
-            var shot = new Shot { Seen = Time.time };
+            var shot = new Shot { Seen = Time.time, Wire = wire };
             shots.Add(shot);
             return shot;
         }
@@ -58,8 +57,7 @@ namespace GuidedMunitions
             {
                 Shot shot = shots[i];
                 var (text, color) = shot.Lost != null ? ($"Guidance lost: {shot.Lost}", HudDraw.Blocked)
-                    : !shot.Lit ? ("Guided round: motor not lit", HudDraw.Next)
-                    : ($"GUIDED  {shot.Distance / 1000f:0.0} km / {Plugin.WireLength.Value / 1000f:0.0} km wire", HudDraw.Ok);
+                    : ($"GUIDED  {shot.Distance / 1000f:0.0} km / {shot.Wire / 1000f:0.0} km wire", HudDraw.Ok);
                 HudDraw.Label(new Rect(left + pad, bottom - height + pad + i * line, width - 2 * pad, line), text, 16, color, TextAnchor.MiddleLeft);
                 if (camera != null)
                     Box(camera, shot.Position, color);
