@@ -2,7 +2,6 @@ extern alias UnityCoreModule;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text.RegularExpressions;
 using BepInEx;
 using BepInEx.Configuration;
@@ -117,25 +116,14 @@ namespace Stabilizer
         internal static float? Limit(Blueprint? blueprint) => Limit(blueprint?.Name);
 
         /// <summary>The speed limit in <paramref name="name"/>'s <c>[stab]</c> tag, as <see cref="Limit(Blueprint?)"/>.</summary>
-        internal static float? Limit(string? name)
-        {
-            Match match = tag.Match(name ?? "");
-            if (!match.Success)
-                return null;
-            return match.Groups[1].Success ? float.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : 0f;
-        }
+        internal static float? Limit(string? name) => NameTags.Numbers(tag, "stab", name, new[] { 0f })?[0];
 
         /// <summary>Sets <paramref name="blueprint"/>'s tag for <paramref name="limit"/>, or removes it for null.</summary>
         private static void SetLimit(Blueprint blueprint, float? limit) => blueprint.Name = WithLimit(blueprint.Name ?? "", limit);
 
         /// <summary><paramref name="name"/> with its tag replaced by one for <paramref name="limit"/>, or removed for null.</summary>
-        internal static string WithLimit(string name, float? limit)
-        {
-            name = tag.Replace(name, "").Trim();
-            if (limit is { } value)
-                name = (name + (value > 0f ? $" [stab {value.ToString("0.#", CultureInfo.InvariantCulture)}]" : " [stab]")).Trim();
-            return name;
-        }
+        internal static string WithLimit(string name, float? limit) =>
+            NameTags.With(name, "stab", limit is not { } value ? null : value > 0f ? $"[stab {NameTags.Format(value)}]" : "[stab]");
 
         /// <summary>
         /// Draws a "Stabilizer" checkbox for <paramref name="blueprint"/> and,
@@ -218,14 +206,10 @@ namespace Stabilizer
         static Axes()
         {
             axesField = (IntPtr)AccessTools.Field(typeof(RotationAxisPhysicsRegister), "NativeFieldInfoPtr_axes").GetValue(null)!;
-            IntPtr axis = Il2CppClassPointerStore<RotationAxisPhysics>.NativeClassPtr;
-            uint align = 0;
-            size = IL2CPP.il2cpp_class_value_size(axis, ref align);
-            // Field offsets count the object header, which an unboxed struct in an array doesn't have
-            int Offset(string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(axis, name)) - 2 * IntPtr.Size;
-            angle = Offset("angle");
-            min = Offset("min");
-            max = Offset("max");
+            size = Native.ValueSize<RotationAxisPhysics>();
+            angle = Native.StructOffset<RotationAxisPhysics>("angle");
+            min = Native.StructOffset<RotationAxisPhysics>("min");
+            max = Native.StructOffset<RotationAxisPhysics>("max");
         }
 
         /// <summary>The axis <paramref name="handle"/> in the register's array, or null.</summary>
@@ -235,9 +219,7 @@ namespace Stabilizer
             IL2CPP.il2cpp_field_static_get_value(axesField, &array);
             if (array == IntPtr.Zero || handle < 0)
                 return null;
-            // Il2CppArray: object header, bounds, length, then the elements
-            long length = *(long*)((byte*)array + 3 * IntPtr.Size);
-            return handle < length ? (byte*)array + 4 * IntPtr.Size + (long)handle * size : null;
+            return handle < Native.Length(array) ? (byte*)Native.Element(array, handle, size) : null;
         }
 
         /// <summary>Signed degrees from <paramref name="from"/> to <paramref name="to"/> around <paramref name="axis"/> only.</summary>

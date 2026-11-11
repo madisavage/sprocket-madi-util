@@ -13,6 +13,13 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
 
+  <!-- SkipModDeploy above only covers this project; this keeps the plugins it builds out of BepInEx/plugins too -->
+  <ItemDefinitionGroup>
+    <ProjectReference>
+      <AdditionalProperties>SkipModDeploy=true</AdditionalProperties>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
     <ProjectReference Include="../stagedAmmo/stagedAmmo.csproj" />
     <ProjectReference Include="../stabilizer/stabilizer.csproj" />

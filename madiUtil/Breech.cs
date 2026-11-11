@@ -2,9 +2,9 @@ extern alias UnityCoreModule;
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using HarmonyLib;
+using MadiLib;
 using Sprocket.Vehicles.Cannons;
 using Sprocket.WeaponFramework;
 using Quaternion = UnityCoreModule::UnityEngine.Quaternion;
@@ -30,45 +30,31 @@ namespace MadiUtil
         /// <summary>Smallest breech scale a slider allows.</summary>
         internal const float MinScale = 0.01f;
 
-        // Cannon blueprint, its description and its settings in it, so frequent checks don't parse JSON
-        private static readonly Dictionary<IntPtr, (string Text, Settings Settings)> cache = new();
         // Cannon blueprint, the muzzle part's own recoil coefficient, and the value last written over it
         private static readonly Dictionary<IntPtr, (float Recoil, float Written)> muzzles = new();
 
         /// <summary><paramref name="gun"/>'s breech settings.</summary>
-        internal static Settings Of(CannonBlueprint gun)
-        {
-            string text = gun.Description ?? "";
-            if (cache.TryGetValue(gun.Pointer, out var cached) && cached.Text == text)
-                return cached.Settings;
-            Settings settings = Parse(text);
-            cache[gun.Pointer] = (text, settings);
-            return settings;
-        }
+        internal static Settings Of(CannonBlueprint gun) => Parse(Descriptions.Parsed(gun));
+
+        /// <summary>The settings in description <paramref name="text"/>; see <see cref="Parse(JsonObject?)"/>.</summary>
+        internal static Settings Parse(string text) => Parse(Descriptions.Parse(text));
 
         /// <summary>
         /// The settings in a description's <c>"breech"</c>: <c>{"scale": [x, y, z], "recoil": r, "backblast": bool}</c>,
         /// missing parts at the game's. Reads the <c>"recoilless"</c> of an earlier build (no recoil, its scale, backblast).
         /// </summary>
-        internal static Settings Parse(string text)
+        private static Settings Parse(JsonObject? json)
         {
-            try
-            {
-                if (text.Length == 0 || JsonNode.Parse(text) is not JsonObject json)
-                    return Default;
-                if (json["breech"] is JsonObject breech)
-                    return Read(breech["scale"], Number(breech["recoil"], Default.Recoil, 0f, 1f), Flag(breech["backblast"], Default.Backblast));
-                return json["recoilless"] switch
-                {
-                    JsonValue on when on.TryGetValue(out bool yes) && yes => new Settings(0.4f, 0.4f, 1f, 0f, true),
-                    JsonObject old => Read(old["breech"], 0f, Flag(old["backblast"], true)),
-                    _ => Default,
-                };
-            }
-            catch (JsonException)
-            {
+            if (json == null)
                 return Default;
-            }
+            if (json["breech"] is JsonObject breech)
+                return Read(breech["scale"], Number(breech["recoil"], Default.Recoil, 0f, 1f), Flag(breech["backblast"], Default.Backblast));
+            return json["recoilless"] switch
+            {
+                JsonValue on when on.TryGetValue(out bool yes) && yes => new Settings(0.4f, 0.4f, 1f, 0f, true),
+                JsonObject old => Read(old["breech"], 0f, Flag(old["backblast"], true)),
+                _ => Default,
+            };
         }
 
         private static Settings Read(JsonNode? scale, float recoil, bool backblast)
@@ -89,9 +75,9 @@ namespace MadiUtil
         /// <summary>Sets <paramref name="gun"/>'s breech settings, kept in its description, and applies them.</summary>
         internal static void Set(CannonBlueprint gun, Settings settings)
         {
-            string? text = Pressure.With(gun.Description ?? "", "breech", ToJson(settings));
+            string? text = Descriptions.With(gun.Description, "breech", ToJson(settings));
             if (text != null)
-                text = Pressure.With(text, "recoilless", null);
+                text = Descriptions.With(text, "recoilless", null);
             if (text != null)
                 gun.Description = text;
             else

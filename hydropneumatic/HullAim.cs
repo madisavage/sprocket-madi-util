@@ -43,7 +43,6 @@ namespace Hydropneumatic
         // [hullaim], [hullaim 3] for a 3 deg/s laying drive, [hullaim 3 60] for 60% of the weight on each track as its force too
         private static readonly Regex tag = new(@"\s*\[hullaim(?:\s+([0-9]*\.?[0-9]+))?(?:\s+([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
         // Any [hullaim ...], to tell a bad tag from none
-        private static readonly Regex anyTag = new(@"\[hullaim\b[^\]]*\]", RegexOptions.IgnoreCase);
         internal const float DefaultRate = 3f, DefaultForce = 60f;
 
         // Steer controller: output per degree of yaw error, per degree/s of yaw rate,
@@ -60,10 +59,10 @@ namespace Hydropneumatic
         /// The laying drive's top rate (degrees/s) and force (% of the weight on each track) in
         /// <paramref name="name"/>'s <c>[hullaim]</c> tag, defaults for missing numbers; null when untagged or the tag doesn't parse.
         /// </summary>
-        internal static (float Rate, float Force)? Settings(string? name) => Plugin.Numbers(tag, anyTag, name, DefaultRate, DefaultForce);
+        internal static (float Rate, float Force)? Settings(string? name) => Plugin.Pair(tag, "hullaim", name, DefaultRate, DefaultForce);
 
         /// <summary><paramref name="name"/> with its tag replaced by one for <paramref name="settings"/>, or removed for null.</summary>
-        internal static string WithSettings(string name, (float Rate, float Force)? settings) => Plugin.WithNumbers(tag, "hullaim", name, settings);
+        internal static string WithSettings(string name, (float Rate, float Force)? settings) => Plugin.WithNumbers("hullaim", name, settings);
 
         private const float Deg = MathF.PI / 180f;
 
@@ -154,6 +153,8 @@ namespace Hydropneumatic
         internal static void Toggle()
         {
             Enabled = !Enabled;
+            // A failure switched it off; switching it back on tries again rather than showing on while doing nothing
+            failed = false;
             Stop();
         }
 

@@ -3,7 +3,6 @@ extern alias UnityPhysicsModule;
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using BepInEx;
 using BepInEx.Configuration;
@@ -77,27 +76,7 @@ namespace FireControl
     internal static class GunSettings
     {
         internal static readonly string[] Names = { "None", "Stereoscopic", "Laser" };
-        // The last description read and its JSON: read every laying drive update, so parsed once per text
-        private static string? lastText;
-        private static JsonObject? lastJson;
-
-        private static JsonObject? Read(CannonBlueprint? gun)
-        {
-            string text = gun?.Description ?? "";
-            if (text != lastText)
-            {
-                lastText = text;
-                try
-                {
-                    lastJson = text.Length > 0 ? JsonNode.Parse(text) as JsonObject : null;
-                }
-                catch (JsonException)
-                {
-                    lastJson = null;
-                }
-            }
-            return lastJson;
-        }
+        private static JsonObject? Read(CannonBlueprint? gun) => gun == null ? null : Descriptions.Parsed(gun);
 
         internal static Rangefinder RangefinderOf(CannonBlueprint? gun) =>
             Read(gun)?["rangefinder"] is JsonValue value && value.TryGetValue(out string? name) && Enum.TryParse(name, true, out Rangefinder kind) ? kind : Rangefinder.None;
@@ -108,23 +87,10 @@ namespace FireControl
         /// <summary>Sets <paramref name="key"/> in <paramref name="gun"/>'s description (removed for null), other keys kept; false when it holds other text than JSON.</summary>
         internal static bool Set(CannonBlueprint gun, string key, JsonNode? value)
         {
-            string text = gun.Description ?? "";
-            JsonObject json;
-            try
-            {
-                json = text.Length == 0 ? new JsonObject() : JsonNode.Parse(text) as JsonObject ?? throw new JsonException();
-            }
-            catch (JsonException)
-            {
-                Plugin.Logger.LogWarning($"Cannon {gun.Name}'s description isn't JSON, so its fire control settings can't be saved.");
-                return false;
-            }
-            if (value == null)
-                json.Remove(key);
-            else
-                json[key] = value;
-            gun.Description = json.ToJsonString();
-            return true;
+            if (Descriptions.Set(gun, key, value))
+                return true;
+            Plugin.Logger.LogWarning($"Cannon {gun.Name}'s description isn't JSON, so its fire control settings can't be saved.");
+            return false;
         }
     }
 

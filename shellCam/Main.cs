@@ -8,7 +8,6 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppInterop.Runtime;
 using MadiLib;
 using Rounds;
 using Sprocket;
@@ -463,35 +462,28 @@ namespace ShellCam
     /// </summary>
     internal static class Native
     {
-        // An array's elements follow its header: class, monitor, bounds and length
-        private static readonly int header = 4 * IntPtr.Size, length = 3 * IntPtr.Size;
+        private static readonly int header = MadiLib.Native.ArrayHeader;
 
         private static bool ready;
         private static int fragments, meshes, fragmentSize, meshSize, materialSize, spawn, direction, travel, speed, parent, flags, vertices, triangles, materialMap, objectIndex;
 
         private static void Init()
         {
-            IntPtr simClass = Il2CppClassPointerStore<PenetrationSimulation>.NativeClassPtr;
-            fragments = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(simClass, "fragments"));
-            meshes = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(simClass, "meshes"));
-            uint align = 0;
-            IntPtr fragment = Il2CppClassPointerStore<Fragment>.NativeClassPtr, mesh = Il2CppClassPointerStore<MeshStructure>.NativeClassPtr;
-            fragmentSize = IL2CPP.il2cpp_class_value_size(fragment, ref align);
-            meshSize = IL2CPP.il2cpp_class_value_size(mesh, ref align);
-            IntPtr material = Il2CppClassPointerStore<TriangleMaterialInfo>.NativeClassPtr;
-            materialSize = IL2CPP.il2cpp_class_value_size(material, ref align);
-            // Field offsets count the object header, which an array element doesn't have
-            int Offset(IntPtr klass, string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(klass, name)) - 2 * IntPtr.Size;
-            spawn = Offset(fragment, "spawnPoint");
-            direction = Offset(fragment, "direction");
-            travel = Offset(fragment, "travelDistance");
-            speed = Offset(fragment, "speed");
-            parent = Offset(fragment, "parentIndex");
-            flags = Offset(fragment, "flags");
-            vertices = Offset(mesh, "vertices");
-            triangles = Offset(mesh, "triangles");
-            materialMap = Offset(mesh, "materialMap");
-            objectIndex = Offset(material, "objectIndex");
+            fragments = MadiLib.Native.FieldOffset<PenetrationSimulation>("fragments");
+            meshes = MadiLib.Native.FieldOffset<PenetrationSimulation>("meshes");
+            fragmentSize = MadiLib.Native.ValueSize<Fragment>();
+            meshSize = MadiLib.Native.ValueSize<MeshStructure>();
+            materialSize = MadiLib.Native.ValueSize<TriangleMaterialInfo>();
+            spawn = MadiLib.Native.StructOffset<Fragment>("spawnPoint");
+            direction = MadiLib.Native.StructOffset<Fragment>("direction");
+            travel = MadiLib.Native.StructOffset<Fragment>("travelDistance");
+            speed = MadiLib.Native.StructOffset<Fragment>("speed");
+            parent = MadiLib.Native.StructOffset<Fragment>("parentIndex");
+            flags = MadiLib.Native.StructOffset<Fragment>("flags");
+            vertices = MadiLib.Native.StructOffset<MeshStructure>("vertices");
+            triangles = MadiLib.Native.StructOffset<MeshStructure>("triangles");
+            materialMap = MadiLib.Native.StructOffset<MeshStructure>("materialMap");
+            objectIndex = MadiLib.Native.StructOffset<TriangleMaterialInfo>("objectIndex");
             ready = true;
         }
 
@@ -502,7 +494,7 @@ namespace ShellCam
         {
             if (!ready)
                 Init();
-            IntPtr at = Marshal.ReadIntPtr(simulation, fragments) + header + index * fragmentSize;
+            IntPtr at = MadiLib.Native.Element(Marshal.ReadIntPtr(simulation, fragments), index, fragmentSize);
             return (Vector(at, spawn), Vector(at, direction), Float(at, travel), Float(at, speed), Marshal.ReadInt16(at, parent), (FragmentFlag)(ushort)Marshal.ReadInt16(at, flags));
         }
 
@@ -515,19 +507,19 @@ namespace ShellCam
             IntPtr array = Marshal.ReadIntPtr(sim.Pointer, meshes);
             if (array == IntPtr.Zero || frames == null)
                 return (Array.Empty<Vector3>(), Array.Empty<int>(), Array.Empty<int>(), 0);
-            int count = Math.Min((int)Marshal.ReadIntPtr(array, length), frames.Length);
+            int count = Math.Min(MadiLib.Native.Length(array), frames.Length);
             var points = new List<Vector3>();
             var tris = new List<int>();
             var objects = new List<int>();
             int bad = 0;
             for (int m = 0; m < count; m++)
             {
-                IntPtr mesh = array + header + m * meshSize;
+                IntPtr mesh = MadiLib.Native.Element(array, m, meshSize);
                 IntPtr verts = Marshal.ReadIntPtr(mesh, vertices), indices = Marshal.ReadIntPtr(mesh, triangles), map = Marshal.ReadIntPtr(mesh, materialMap);
                 if (verts == IntPtr.Zero || indices == IntPtr.Zero)
                     continue;
-                int vertexCount = (int)Marshal.ReadIntPtr(verts, length), indexCount = (int)Marshal.ReadIntPtr(indices, length);
-                int mapCount = map == IntPtr.Zero ? 0 : (int)Marshal.ReadIntPtr(map, length);
+                int vertexCount = MadiLib.Native.Length(verts), indexCount = MadiLib.Native.Length(indices);
+                int mapCount = map == IntPtr.Zero ? 0 : MadiLib.Native.Length(map);
                 var xyz = new float[vertexCount * 3];
                 var index = new int[indexCount];
                 Marshal.Copy(verts + header, xyz, 0, xyz.Length);

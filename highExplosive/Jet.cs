@@ -55,11 +55,8 @@ namespace HighExplosive
             getFragment = Marshal.GetDelegateForFunctionPointer<GetFragmentFn>(Marshal.ReadIntPtr(getFragmentInfo));
             getFinal = Marshal.GetDelegateForFunctionPointer<GetFinalFn>(Marshal.ReadIntPtr(getFinalInfo));
 
-            IntPtr klass = Il2CppClassPointerStore<PenetrationFragment>.NativeClassPtr;
-            uint align = 0;
-            buffer = Marshal.AllocHGlobal(IL2CPP.il2cpp_class_value_size(klass, ref align));
-            // Field offsets count the object header, which an unboxed struct doesn't have
-            int Offset(string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(klass, name)) - 2 * IntPtr.Size;
+            buffer = Marshal.AllocHGlobal(MadiLib.Native.ValueSize<PenetrationFragment>());
+            static int Offset(string name) => MadiLib.Native.StructOffset<PenetrationFragment>(name);
             travel = Offset("TravelDistance");
             speed = Offset("Speed");
             diameter = Offset("Diameter");
@@ -112,12 +109,9 @@ namespace HighExplosive
 
             internal Layout()
             {
-                Fragments = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(Il2CppClassPointerStore<PenetrationSimulation>.NativeClassPtr, "fragments"));
-                IntPtr klass = Il2CppClassPointerStore<Fragment>.NativeClassPtr;
-                uint align = 0;
-                Size = IL2CPP.il2cpp_class_value_size(klass, ref align);
-                // Field offsets count the object header, which an array element doesn't have
-                int Offset(string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(klass, name)) - 2 * IntPtr.Size;
+                Fragments = MadiLib.Native.FieldOffset<PenetrationSimulation>("fragments");
+                Size = MadiLib.Native.ValueSize<Fragment>();
+                static int Offset(string name) => MadiLib.Native.StructOffset<Fragment>(name);
                 Speed = Offset("speed");
                 Mass = Offset("mass");
                 Travel = Offset("travelDistance");
@@ -130,9 +124,8 @@ namespace HighExplosive
         private static Layout? layout;
         private static Layout L => layout ??= new Layout();
 
-        // An array's elements follow its header: class, monitor, bounds and length
         private static IntPtr At(IntPtr simulation, int index, int offset) =>
-            Marshal.ReadIntPtr(simulation, L.Fragments) + 4 * IntPtr.Size + index * L.Size + offset;
+            MadiLib.Native.Element(Marshal.ReadIntPtr(simulation, L.Fragments), index, L.Size) + offset;
 
         private static void Write(IntPtr simulation, int index, int offset, float value) =>
             Marshal.WriteInt32(At(simulation, index, offset), BitConverter.SingleToInt32Bits(value));

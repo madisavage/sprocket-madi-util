@@ -288,7 +288,16 @@ namespace Rounds
         {
             if (rounds[id] is not JsonObject round)
                 return;
-            T value = round.Deserialize<T>(json) ?? new T();
+            T value;
+            try
+            {
+                value = round.Deserialize<T>(json) ?? new T();
+            }
+            catch (JsonException)
+            {
+                // A bad field, as Get falls back on: start from the defaults, which overwrite it below
+                value = new T();
+            }
             change(value);
             JsonObject fields = JsonSerializer.SerializeToNode(value, json)!.AsObject();
             foreach (string key in fields.Select(f => f.Key).ToList())
@@ -541,45 +550,27 @@ namespace Rounds
             return child;
         }
 
-        // Blueprint, its description and that parsed; one entry per blueprint read
-        private static readonly Dictionary<IntPtr, (string Text, JsonObject Json)> parsed = new();
+        // Stands in for a description that isn't JSON; shared, never changed
+        private static readonly JsonObject none = new();
 
         /// <summary>
-        /// <paramref name="blueprint"/>'s description as JSON, parsed again
-        /// only when it changes: racks and guns are read many times a frame.
-        /// Shared, so never change it; use <see cref="Read(Blueprint)"/> to edit.
+        /// <paramref name="blueprint"/>'s description as JSON (empty if it holds
+        /// other text), parsed again only when it changes: racks and guns are read
+        /// many times a frame. Shared, so never change it; use <see cref="Read(Blueprint)"/> to edit.
         /// </summary>
-        internal static JsonObject Parsed(Blueprint blueprint)
-        {
-            string description = blueprint.Description ?? "";
-            if (parsed.TryGetValue(blueprint.Pointer, out var cached) && cached.Text == description)
-                return cached.Json;
-            JsonObject json = Read(blueprint, description) ?? new JsonObject();
-            parsed[blueprint.Pointer] = (description, json);
-            return json;
-        }
+        internal static JsonObject Parsed(Blueprint blueprint) => MadiLib.Descriptions.Parsed(blueprint) ?? Unreadable(blueprint) ?? none;
 
         /// <summary>
         /// <paramref name="blueprint"/>'s description as JSON, a fresh copy to edit;
         /// null if it holds other text, which an edit must leave as it is.
         /// </summary>
-        internal static JsonObject? Read(Blueprint blueprint) => Read(blueprint, blueprint.Description);
+        internal static JsonObject? Read(Blueprint blueprint) => MadiLib.Descriptions.Read(blueprint) ?? Unreadable(blueprint);
 
         // Blueprints whose description isn't JSON, logged once each
         private static readonly HashSet<IntPtr> unreadable = new();
 
-        private static JsonObject? Read(Blueprint blueprint, string? description)
+        private static JsonObject? Unreadable(Blueprint blueprint)
         {
-            if (string.IsNullOrEmpty(description))
-                return new JsonObject();
-            try
-            {
-                if (JsonNode.Parse(description) is JsonObject json)
-                    return json;
-            }
-            catch (JsonException)
-            {
-            }
             if (unreadable.Add(blueprint.Pointer))
                 Plugin.Logger.LogError($"Couldn't read the rounds in {blueprint.Name}: its description isn't rounds' JSON, so rounds leave it as it is");
             return null;

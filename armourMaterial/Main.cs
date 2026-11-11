@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using BepInEx;
 using BepInEx.Configuration;
@@ -50,7 +50,7 @@ namespace ArmourMaterial
         {
             Logger = Log;
             SortBy = Config.Bind("Dropdown", "Sort by", "Protection", "Material dropdown order, as picked in its Sort by dropdown.");
-            Materials = LoadMaterials(Path.Combine(Paths.GameRootPath, "Sprocket_Data", "StreamingAssets", "Technology"));
+            Materials = LoadMaterials(TechFiles.Folder);
             Logger.LogInfo($"Found {Materials.Count} armour materials.");
             new Harmony("madi.armourmaterial").PatchAll();
         }
@@ -63,26 +63,23 @@ namespace ArmourMaterial
         /// </summary>
         internal static List<Material> LoadMaterials(string directory)
         {
-            var options = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
             var materials = new List<Material>();
-            foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
+            foreach (var (path, root) in TechFiles.Read(directory))
             {
                 try
                 {
-                    using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), options);
-                    JsonElement root = doc.RootElement;
-                    if (!root.TryGetProperty("properties", out JsonElement properties) || !properties.TryGetProperty("rhaFactor", out _))
+                    if (root["properties"] is not JsonObject properties || !properties.ContainsKey("rhaFactor"))
                         continue;
                     string name = Path.GetFileNameWithoutExtension(path);
                     // "RolledHomogeneousArmour" -> "Rolled Homogeneous Armour"; names with spaces are already readable.
                     if (!name.Contains(' '))
                         name = Regex.Replace(name, "(?<=[a-z])(?=[A-Z])", " ");
-                    float Get(string key, float fallback) => properties.TryGetProperty(key, out JsonElement v) ? v.GetSingle() : fallback;
-                    materials.Add(new Material(root.GetProperty("type").GetString()!, name,
-                        root.TryGetProperty("date", out JsonElement date) ? date.GetString() ?? "" : "",
+                    float Get(string key, float fallback) => properties[key] is { } v ? v.GetValue<float>() : fallback;
+                    materials.Add(new Material(TechFiles.Text(root["type"]) ?? throw new KeyNotFoundException("type"), name,
+                        TechFiles.Text(root["date"]) ?? "",
                         Get("rhaFactor", 1f), Get("hardness", float.NaN), Get("spallFactor", float.NaN), Get("density", 7850f), Get("costMultiplier", 1f)));
                 }
-                catch (Exception e) when (e is JsonException or IOException or KeyNotFoundException or InvalidOperationException or FormatException)
+                catch (Exception e) when (e is KeyNotFoundException or InvalidOperationException or FormatException)
                 {
                     Logger.LogWarning($"Skipping {Path.GetFileName(path)}: {e.Message}");
                 }

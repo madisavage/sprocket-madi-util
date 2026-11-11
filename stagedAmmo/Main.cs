@@ -2,7 +2,6 @@ extern alias UnityCoreModule;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -89,39 +88,23 @@ namespace StagedAmmo
         internal static bool IsNear(VehicleComponentPath? path) => path != null && path.Distance <= ReadyDistance.Value;
 
         /// <summary>The speed in <paramref name="rackName"/>'s <c>[auto]</c> tag, or null when it isn't an autoloader rack.</summary>
-        internal static float? RackSpeed(string? rackName)
-        {
-            Match match = rackName == null ? Match.Empty : tag.Match(rackName);
-            if (!match.Success)
-                return null;
-            return match.Groups[1].Success && float.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float speed) && speed > 0f
-                ? speed
-                : 1f;
-        }
+        internal static float? RackSpeed(string? rackName) => NameTags.Numbers(tag, "auto", rackName, new[] { 1f }) is { } n ? (n[0] > 0f ? n[0] : 1f) : null;
 
         internal static bool IsAuto(IAmmoSourceComponent? source) => RackSpeed(source?.AmmoSource?.RackIdentifier) != null;
 
         /// <summary>Whether <paramref name="rackName"/> is tagged <c>[ready]</c>, flagging it a ready rack by hand.</summary>
-        internal static bool IsFlagged(string? rackName) => rackName != null && ReadyTag.IsMatch(rackName);
+        internal static bool IsFlagged(string? rackName) => NameTags.Has(ReadyTag, "ready", rackName);
+
+        /// <summary>Whether <paramref name="rackName"/> is tagged <c>[pause]</c>: no re-racking while its autoloader loads.</summary>
+        internal static bool IsPaused(string? rackName) => NameTags.Has(PauseTag, "pause", rackName);
 
         /// <summary>Shells the loader re-racks into <paramref name="rackName"/> per carry: its <c>[clip N]</c> tag, else 1.</summary>
-        internal static int ClipSize(string? rackName)
-        {
-            Match match = rackName == null ? Match.Empty : ClipTag.Match(rackName);
-            return match.Success && int.TryParse(match.Groups[1].Value, out int clip) && clip > 0 ? clip : 1;
-        }
+        internal static int ClipSize(string? rackName) => NameTags.Numbers(ClipTag, "clip", rackName, new[] { 1f }) is { } n && n[0] >= 1f ? (int)n[0] : 1;
 
         /// <summary><paramref name="rackName"/> with its tag replaced by one for <paramref name="speed"/>, or removed for null.</summary>
         internal static string WithTag(string rackName, float? speed) =>
-            WithTag(rackName, tag, speed == null ? null
-                : Math.Abs(speed.Value - 1f) < 0.001f ? "[auto]" : $"[auto x{speed.Value.ToString("0.##", CultureInfo.InvariantCulture)}]");
-
-        /// <summary><paramref name="rackName"/> with any match of <paramref name="pattern"/> replaced by <paramref name="newTag"/>, or removed for null.</summary>
-        internal static string WithTag(string rackName, Regex pattern, string? newTag)
-        {
-            string untagged = pattern.Replace(rackName, "").Trim();
-            return newTag == null ? untagged : $"{untagged} {newTag}".Trim();
-        }
+            NameTags.With(rackName, "auto", speed == null ? null
+                : Math.Abs(speed.Value - 1f) < 0.001f ? "[auto]" : $"[auto x{NameTags.Format(speed.Value)}]");
     }
 
     /// <summary>One gun's rack finder: its full rack lists and restock state.</summary>
@@ -207,7 +190,8 @@ namespace StagedAmmo
             {
                 try
                 {
-                    if (Orphans[i].Weapon.GameObject == null)
+                    // Unity's null check first: reading GameObject off a destroyed gun throws
+                    if (Orphans[i].Weapon == null || Orphans[i].Weapon.GameObject == null)
                         Orphans.RemoveAt(i);
                     else
                         Update(Orphans[i].Task, null, now);
@@ -439,7 +423,7 @@ namespace StagedAmmo
                 bool fits = staging.Size.Value == 0 || staging.Sources[i]?.ShellSizeID.Equals(staging.Size) == true;
                 auto[i] = fits && Plugin.IsAuto(staging.Sources[i]);
                 staging.Auto |= auto[i];
-                staging.Pause |= auto[i] && Plugin.PauseTag.IsMatch(staging.Sources[i]?.AmmoSource?.RackIdentifier ?? "");
+                staging.Pause |= auto[i] && Plugin.IsPaused(staging.Sources[i]?.AmmoSource?.RackIdentifier);
                 flagged[i] = fits && Plugin.IsFlagged(staging.Sources[i]?.AmmoSource?.RackIdentifier);
                 anyFlagged |= flagged[i];
             }
@@ -462,13 +446,21 @@ namespace StagedAmmo
             // stowage racks holding it if allowed, else none
             ulong holdingNext = HoldingNext(staging);
             staging.ShownKey = ShownKey(staging, holdingNext);
-            bool fromStowage = holdingNext == 0 && !staging.Auto && Plugin.LoadFromStowage.Value;
+            // Checked rack by rack, not by holdingNext's bits, which stop at 64 racks
+            var holds = new bool[count];
+            bool readyHolds = false;
+            for (int i = 0; i < count; i++)
+            {
+                holds[i] = Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack);
+                readyHolds |= staging.Ready[i] && holds[i];
+            }
+            bool fromStowage = !readyHolds && !staging.Auto && Plugin.LoadFromStowage.Value;
             for (int i = 0; i < count; i++)
             {
                 AmmoRackBehaviour? rack = Rack(staging.Sources[i]);
                 bool show = !RoundsLink.HasRounds(rack) ? staging.Ready[i]
-                    : fromStowage ? RoundsLink.HoldsNext(rack!)
-                    : staging.Ready[i] && i < 64 && (holdingNext & 1UL << i) != 0;
+                    : fromStowage ? holds[i]
+                    : staging.Ready[i] && holds[i];
                 if (!show)
                     continue;
                 readySources.Add(staging.Sources[i]);
@@ -759,7 +751,7 @@ namespace StagedAmmo
                 Plugin.IsFlagged(name.Value),
                 (Action<bool>)(ready =>
                 {
-                    name.Value = Plugin.WithTag(name.Value ?? "", Plugin.ReadyTag, ready ? "[ready]" : null);
+                    name.Value = NameTags.With(name.Value ?? "", "ready", ready ? "[ready]" : null);
                     __instance.RequestRedraw();
                 }),
                 "The gun loads from this rack. Once any of a gun's racks is ticked, only ticked racks are ready, however far; autoloader racks still come first. Adds or removes [ready] in the rack's name.");
@@ -769,7 +761,7 @@ namespace StagedAmmo
                 (Action<float>)(value =>
                 {
                     int clip = Math.Max(1, (int)Math.Round(value));
-                    name.Value = Plugin.WithTag(name.Value ?? "", Plugin.ClipTag, clip == 1 ? null : $"[clip {clip}]");
+                    name.Value = NameTags.With(name.Value ?? "", "clip", clip == 1 ? null : $"[clip {clip}]");
                 }),
                 "Shells the loader re-racks into this rack per carry, if it's a ready rack. Saved in the rack's name, as [clip 5] for 5.")
             {
@@ -794,10 +786,10 @@ namespace StagedAmmo
                 return;
             drawer.ToggleField(
                 "Pause re-racking while loading",
-                Plugin.PauseTag.IsMatch(name.Value ?? ""),
+                Plugin.IsPaused(name.Value),
                 (Action<bool>)(pause =>
                 {
-                    name.Value = Plugin.WithTag(name.Value ?? "", Plugin.PauseTag, pause ? "[pause]" : null);
+                    name.Value = NameTags.With(name.Value ?? "", "pause", pause ? "[pause]" : null);
                     __instance.RequestRedraw();
                 }),
                 "The loader stops re-racking while the autoloader loads the gun from this rack. Adds or removes [pause] in the rack's name.");

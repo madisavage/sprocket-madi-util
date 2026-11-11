@@ -7,7 +7,6 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppInterop.Runtime;
 using MadiLib;
 using Properties;
 using Rounds;
@@ -247,14 +246,10 @@ namespace RocketPropelled
                 return;
             if (size == 0)
             {
-                IntPtr klass = Il2CppClassPointerStore<ProjectileInstance>.NativeClassPtr;
-                // Field offsets count the object header, which a struct in an array doesn't have
-                int Offset(string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(klass, name)) - 2 * IntPtr.Size;
-                idOffset = Offset("ID");
-                velocityOffset = Offset("velocity");
-                positionOffset = Offset("position");
-                uint align = 0;
-                size = IL2CPP.il2cpp_class_value_size(klass, ref align);
+                idOffset = Native.StructOffset<ProjectileInstance>("ID");
+                velocityOffset = Native.StructOffset<ProjectileInstance>("velocity");
+                positionOffset = Native.StructOffset<ProjectileInstance>("position");
+                size = Native.ValueSize<ProjectileInstance>();
             }
             var pool = __instance.pool;
             var active = __instance.activeIdMap;
@@ -272,8 +267,7 @@ namespace RocketPropelled
                     continue;
                 }
                 bool live = active.TryGetValue(burn.Id, out int index) && index >= 0 && index < pool.Length;
-                // An array's elements follow its header, bounds and length
-                byte* projectile = (byte*)pool.Pointer + 4 * IntPtr.Size + (long)index * size;
+                byte* projectile = (byte*)Native.Element(pool.Pointer, index, size);
                 if (!live || *(int*)(projectile + idOffset) != burn.Id)
                 {
                     // Hit something or ran out of time
@@ -320,9 +314,6 @@ namespace RocketPropelled
     {
         private static readonly string[] options = { "None", "Rocket" };
 
-        // Cannon blueprint and round id, its fields and readouts
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty[] Fields, StringProperty[] Readouts)> properties = new();
-
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
             CannonBlueprint? gun = cannon.Blueprint;
@@ -335,14 +326,8 @@ namespace RocketPropelled
                 changed();
                 Loadout.Redraw();
             }, "A rocket motor behind the round: the charge pushes it too, so it leaves slower, then speeds up in flight. The round's type is its warhead.");
-            if (!has)
-                return;
-            if (!properties.TryGetValue((gun.Pointer, id), out var set))
-                properties[(gun.Pointer, id)] = set = Make(gun, id, changed);
-            foreach (FloatProperty field in set.Fields)
-                drawer.Float(field);
-            foreach (StringProperty readout in set.Readouts)
-                drawer.Readonly(readout);
+            if (has)
+                RoundFields.Draw(drawer, RoundFields.For(gun, id, "rocket", () => Make(gun, id, changed)));
         }
 
         private static (FloatProperty[], StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
@@ -362,18 +347,8 @@ namespace RocketPropelled
                 EditorGui.Readout("Launch weight", () => $"{Shell() + B().Mass:0.00} kg", note),
             };
             FloatProperty Field(string name, Func<Motor, float> get, Action<Motor, float> set, string tooltip, float min, float softMax, float max, float step) =>
-                new(name, (Func<float>)(() => get(Loadout.Get<RocketRound>(gun, id)?.Motor ?? new Motor())), (Action<float>)(value =>
-                {
-                    Loadout.Edit<RocketRound>(gun, id, r =>
-                    {
-                        r.Motor ??= new Motor();
-                        set(r.Motor, value);
-                    });
-                    changed();
-                    EditorGui.Refresh(readouts);
-                }), tooltip)
-                // The slider spans min to softMax; typing goes up to max
-                { Min = min, Max = max, SoftMin = min, SoftMax = softMax, UseSoftLimits = true, Step = step };
+                RoundFields.Field<RocketRound>(gun, id, name, () => get(Loadout.Get<RocketRound>(gun, id)?.Motor ?? new Motor()),
+                    (r, value) => set(r.Motor ??= new Motor(), value), tooltip, changed, readouts, min, step, max, softMax);
             FloatProperty[] fields =
             {
                 Field("Motor length", m => m.Length, (m, v) => m.Length = v,

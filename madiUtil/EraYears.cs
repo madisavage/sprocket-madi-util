@@ -3,8 +3,6 @@ extern alias UnityCoreModule;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
-using System.Text.Json;
 using DynamicGUI;
 using HarmonyLib;
 using Sprocket.TechTrees;
@@ -46,22 +44,11 @@ namespace MadiUtil
         /// </summary>
         internal static DateOnly LatestTech(string directory)
         {
-            var options = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
             DateOnly latest = DateOnly.MinValue;
-            foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
-            {
-                try
-                {
-                    using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), options);
-                    if (doc.RootElement.TryGetProperty("date", out JsonElement value)
-                        && DateOnly.TryParseExact(value.GetString(), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly date)
-                        && date > latest)
-                        latest = date;
-                }
-                catch (Exception e) when (e is JsonException or IOException)
-                {
-                }
-            }
+            foreach (var (_, root) in MadiLib.TechFiles.Read(directory))
+                if (DateOnly.TryParseExact(MadiLib.TechFiles.Text(root["date"]), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly date)
+                    && date > latest)
+                    latest = date;
             return latest == DateOnly.MinValue ? DateOnly.MaxValue : latest;
         }
 

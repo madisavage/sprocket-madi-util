@@ -335,9 +335,6 @@ namespace GuidedMunitions
     {
         private static readonly string[] options = { "None", "SACLOS" };
 
-        // Cannon blueprint and round id, its fields and readouts
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty[] Fields, StringProperty[] Readouts)> properties = new();
-
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
             if (cannon.Blueprint is not { } gun || !RocketPropelled.Plugin.HasMotor(gun, id))
@@ -349,14 +346,8 @@ namespace GuidedMunitions
                 changed();
                 Loadout.Redraw();
             }, "SACLOS: the round steers onto its gunner's sight line, so it hits what the sight stays on, burning or coasting, until its wire runs out or terrain cuts the line to it. The AI's gunners guide theirs onto their target.");
-            if (!has)
-                return;
-            if (!properties.TryGetValue((gun.Pointer, id), out var set))
-                properties[(gun.Pointer, id)] = set = Make(gun, id, changed);
-            foreach (FloatProperty field in set.Fields)
-                drawer.Float(field);
-            foreach (StringProperty readout in set.Readouts)
-                drawer.Readonly(readout);
+            if (has)
+                RoundFields.Draw(drawer, RoundFields.For(gun, id, "guidance", () => Make(gun, id, changed)));
         }
 
         private static (FloatProperty[], StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
@@ -380,14 +371,7 @@ namespace GuidedMunitions
                 EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * G().MaxG * 100f:0}%", "Extra drag from the fins, over the round's own."),
             };
             FloatProperty Field(string name, Func<Guidance, float> get, Action<Guidance, float> set, string tooltip, float min, float softMax, float max, float step) =>
-                new(name, (Func<float>)(() => get(G())), (Action<float>)(value =>
-                {
-                    Loadout.Edit<GuidedRound>(gun, id, r => set(r.Guidance ??= new Guidance(), value));
-                    changed();
-                    EditorGui.Refresh(readouts);
-                }), tooltip)
-                // The slider spans min to softMax; typing goes up to max
-                { Min = min, Max = max, SoftMin = min, SoftMax = softMax, UseSoftLimits = true, Step = step };
+                RoundFields.Field<GuidedRound>(gun, id, name, () => get(G()), (r, value) => set(r.Guidance ??= new Guidance(), value), tooltip, changed, readouts, min, step, max, softMax);
             FloatProperty[] fields =
             {
                 Field("Max turn", g => g.MaxG, (g, v) => g.MaxG = v,

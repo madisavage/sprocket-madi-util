@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using HarmonyLib;
 using MadiLib;
@@ -38,91 +36,35 @@ namespace MadiUtil
         /// </summary>
         internal static List<(DateOnly Date, uint Pressure)> Read(string directory)
         {
-            var options = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
             var eras = new List<(DateOnly, uint)>();
-            foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
-            {
-                try
-                {
-                    using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), options);
-                    JsonElement root = doc.RootElement;
-                    if (root.TryGetProperty("type", out JsonElement type) && type.GetString() == "cannon"
-                        && root.TryGetProperty("date", out JsonElement date)
-                        && DateOnly.TryParseExact(date.GetString(), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly day)
-                        && root.TryGetProperty("properties", out JsonElement properties)
-                        && properties.TryGetProperty("operatingPressure", out JsonElement pressure) && pressure.TryGetUInt32(out uint value))
-                        eras.Add((day, value));
-                }
-                catch (Exception e) when (e is JsonException or IOException or InvalidOperationException)
-                {
-                }
-            }
+            foreach (var (_, root) in TechFiles.Read(directory))
+                if (TechFiles.Text(root["type"]) == "cannon"
+                    && DateOnly.TryParseExact(TechFiles.Text(root["date"]), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly day)
+                    && root["properties"] is JsonObject properties
+                    && properties["operatingPressure"] is JsonValue pressure && pressure.TryGetValue(out uint value))
+                    eras.Add((day, value));
             return eras.OrderBy(e => e.Item1).ToList();
         }
 
-        // Cannon blueprint, its description and the pressure stored in it, so a recalculation doesn't parse JSON again
-        private static readonly Dictionary<IntPtr, (string Text, uint? Pressure)> stored = new();
-
         /// <summary>The pressure picked for <paramref name="gun"/>, from its description; null for the era's.</summary>
-        internal static uint? Stored(CannonBlueprint gun)
-        {
-            string text = gun.Description ?? "";
-            if (stored.TryGetValue(gun.Pointer, out var cached) && cached.Text == text)
-                return cached.Pressure;
-            uint? pressure = Parse(text);
-            stored[gun.Pointer] = (text, pressure);
-            return pressure;
-        }
+        internal static uint? Stored(CannonBlueprint gun) => Of(Descriptions.Parsed(gun));
 
         /// <summary>The <c>"pressure"</c> in a description; null without one or when it isn't JSON.</summary>
-        internal static uint? Parse(string text)
-        {
-            try
-            {
-                return text.Length > 0 && JsonNode.Parse(text) is JsonObject json && json["pressure"] is JsonValue value && value.TryGetValue(out uint pressure)
-                    ? pressure : null;
-            }
-            catch (JsonException)
-            {
-                return null;
-            }
-        }
+        internal static uint? Parse(string text) => Of(Descriptions.Parse(text));
+
+        private static uint? Of(JsonObject? json) => json?["pressure"] is JsonValue value && value.TryGetValue(out uint pressure) ? pressure : null;
 
         /// <summary>
         /// <paramref name="text"/> with its <c>"pressure"</c> set to <paramref name="pressure"/>, other keys kept;
         /// null when it holds other text than JSON, which must be left as it is.
         /// </summary>
-        internal static string? With(string text, uint pressure) => With(text, "pressure", pressure);
-
-        /// <summary>
-        /// <paramref name="text"/> with <paramref name="key"/> set to <paramref name="value"/> (removed for null), other keys kept;
-        /// null when it holds other text than JSON, which must be left as it is.
-        /// </summary>
-        internal static string? With(string text, string key, JsonNode? value)
-        {
-            JsonObject json;
-            try
-            {
-                json = text.Length == 0 ? new JsonObject() : JsonNode.Parse(text) as JsonObject ?? throw new JsonException();
-            }
-            catch (JsonException)
-            {
-                return null;
-            }
-            if (value == null)
-                json.Remove(key);
-            else
-                json[key] = value;
-            return json.ToJsonString();
-        }
+        internal static string? With(string text, uint pressure) => Descriptions.With(text, "pressure", pressure);
 
         /// <summary>Sets <paramref name="gun"/>'s pressure and keeps it in its description.</summary>
         internal static void Set(CannonBlueprint gun, uint pressure)
         {
             gun.OperatingPressure = pressure;
-            if (With(gun.Description ?? "", pressure) is { } text)
-                gun.Description = text;
-            else if (!warned.Contains(gun.Pointer) && warned.Add(gun.Pointer))
+            if (!Descriptions.Set(gun, "pressure", pressure) && warned.Add(gun.Pointer))
                 Plugin.Logger.LogWarning($"Cannon {gun.Name}'s description isn't JSON, so its operating pressure can't be kept and the game may reset it.");
         }
 

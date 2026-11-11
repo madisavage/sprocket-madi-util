@@ -347,7 +347,7 @@ namespace Rounds
                 AccessTools.Method(typeof(ArmourPiercingProjectileFunction), nameof(ArmourPiercingProjectileFunction.HitDamageModel)));
             IntPtr method = (IntPtr)field!.GetValue(null)!;
             // Field offsets count the object header, which a struct behind a pointer doesn't have
-            id = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(Il2CppClassPointerStore<ProjectileInstance>.NativeClassPtr, "ID")) - 2 * IntPtr.Size;
+            id = MadiLib.Native.StructOffset<ProjectileInstance>("ID");
             hook = Hook;
             // MethodInfo starts with its native code pointer
             detour = INativeDetour.CreateAndApply(*(IntPtr*)method, hook, out original);
@@ -398,9 +398,7 @@ namespace Rounds
         {
             var field = Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(AccessTools.Method(typeof(CompoundStructure), nameof(CompoundStructure.CreateSpallBurst)));
             method = (IntPtr)field!.GetValue(null)!;
-            IntPtr klass = Il2CppClassPointerStore<CompoundStructure.SpallSpawnBurst>.NativeClassPtr;
-            // Field offsets count the object header, which a struct behind a pointer doesn't have
-            int Offset(string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(klass, name)) - 2 * IntPtr.Size;
+            static int Offset(string name) => MadiLib.Native.StructOffset<CompoundStructure.SpallSpawnBurst>(name);
             volume = Offset("volume");
             density = Offset("density");
             speed = Offset("speed");
@@ -414,19 +412,15 @@ namespace Rounds
             parentIndex = Offset("parentIndex");
             materialIndex = Offset("materialIndex");
             pathIndex = Offset("pathIndex");
-            uint align = 0;
-            size = IL2CPP.il2cpp_class_value_size(klass, ref align);
-            IntPtr sim = Il2CppClassPointerStore<PenetrationSimulation>.NativeClassPtr;
-            fragmentsField = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(sim, "fragments"));
-            fragCountField = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(sim, "fragCount"));
-            IntPtr fragment = Il2CppClassPointerStore<Fragment>.NativeClassPtr;
-            fragmentSize = IL2CPP.il2cpp_class_value_size(fragment, ref align);
-            // Likewise for an array element
-            fragmentDepth = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "depthLookup")) - 2 * IntPtr.Size;
-            FragmentMaterial = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "materialIndex")) - 2 * IntPtr.Size;
-            FragmentFlags = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "flags")) - 2 * IntPtr.Size;
-            FragmentDirection = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "direction")) - 2 * IntPtr.Size;
-            FragmentSpeed = (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(fragment, "speed")) - 2 * IntPtr.Size;
+            size = MadiLib.Native.ValueSize<CompoundStructure.SpallSpawnBurst>();
+            fragmentsField = MadiLib.Native.FieldOffset<PenetrationSimulation>("fragments");
+            fragCountField = MadiLib.Native.FieldOffset<PenetrationSimulation>("fragCount");
+            fragmentSize = MadiLib.Native.ValueSize<Fragment>();
+            fragmentDepth = MadiLib.Native.StructOffset<Fragment>("depthLookup");
+            FragmentMaterial = MadiLib.Native.StructOffset<Fragment>("materialIndex");
+            FragmentFlags = MadiLib.Native.StructOffset<Fragment>("flags");
+            FragmentDirection = MadiLib.Native.StructOffset<Fragment>("direction");
+            FragmentSpeed = MadiLib.Native.StructOffset<Fragment>("speed");
             template = Marshal.AllocHGlobal(size);
             hook = Hook;
             // MethodInfo starts with its native code pointer
@@ -475,8 +469,7 @@ namespace Rounds
 
         /// <summary>Fragment <paramref name="index"/> in <paramref name="simulation"/>'s own array, read each time as it grows as fragments are made.</summary>
         internal static unsafe byte* Element(IntPtr simulation, int index) =>
-            // An array's elements follow its header: class, monitor, bounds and length
-            (byte*)Marshal.ReadIntPtr(simulation, fragmentsField) + 4 * IntPtr.Size + index * fragmentSize;
+            (byte*)MadiLib.Native.Element(Marshal.ReadIntPtr(simulation, fragmentsField), index, fragmentSize);
 
         /// <summary>See <see cref="Impacts.Burst"/>.</summary>
         internal static unsafe bool Spawn(IntPtr simulation, Vector3 point, Vector3 dir, float kg, int count, float metresPerSecond, float cone, short parent, short from, bool fresh)

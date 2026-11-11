@@ -171,15 +171,11 @@ namespace HighExplosive
     /// <summary>Draws a HEAT round's shell mass, standoff, cone and performance in the cannon panel's <b>Rounds</b> section.</summary>
     internal static class HeatEditor
     {
-        // Cannon blueprint and round id, (Mass, Standoff, Cone, Readouts); one entry for each HEAT round
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty Mass, FloatProperty Standoff, FloatProperty Cone, StringProperty[] Readouts)> properties = new();
-
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
-            CannonBlueprint? gun = cannon.Blueprint;
-            if (gun == null)
+            if (cannon.Blueprint is not { } gun)
                 return;
-            if (!properties.TryGetValue((gun.Pointer, id), out var set))
+            RoundFields.Draw(drawer, RoundFields.For(gun, id, HeatRound.Type, () =>
             {
                 const string description = "Penetration is the jet's, the same at any range.";
                 StringProperty[] readouts =
@@ -190,55 +186,21 @@ namespace HighExplosive
                     EditorGui.Readout("Drag", () => $"{ShapedCharge.Nose(Heat.Round(gun, id).Standoff, Heat.StandoffDrag.Value):0.00} x the shell's", description),
                     EditorGui.Readout("Spall", () => $"{MathF.Pow(ShapedCharge.WidthFactor(Heat.Round(gun, id).Cone), 3f):0.00} x a 60 degree cone's", description),
                 };
-                void Set(Action<HeatRound> change)
+                // Edit keeps fields it isn't given, so an older round's design is fixed before its first change
+                FloatProperty Field(string name, Func<HeatRound, float> get, Action<HeatRound, float> set, string tooltip, float min, float max, float step) =>
+                    RoundFields.Field<HeatRound>(gun, id, name, () => get(Heat.Round(gun, id)), (r, value) => { r.Upgrade(); set(r, value); }, tooltip, changed, readouts, min, step, max);
+                return (new[]
                 {
-                    // Edit keeps fields it isn't given, so an older round's design is fixed before its first change
-                    Loadout.Edit<HeatRound>(gun, id, round =>
-                    {
-                        round.Upgrade();
-                        change(round);
-                    });
-                    changed();
-                    EditorGui.Refresh(readouts);
-                }
-                properties[(gun.Pointer, id)] = set = (
-                    new FloatProperty(
-                        "Shell mass",
-                        (Func<float>)(() => Heat.Round(gun, id).Mass),
-                        (Action<float>)(value => Set(r => r.Mass = value)),
-                        "Shell mass over the game's full-bore shell for this gun. Heavier shells leave slower; penetration doesn't change.")
-                    {
-                        Min = 0.25f,
-                        Max = 4f,
-                        Step = 0.05f
-                    },
-                    new FloatProperty(
-                        "Standoff",
-                        (Func<float>)(() => Heat.Round(gun, id).Standoff),
-                        (Action<float>)(value => Set(r => r.Standoff = value)),
-                        "Nose length in calibers, the distance the jet has to form. Penetration peaks at 2.5: too short and the jet hasn't formed, too long and it has broken up. A longer nose adds mass, so the shell leaves slower, and drag.")
-                    {
-                        Min = ShapedCharge.MinStandoff,
-                        Max = ShapedCharge.MaxStandoff,
-                        Step = 0.1f
-                    },
-                    new FloatProperty(
-                        "Cone angle",
-                        (Func<float>)(() => Heat.Round(gun, id).Cone),
-                        (Action<float>)(value => Set(r => r.Cone = value)),
-                        "Full angle of the charge's liner in degrees. Narrow makes a deep, thin jet with little spall; wide makes a shallower, fatter jet with much more.")
-                    {
-                        Min = ShapedCharge.MinCone,
-                        Max = ShapedCharge.MaxCone,
-                        Step = 5f
-                    },
-                    readouts);
-            }
-            drawer.Float(set.Mass);
-            drawer.Float(set.Standoff);
-            drawer.Float(set.Cone);
-            foreach (StringProperty readout in set.Readouts)
-                drawer.Readonly(readout);
+                    Field("Shell mass", r => r.Mass, (r, v) => r.Mass = v,
+                        "Shell mass over the game's full-bore shell for this gun. Heavier shells leave slower; penetration doesn't change.", 0.25f, 4f, 0.05f),
+                    Field("Standoff", r => r.Standoff, (r, v) => r.Standoff = v,
+                        "Nose length in calibers, the distance the jet has to form. Penetration peaks at 2.5: too short and the jet hasn't formed, too long and it has broken up. A longer nose adds mass, so the shell leaves slower, and drag.",
+                        ShapedCharge.MinStandoff, ShapedCharge.MaxStandoff, 0.1f),
+                    Field("Cone angle", r => r.Cone, (r, v) => r.Cone = v,
+                        "Full angle of the charge's liner in degrees. Narrow makes a deep, thin jet with little spall; wide makes a shallower, fatter jet with much more.",
+                        ShapedCharge.MinCone, ShapedCharge.MaxCone, 5f),
+                }, readouts);
+            }));
         }
     }
 }

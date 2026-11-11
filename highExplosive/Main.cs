@@ -176,15 +176,11 @@ namespace HighExplosive
     /// <summary>Draws an HE or HESH round's shell mass and its performance in the cannon panel's <b>Rounds</b> section.</summary>
     internal static class Editor
     {
-        // Cannon blueprint, round id and kind, (Mass, Readouts); one entry for each HE or HESH round
-        private static readonly Dictionary<(IntPtr, string, HeKind), (FloatProperty Mass, StringProperty[] Readouts)> properties = new();
-
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed, HeKind kind)
         {
-            CannonBlueprint? gun = cannon.Blueprint;
-            if (gun == null)
+            if (cannon.Blueprint is not { } gun)
                 return;
-            if (!properties.TryGetValue((gun.Pointer, id, kind), out var set))
+            RoundFields.Draw(drawer, RoundFields.For(gun, id, kind.Type, () =>
             {
                 HeRound R() => Plugin.Round(gun, id, kind);
                 float Kg() => ShellProperties.GetProjectileMass(gun.Caliber) * R().Mass;
@@ -195,27 +191,13 @@ namespace HighExplosive
                     EditorGui.Readout("Penetration", () => $"{kind.Penetration * MathF.Cbrt(Kg()):0} mm", description),
                     EditorGui.Readout("Shell weight", () => $"{Kg():0.00} kg", description),
                 };
-                properties[(gun.Pointer, id, kind)] = set = (
-                    new FloatProperty(
-                        "Shell mass",
-                        (Func<float>)(() => R().Mass),
-                        (Action<float>)(value =>
-                        {
-                            Loadout.Edit<HeRound>(gun, id, r => r.Mass = value);
-                            changed();
-                            EditorGui.Refresh(readouts);
-                        }),
-                        "Shell mass over the game's full-bore shell for this gun. Heavier shells leave slower, and explode and spall harder.")
-                    {
-                        Min = 0.25f,
-                        Max = 4f,
-                        Step = 0.05f
-                    },
-                    readouts);
-            }
-            drawer.Float(set.Mass);
-            foreach (StringProperty readout in set.Readouts)
-                drawer.Readonly(readout);
+                return (new[]
+                {
+                    RoundFields.Field<HeRound>(gun, id, "Shell mass", () => R().Mass, (r, value) => r.Mass = value,
+                        "Shell mass over the game's full-bore shell for this gun. Heavier shells leave slower, and explode and spall harder.",
+                        changed, readouts, 0.25f, 0.05f, 4f),
+                }, readouts);
+            }));
         }
 
         /// <summary>Muzzle velocity of a shell <paramref name="mass"/> times the full-bore one's, from the game's interior ballistics.</summary>

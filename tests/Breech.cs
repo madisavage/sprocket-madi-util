@@ -10,10 +10,10 @@ namespace Tests
         public void SettingsSitBesideRoundsAndPressure()
         {
             var settings = new Breech.Settings(0.5f, 0.3f, 0.9f, 0.25f, true);
-            string set = Pressure.With("{\"rounds\":{},\"pressure\":30000}", "breech", Breech.ToJson(settings))!;
+            string set = MadiLib.Descriptions.With("{\"rounds\":{},\"pressure\":30000}", "breech", Breech.ToJson(settings))!;
             Assert.Equal(settings, Breech.Parse(set));
             Assert.Equal(30000u, Pressure.Parse(set));
-            string back = Pressure.With(set, "breech", Breech.ToJson(Breech.Default))!;
+            string back = MadiLib.Descriptions.With(set, "breech", Breech.ToJson(Breech.Default))!;
             Assert.Equal(Breech.Default, Breech.Parse(back));
             Assert.DoesNotContain("breech", back);
             Assert.Contains("\"rounds\"", back);

@@ -159,3 +159,47 @@ drawer.Float(properties.Get(blueprint, () => new FloatProperty(
 ```
 
 `Get(owner, create)` returns the value for `owner`, calling `create` on first use. Entries are keyed by native pointer, so two wrappers of the same game object share an entry. Entries are never removed.
+
+## Descriptions
+
+Settings kept as JSON in a blueprint's description, which the game saves and loads untouched but has no UI for. Plugins share one description, each under its own keys; a description holding other text (a player's notes) is left alone.
+
+```csharp
+float mils = Descriptions.Parsed(gun)?["elevation"] is JsonValue v && v.TryGetValue(out float f) ? f : 0f;
+if (Descriptions.Set(gun, "elevation", 2.5f))
+    slot.MarkModified();
+```
+
+- `Parsed(blueprint)` is the description as a `JsonObject`, parsed again only when the text changes, so hooks can read it every frame; null when it isn't JSON. It's shared between plugins, so never change it.
+- `Set(blueprint, key, value)` sets one key (removes it for null), keeping the others; false when the description isn't JSON. `Read(blueprint)` gives a fresh copy to edit by hand.
+- `Parse(text)` and `With(text, key, value)` do the same on plain text, for tests.
+
+## NameTags
+
+Settings kept as `[tags]` in a part's blueprint name, such as `[stab 30]`: names save with the vehicle but don't show in game. Each plugin keeps its own regex, one group per number, matching the space before the tag.
+
+```csharp
+static readonly Regex tag = new(@"\s*\[stab(?:\s+([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
+float? limit = NameTags.Numbers(tag, blueprint.Name, new[] { 0f })?[0];
+blueprint.Name = NameTags.With(blueprint.Name ?? "", tag, $"[stab {NameTags.Format(30f)}]");
+```
+
+- `Numbers(tag, name, defaults, anyTag?)` gives each group's number, or its default when the group didn't match; null when untagged. With `anyTag`, a malformed tag counts as none.
+- `With(name, tag, newTag)` removes every match and appends `newTag` (none for null). `Format(value)` writes a number as tags do.
+
+## TechFiles
+
+The game's Technology folder (`TechFiles.Folder`), parsed once and shared: `Read(folder)` gives each file's path and root `JsonObject`, read as the game reads them (trailing commas and comments allowed), unreadable files left out. Never change them. `Text(node)` reads a string value, or null.
+
+## Native
+
+Reading game structs at their native offsets, for structs Il2CppInterop wraps as classes (its arrays of them read garbage) and fields it can't reach. Offsets are looked up by name at runtime.
+
+```csharp
+int size = Native.ValueSize<ProjectileInstance>();
+int velocity = Native.StructOffset<ProjectileInstance>("velocity");
+byte* projectile = (byte*)Native.Element(pool.Pointer, index, size);
+```
+
+- `FieldOffset<T>(name)` is a field's offset in an object of class `T`; `StructOffset<T>(name)` in struct `T` unboxed (in an array, inside another object or behind a pointer).
+- `ValueSize<T>()` is struct `T`'s size as an array element. `Length(array)` and `Element(array, index, size)` read IL2CPP arrays.

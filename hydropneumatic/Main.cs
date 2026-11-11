@@ -3,13 +3,11 @@ extern alias UnityPhysicsModule;
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text.RegularExpressions;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using Il2CppInterop.Runtime;
 using MadiLib;
 using Properties;
 using Sprocket.Blueprints;
@@ -49,7 +47,6 @@ namespace Hydropneumatic
         // [adjust], [adjust 150] for ±150 mm travel, [adjust 150 50] for 50 mm/s too
         private static readonly Regex tag = new(@"\s*\[adjust(?:\s+([0-9]*\.?[0-9]+))?(?:\s+([0-9]*\.?[0-9]+))?\]", RegexOptions.IgnoreCase);
         // Any [adjust ...], to tell a bad tag from none
-        private static readonly Regex anyTag = new(@"\[adjust\b[^\]]*\]", RegexOptions.IgnoreCase);
 
         internal static BepInEx.Logging.ManualLogSource Logger = null!;
         internal static ConfigEntry<bool> ShowIndicator = null!;
@@ -120,20 +117,11 @@ namespace Hydropneumatic
         /// <c>[adjust]</c> tag, defaults for missing numbers; null when
         /// untagged or the tag doesn't parse, so the vehicle stays stock.
         /// </summary>
-        internal static (float Travel, float Rate)? Settings(string? name) => Numbers(tag, anyTag, name, DefaultTravel, DefaultRate);
+        internal static (float Travel, float Rate)? Settings(string? name) => Pair(tag, "adjust", name, DefaultTravel, DefaultRate);
 
-        /// <summary>
-        /// The two numbers in <paramref name="name"/>'s <paramref name="tag"/>, defaults for missing ones;
-        /// null when untagged or when <paramref name="anyTag"/> finds one that doesn't parse.
-        /// </summary>
-        internal static (float, float)? Numbers(Regex tag, Regex anyTag, string? name, float first, float second)
-        {
-            Match match = tag.Match(name ?? "");
-            if (!match.Success || anyTag.Match(name!).Value != match.Value.Trim())
-                return null;
-            float Number(Group group, float fallback) => group.Success ? float.Parse(group.Value, CultureInfo.InvariantCulture) : fallback;
-            return (Number(match.Groups[1], first), Number(match.Groups[2], second));
-        }
+        /// <summary>The two numbers in <paramref name="name"/>'s <paramref name="tag"/>, as <see cref="NameTags.Numbers"/>.</summary>
+        internal static (float, float)? Pair(Regex tag, string word, string? name, float first, float second) =>
+            NameTags.Numbers(tag, word, name, new[] { first, second }) is { } n ? (n[0], n[1]) : null;
 
         // Track blueprint, its travel and rate properties
         private static readonly ObjectCache<FloatProperty> travels = new(), rates = new();
@@ -199,16 +187,11 @@ namespace Hydropneumatic
         }
 
         /// <summary><paramref name="name"/> with its tag replaced by one for <paramref name="settings"/>, or removed for null.</summary>
-        internal static string WithSettings(string name, (float Travel, float Rate)? settings) => WithNumbers(tag, "adjust", name, settings);
+        internal static string WithSettings(string name, (float Travel, float Rate)? settings) => WithNumbers("adjust", name, settings);
 
         /// <summary><paramref name="name"/> with its <paramref name="tag"/> replaced by <c>[word first second]</c>, or removed for null.</summary>
-        internal static string WithNumbers(Regex tag, string word, string name, (float, float)? numbers)
-        {
-            name = tag.Replace(name, "").Trim();
-            if (numbers is var (first, second))
-                name = $"{name} [{word} {first.ToString("0.#", CultureInfo.InvariantCulture)} {second.ToString("0.#", CultureInfo.InvariantCulture)}]".Trim();
-            return name;
-        }
+        internal static string WithNumbers(string word, string name, (float, float)? numbers) =>
+            NameTags.With(name, word, numbers is var (first, second) ? $"[{word} {NameTags.Format(first)} {NameTags.Format(second)}]" : null);
     }
 
     /// <summary>
@@ -278,24 +261,17 @@ namespace Hydropneumatic
         {
             try
             {
-                int Field(IntPtr type, string name) => (int)IL2CPP.il2cpp_field_get_offset(IL2CPP.GetIl2CppField(type, name));
-                // Struct field offsets count the object header, which a struct inside its owner doesn't have
-                int StructField(IntPtr type, string name) => Field(type, name) - 2 * IntPtr.Size;
-                IntPtr track = Il2CppClassPointerStore<TrackBehaviour>.NativeClassPtr;
-                springsField = Field(track, "springs");
-                statesField = Field(track, "springStates");
-                IntPtr job = Il2CppClassPointerStore<TrackUpdateInfo>.NativeClassPtr;
-                preloadField = Field(track, "physicsJob") + StructField(job, "suspensionPreload");
-                armLengthField = Field(track, "physicsJob") + StructField(job, "suspensionArmLength");
-                uint align = 0;
-                IntPtr spring = Il2CppClassPointerStore<Sprocket.ContinuousTracks.SuspensionSpring>.NativeClassPtr;
-                springSize = IL2CPP.il2cpp_class_value_size(spring, ref align);
-                originOffset = StructField(spring, "origin");
-                minOffset = StructField(spring, "minAngle");
-                maxOffset = StructField(spring, "maxAngle");
-                IntPtr state = Il2CppClassPointerStore<SuspensionState>.NativeClassPtr;
-                stateSize = IL2CPP.il2cpp_class_value_size(state, ref align);
-                angleOffset = StructField(state, "angle");
+                springsField = Native.FieldOffset<TrackBehaviour>("springs");
+                statesField = Native.FieldOffset<TrackBehaviour>("springStates");
+                int job = Native.FieldOffset<TrackBehaviour>("physicsJob");
+                preloadField = job + Native.StructOffset<TrackUpdateInfo>("suspensionPreload");
+                armLengthField = job + Native.StructOffset<TrackUpdateInfo>("suspensionArmLength");
+                springSize = Native.ValueSize<Sprocket.ContinuousTracks.SuspensionSpring>();
+                originOffset = Native.StructOffset<Sprocket.ContinuousTracks.SuspensionSpring>("origin");
+                minOffset = Native.StructOffset<Sprocket.ContinuousTracks.SuspensionSpring>("minAngle");
+                maxOffset = Native.StructOffset<Sprocket.ContinuousTracks.SuspensionSpring>("maxAngle");
+                stateSize = Native.ValueSize<SuspensionState>();
+                angleOffset = Native.StructOffset<SuspensionState>("angle");
                 Ready = springSize > 0 && stateSize > 0;
             }
             catch (Exception e)

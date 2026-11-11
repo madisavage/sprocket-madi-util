@@ -305,15 +305,12 @@ namespace HighExplosive
     /// <summary>Draws an APHE round's filler and fuze, and its performance, in the cannon panel's <b>Rounds</b> section.</summary>
     internal static class ApheEditor
     {
-        // Cannon blueprint and round id, (Filler, Fuze, Readouts); one entry for each APHE round
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty Filler, FloatProperty Fuze, StringProperty[] Readouts)> properties = new();
-
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
             CannonBlueprint? gun = cannon.Blueprint;
             if (gun == null)
                 return;
-            if (!properties.TryGetValue((gun.Pointer, id), out var set))
+            var set = RoundFields.For(gun, id, ApheRound.Type, () =>
             {
                 ApheRound R() => Aphe.Round(gun, id);
                 float Kg() => ShellProperties.GetProjectileMass(gun.Caliber);
@@ -327,41 +324,20 @@ namespace HighExplosive
                     EditorGui.Readout("Penetration loss", () => $"{(1f - Aphe.Penetration(Share())) * 100f:0.#}%", description),
                     EditorGui.Readout("Fragments", () => $"{2 * Aphe.Fragments(Share())} at {Aphe.FragmentSpeed(Share()):0} m/s", description),
                 };
-                void Set(Action<ApheRound> change)
+                return (new[]
                 {
-                    Loadout.Edit(gun, id, change);
-                    changed();
-                    EditorGui.Refresh(readouts);
-                }
-                properties[(gun.Pointer, id)] = set = (
-                    new FloatProperty(
-                        "Filler (g)",
-                        (Func<float>)(() => R().Filler * 1000f),
-                        (Action<float>)(value => Set(r => r.Filler = value / 1000f)),
-                        "Explosive in grams; at most 10% of the shell. More breaks the casing into more, lighter, faster fragments, but costs penetration. Wartime APHE is about 0.3 to 3% of the shell.")
-                    {
-                        Min = 5f,
-                        Max = 2000f,
-                        Step = 5f
-                    },
-                    new FloatProperty(
-                        "Fuze delay",
-                        (Func<float>)(() => R().Fuze),
-                        (Action<float>)(value => Set(r => r.Fuze = value)),
-                        "Metres the shell goes past where it first enters a plate before it bursts, waiting for the far face if that's inside a plate, so it doesn't change penetration. A shell that stops or leaves the vehicle sooner doesn't burst inside it.")
-                    {
-                        Min = 0.05f,
-                        Max = 3f,
-                        Step = 0.05f
-                    },
-                    readouts);
-            }
+                    RoundFields.Field<ApheRound>(gun, id, "Filler (g)", () => R().Filler * 1000f, (r, value) => r.Filler = value / 1000f,
+                        "Explosive in grams; at most 10% of the shell. More breaks the casing into more, lighter, faster fragments, but costs penetration. Wartime APHE is about 0.3 to 3% of the shell.",
+                        changed, readouts, 5f, 5f, 2000f),
+                    RoundFields.Field<ApheRound>(gun, id, "Fuze delay", () => R().Fuze, (r, value) => r.Fuze = value,
+                        "Metres the shell goes past where it first enters a plate before it bursts, waiting for the far face if that's inside a plate, so it doesn't change penetration. A shell that stops or leaves the vehicle sooner doesn't burst inside it.",
+                        changed, readouts, 0.05f, 0.05f, 3f),
+                }, readouts);
+            });
             // Grams of 10% of the shell, which changes with the gun's caliber
-            set.Filler.Max = MathF.Max(ShellProperties.GetProjectileMass(gun.Caliber) * Aphe.MaxShare * 1000f, set.Filler.Min + set.Filler.Step);
-            drawer.Float(set.Filler);
-            drawer.Float(set.Fuze);
-            foreach (StringProperty readout in set.Readouts)
-                drawer.Readonly(readout);
+            FloatProperty filler = set.Fields[0];
+            filler.Max = MathF.Max(ShellProperties.GetProjectileMass(gun.Caliber) * Aphe.MaxShare * 1000f, filler.Min + filler.Step);
+            RoundFields.Draw(drawer, set);
         }
     }
 }

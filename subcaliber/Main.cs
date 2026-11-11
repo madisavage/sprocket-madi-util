@@ -159,9 +159,6 @@ namespace Subcaliber
     /// </summary>
     internal static class SabotEditor
     {
-        // Cannon blueprint and round id, (Diameter, Length, SabotCoverage, SabotDensity, Readouts); one entry for each sabot round
-        private static readonly Dictionary<(IntPtr, string), (FloatProperty Diameter, FloatProperty Length, FloatProperty SabotCoverage, FloatProperty SabotDensity, StringProperty[] Readouts)> properties = new();
-
         /// <summary>
         /// Draws the round's controls and readouts, reusing one set of
         /// properties per round.
@@ -175,7 +172,7 @@ namespace Subcaliber
             CannonBlueprint? gun = cannon.Blueprint;
             if (gun == null)
                 return;
-            if (!properties.TryGetValue((gun.Pointer, id), out var set))
+            var set = RoundFields.For(gun, id, SabotRound.Type, () =>
             {
                 StringProperty[] readouts =
                 {
@@ -183,65 +180,24 @@ namespace Subcaliber
                     EditorGui.Readout("Penetration", () => $"{Performance(gun, id).Penetration:0} mm ({Regime(gun, id)})", ReadoutDescription),
                     EditorGui.Readout("Penetrator / sabot mass", () => $"{Performance(gun, id).Penetrator:0.00} / {Performance(gun, id).Sabot:0.00} kg", ReadoutDescription),
                 };
-                void Set(Action<SabotRound> change)
+                FloatProperty Field(string name, Func<Penetrator, float> get, Action<SabotRound, float> set, string tooltip, float min, float step, float? max = null, float? softMax = null) =>
+                    RoundFields.Field(gun, id, name, () => get(Penetrator(gun, id)), set, tooltip, changed, readouts, min, step, max, softMax);
+                return (new[]
                 {
-                    Loadout.Edit(gun, id, change);
-                    changed();
-                    EditorGui.Refresh(readouts);
-                }
-                properties[(gun.Pointer, id)] = set = (
-                    new FloatProperty(
-                        "Projectile diameter",
-                        (Func<float>)(() => gun.Caliber * Penetrator(gun, id).Ratio),
-                        (Action<float>)(value => Set(r => r.Diameter = value)),
-                        "Diameter of the penetrator the round fires, in mm. Below the caliber it is a discarding sabot round.")
-                    {
-                        Min = 1f,
-                        Step = 1f
-                    },
-                    new FloatProperty(
-                        "Penetrator length",
-                        (Func<float>)(() => Penetrator(gun, id).Calibers),
-                        (Action<float>)(value => Set(r => r.Length = value)),
-                        "Penetrator length in calibers of its own diameter. The game's shells are 3.")
-                    {
-                        Min = 1f,
-                        Max = 300f,
-                        SoftMin = 1f,
-                        SoftMax = 30f,
-                        UseSoftLimits = true,
-                        Step = 0.5f
-                    },
-                    new FloatProperty(
-                        "Sabot coverage",
-                        (Func<float>)(() => Penetrator(gun, id).SabotCoverage),
-                        (Action<float>)(value => Set(r => r.SabotCoverage = value)),
-                        "Fraction of the penetrator's length the sabot covers. 1 is all of it, as an APDS pot sabot; a long rod's saddle sabot grips about a quarter to a third.")
-                    {
-                        Min = 0.05f,
-                        Max = 1f,
-                        Step = 0.05f
-                    },
-                    new FloatProperty(
-                        "Sabot density",
-                        (Func<float>)(() => Penetrator(gun, id).SabotDensity),
-                        (Action<float>)(value => Set(r => r.SabotDensity = value)),
-                        "Sabot density relative to steel (aluminium is about 0.35). The sabot is discarded at the muzzle.")
-                    {
-                        Min = Plugin.MinSabotDensity,
-                        Max = 10f,
-                        SoftMin = Plugin.MinSabotDensity,
-                        SoftMax = 1f,
-                        UseSoftLimits = true,
-                        Step = 0.05f
-                    },
-                    readouts);
-            }
-            set.Diameter.Max = gun.Caliber;
-            drawer.Float(set.Diameter);
-            drawer.Float(set.Length);
-            drawer.Float(set.SabotCoverage);
-            drawer.Float(set.SabotDensity);
+                    Field("Projectile diameter", p => gun.Caliber * p.Ratio, (r, v) => r.Diameter = v,
+                        "Diameter of the penetrator the round fires, in mm. Below the caliber it is a discarding sabot round.", 1f, 1f),
+                    Field("Penetrator length", p => p.Calibers, (r, v) => r.Length = v,
+                        "Penetrator length in calibers of its own diameter. The game's shells are 3.", 1f, 0.5f, 300f, 30f),
+                    Field("Sabot coverage", p => p.SabotCoverage, (r, v) => r.SabotCoverage = v,
+                        "Fraction of the penetrator's length the sabot covers. 1 is all of it, as an APDS pot sabot; a long rod's saddle sabot grips about a quarter to a third.", 0.05f, 0.05f, 1f),
+                    Field("Sabot density", p => p.SabotDensity, (r, v) => r.SabotDensity = v,
+                        "Sabot density relative to steel (aluminium is about 0.35). The sabot is discarded at the muzzle.", Plugin.MinSabotDensity, 0.05f, 10f, 1f),
+                }, readouts);
+            });
+            // The gun's caliber, which can change
+            set.Fields[0].Max = gun.Caliber;
+            foreach (FloatProperty field in set.Fields)
+                drawer.Float(field);
 
             MaterialDropdown(drawer, Plugin.Round(gun, id).Material, name =>
             {

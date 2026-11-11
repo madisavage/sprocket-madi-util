@@ -32,9 +32,9 @@ namespace MadiUtil
         public override void Load()
         {
             Logger = Log;
-            EraYears.LastTech = EraYears.LatestTech(System.IO.Path.Combine(Paths.GameRootPath, "Sprocket_Data", "StreamingAssets", "Technology"));
+            EraYears.LastTech = EraYears.LatestTech(TechFiles.Folder);
             Logger.LogInfo($"Latest tech: {EraYears.LastTech:yyyy.MM.dd}; era dropdown years stop there.");
-            Pressure.Eras = Pressure.Read(System.IO.Path.Combine(Paths.GameRootPath, "Sprocket_Data", "StreamingAssets", "Technology"));
+            Pressure.Eras = Pressure.Read(TechFiles.Folder);
             Logger.LogInfo($"Cannon pressures: {string.Join(", ", Pressure.Eras.Select(e => $"{e.Date:yyyy}: {e.Pressure}"))}");
             new Harmony("madi.madiutil").PatchAll();
             Keybinds.Register(this, "madiUtil", "Save vehicle", "Ctrl+S", SaveVehicle);

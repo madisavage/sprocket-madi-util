@@ -237,6 +237,8 @@ namespace Composite
                 .Where(e => vertices.ContainsKey(mesh.serializedEdges[2 * e]) && vertices.ContainsKey(mesh.serializedEdges[2 * e + 1]))
                 .OrderBy(e => thickening.Contains(e))
                 .ToList();
+            if (kept.Count > ushort.MaxValue + 1)
+                throw new InvalidOperationException(TooManyPlates);
             var edgeMap = new Dictionary<int, ushort>();
             var edges = new List<int>();
             var edgeFlags = new List<MeshBlueprint.SerializedEdgeFlags>();
@@ -347,12 +349,18 @@ namespace Composite
                     result.Add(Copy(serialized[f], v => vertexMap[v], e => edgeMap.TryGetValue(e, out int n) ? (ushort)n : NoEdge, mm, keepEdges: false));
                 }
             }
+            // Past this the ushort thicken-edge indices above have wrapped
+            if (edges.Count / 2 > ushort.MaxValue + 1)
+                throw new InvalidOperationException(TooManyPlates);
 
             var faceArray = new Il2CppReferenceArray<MeshBlueprint.SerializedFace>(result.Count);
             for (int i = 0; i < result.Count; i++)
                 faceArray[i] = result[i];
             return new MeshBlueprint(positions.ToArray(), edges.ToArray(), edgeFlags.ToArray(), faceArray);
         }
+
+        // Faces name their thicken edges by a ushort index, so a mesh holds at most this many edges
+        private const string TooManyPlates = "Too many plates for one mesh; use fewer layers or faces.";
 
         private static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
 
