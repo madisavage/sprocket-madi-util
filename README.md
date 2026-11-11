@@ -48,6 +48,15 @@ Selecting a laying drive shows **Elevation torque multiplier** and **Azimuth tor
 ### Operating pressure
 Selecting a cannon shows an **Operating pressure** slider, from 10% of the era's chamber pressure up to the era's (step 500). Lower pressure fires every round slower, for a low-pressure gun-launcher such as the Sheridan's. It sets the cannon's own saved pressure (`"PSI"` in the vehicle file), which the game's interior ballistics already use. The game resets that to the era's whenever it reapplies the cannon's design, so the pick is also kept in the cannon's description (`"pressure"`) and put back each time; without madiUtil the cannon reverts to its era's pressure. Era pressures come from the cannon tech files in the game's Technology folder, read at launch; the era is the designer's year.
 
+### Breech and recoil
+Selecting a cannon shows five more settings:
+
+- **Breech width**, **Breech height** and **Breech length** (0.01–1, default 1): the breech's size as a share of the game's. Its mass shrinks with it, and comes off the gun. A breech a few mm thick, or a short one (the barrel starts at its front, so it's pulled back into the mantlet), can stop the gun elevating.
+- **Recoil** (0–1, default 1): the share of the gun's recoil that pushes the vehicle. 0 is a recoilless gun.
+- **Backblast**: a flash behind the gun as it fires, as from a recoilless gun's vented gas.
+
+Real recoilless guns wasted most of their gas, so pair no recoil with a lower **Operating pressure**. Kept in the cannon's description (`"breech"`); without madiUtil the cannon is the game's.
+
 ### Vehicle year
 The designer's era dropdown (renamed **Year**) lists every year of each era ("1943 (Midwar)") in place of the eras, up to the year of the latest tech in the game's Technology folder (read at launch, so added tech counts). A year row sets the vehicle's tech date to 1 January of that year (the era's start in its first year), so only tech invented by then is available. A vehicle from without madiUtil (dated its era's last day) shows its year, and keeps its date until a year is picked. The game saves the date in the vehicle file, so the year stays with shared vehicles, also for players without madiUtil.
 

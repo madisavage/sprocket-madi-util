@@ -92,7 +92,13 @@ namespace MadiUtil
         /// <paramref name="text"/> with its <c>"pressure"</c> set to <paramref name="pressure"/>, other keys kept;
         /// null when it holds other text than JSON, which must be left as it is.
         /// </summary>
-        internal static string? With(string text, uint pressure)
+        internal static string? With(string text, uint pressure) => With(text, "pressure", pressure);
+
+        /// <summary>
+        /// <paramref name="text"/> with <paramref name="key"/> set to <paramref name="value"/> (removed for null), other keys kept;
+        /// null when it holds other text than JSON, which must be left as it is.
+        /// </summary>
+        internal static string? With(string text, string key, JsonNode? value)
         {
             JsonObject json;
             try
@@ -103,7 +109,10 @@ namespace MadiUtil
             {
                 return null;
             }
-            json["pressure"] = pressure;
+            if (value == null)
+                json.Remove(key);
+            else
+                json[key] = value;
             return json.ToJsonString();
         }
 
@@ -147,6 +156,8 @@ namespace MadiUtil
     {
         // Cannon blueprint and its era's pressure, its slider; a new slider when the era changes, as its limits can't be changed after
         private static readonly Dictionary<(IntPtr, uint), FloatProperty> properties = new();
+        // Cannon blueprint, its breech sliders
+        private static readonly ObjectCache<FloatProperty[]> breechFields = new();
 
         private static void Postfix(CannonEditor __instance, IGUILayout __0)
         {
@@ -158,8 +169,30 @@ namespace MadiUtil
                 return;
             if (Pressure.Of(Pressure.Eras, EraYears.ToDate(EraYears.Designer.TechnologyDate)) is not uint era)
                 return;
-            if (Pressure.Restore(blueprint))
+            if (Pressure.Restore(blueprint) | Breech.Apply(blueprint))
                 slot.MarkModified();
+            void Change(Func<Breech.Settings, Breech.Settings> change)
+            {
+                Breech.Set(blueprint, change(Breech.Of(blueprint)));
+                slot.MarkModified();
+            }
+            FloatProperty Field(string name, Func<Breech.Settings, float> get, Func<Breech.Settings, float, Breech.Settings> set, float min, float step, string tooltip) =>
+                new(name, (Func<float>)(() => get(Breech.Of(blueprint))), (Action<float>)(v => Change(s => set(s, v))), tooltip)
+                { Min = min, Max = 1f, Step = step };
+            var fields = breechFields.Get(blueprint, () => new[]
+            {
+                Field("Breech width", s => s.X, (s, v) => s with { X = v }, Breech.MinScale, 0.01f, "Breech width as a share of the game's; its mass shrinks with it. Very thin (a few mm) stops the gun elevating."),
+                Field("Breech height", s => s.Y, (s, v) => s with { Y = v }, Breech.MinScale, 0.01f, "Breech height as a share of the game's; its mass shrinks with it. Very thin (a few mm) stops the gun elevating."),
+                Field("Breech length", s => s.Z, (s, v) => s with { Z = v }, Breech.MinScale, 0.01f, "Breech length as a share of the game's. The barrel starts at the breech's front, so a short one pulls the barrel back, which can jam it in the mantlet."),
+                Field("Recoil", s => s.Recoil, (s, v) => s with { Recoil = v }, 0f, 0.05f, "Share of the gun's recoil that pushes the vehicle. 0 is a recoilless gun, venting its gas backward; real ones wasted most of it, so lower the Operating pressure to match."),
+            });
+            foreach (FloatProperty breechField in fields)
+                drawer.Float(breechField);
+            drawer.ToggleField("Backblast", Breech.Of(blueprint).Backblast, (Action<bool>)(on =>
+            {
+                Change(s => s with { Backblast = on });
+                __instance.RequestRedraw();
+            }), "A flash behind the gun as it fires, as from a recoilless gun's vented gas.");
             if (!properties.TryGetValue((blueprint.Pointer, era), out FloatProperty? field))
                 properties[(blueprint.Pointer, era)] = field = new FloatProperty(
                     "Operating pressure",
@@ -183,13 +216,40 @@ namespace MadiUtil
     [HarmonyPatch(typeof(CannonBlueprint), nameof(CannonBlueprint.RecalculatePhysicalValues))]
     internal static class PressureRecalculatePatch
     {
-        private static void Prefix(CannonBlueprint __instance) => Pressure.Restore(__instance);
+        private static void Prefix(CannonBlueprint __instance)
+        {
+            Pressure.Restore(__instance);
+            Breech.Apply(__instance);
+        }
+
+        // The breech scaled as set
+        private static void Postfix(CannonBlueprint __instance) => Breech.Scale(__instance);
     }
 
     /// <summary>After the game applies a change to the cannon, which can set the era's pressure.</summary>
     [HarmonyPatch(typeof(CannonBlueprint), nameof(CannonBlueprint.OnModified))]
     internal static class PressureModifiedPatch
     {
-        private static void Postfix(CannonBlueprint __instance) => Pressure.Restore(__instance);
+        private static void Postfix(CannonBlueprint __instance)
+        {
+            Pressure.Restore(__instance);
+            Breech.Apply(__instance);
+        }
+    }
+
+    /// <summary>
+    /// The game copies its era's cannon tech (pressure, muzzle values) onto a cannon's
+    /// blueprint here; the player's picks go back in after.
+    /// </summary>
+    [HarmonyPatch(typeof(Cannon), nameof(Cannon.SyncBlueprintWithTech), typeof(CannonBlueprint), typeof(Sprocket.TechTrees.IReadOnlyTech))]
+    internal static class PressureTechSyncPatch
+    {
+        private static void Postfix(CannonBlueprint __0)
+        {
+            if (__0 == null)
+                return;
+            Pressure.Restore(__0);
+            Breech.Apply(__0);
+        }
     }
 }
