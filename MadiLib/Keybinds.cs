@@ -31,7 +31,7 @@ namespace MadiLib
         private static readonly Key[] modifiers = { Key.LeftCtrl, Key.RightCtrl, Key.LeftShift, Key.RightShift, Key.LeftAlt, Key.RightAlt, Key.LeftMeta, Key.RightMeta, Key.ContextMenu };
         private static Bind? capturing;
         // Bind text, parsed; polled every frame, so parsed once per text
-        private static readonly Dictionary<string, (Key Key, bool Ctrl, bool Shift, bool Alt)> parsed = new();
+        private static readonly Dictionary<string, (Key Key, int Wheel, bool Ctrl, bool Shift, bool Alt)> parsed = new();
 
         /// <summary>Registers a keybind and shows it in the Settings tab, in the subtab named after the plugin.</summary>
         /// <param name="plugin">The plugin whose config file stores the key.</param>
@@ -49,7 +49,7 @@ namespace MadiLib
         /// <param name="onPressed">Called on the frame the key is pressed.</param>
         public static void Register(BasePlugin plugin, string subtab, string name, string defaultKey, Action onPressed)
         {
-            binds.Add(new Bind(subtab, name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S or F9, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
+            binds.Add(new Bind(subtab, name, plugin.Config.Bind("Keybinds", name, defaultKey, "A key such as S, F9, WheelUp or WheelDown, with Ctrl+, Shift+ or Alt+ in front if wanted; empty for none."), onPressed));
         }
 
         /// <summary>
@@ -69,8 +69,8 @@ namespace MadiLib
             {
                 if (capturing != null || Keyboard.current is not { } keys || Typing())
                     return false;
-                (Key key, bool ctrl, bool shift, bool alt) = Lookup(entry.Value);
-                return key != Key.None && keys[key].isPressed
+                (Key key, int wheel, bool ctrl, bool shift, bool alt) = Lookup(entry.Value);
+                return (wheel != 0 ? Scrolled(wheel) : key != Key.None && keys[key].isPressed)
                     && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
             };
         }
@@ -109,13 +109,13 @@ namespace MadiLib
         /// </summary>
         private static bool Pressed(Keyboard keys, string text)
         {
-            (Key key, bool ctrl, bool shift, bool alt) = Lookup(text);
-            return key != Key.None && keys[key].wasPressedThisFrame
+            (Key key, int wheel, bool ctrl, bool shift, bool alt) = Lookup(text);
+            return (wheel != 0 ? Scrolled(wheel) : key != Key.None && keys[key].wasPressedThisFrame)
                 && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
         }
 
         /// <summary><paramref name="text"/> parsed, once per text.</summary>
-        private static (Key Key, bool Ctrl, bool Shift, bool Alt) Lookup(string text)
+        private static (Key Key, int Wheel, bool Ctrl, bool Shift, bool Alt) Lookup(string text)
         {
             if (!parsed.TryGetValue(text, out var bind))
                 parsed[text] = bind = Parse(text);
@@ -126,22 +126,29 @@ namespace MadiLib
         /// Parses text such as "Ctrl+Shift+S" into a key and modifiers. Names
         /// follow the Input System <see cref="Key"/> enum, case-insensitive;
         /// a bare digit is that digit key, not the enum's number. Unknown names
-        /// or empty text give <see cref="Key.None"/>.
+        /// or empty text give <see cref="Key.None"/>. "WheelUp" and "WheelDown"
+        /// are the mouse wheel, firing once per frame it turns.
         /// </summary>
-        private static (Key Key, bool Ctrl, bool Shift, bool Alt) Parse(string text)
+        private static (Key Key, int Wheel, bool Ctrl, bool Shift, bool Alt) Parse(string text)
         {
             Key key = Key.None;
+            int wheel = 0;
             bool ctrl = false, shift = false, alt = false;
             foreach (string part in text.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
             {
                 if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) ctrl = true;
                 else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase)) shift = true;
                 else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase)) alt = true;
+                else if (part.Equals("WheelUp", StringComparison.OrdinalIgnoreCase)) wheel = 1;
+                else if (part.Equals("WheelDown", StringComparison.OrdinalIgnoreCase)) wheel = -1;
                 // Enum.TryParse reads "1" as the enum's value 1, Space
                 else if (!Enum.TryParse(part.Length == 1 && char.IsDigit(part[0]) ? "Digit" + part : part, true, out key)) return default;
             }
-            return (key, ctrl, shift, alt);
+            return (key, wheel, ctrl, shift, alt);
         }
+
+        /// <summary>Whether the mouse wheel turned this frame in <paramref name="direction"/> (1 up, -1 down).</summary>
+        private static bool Scrolled(int direction) => Mouse.current is { } mouse && mouse.scroll.ReadValue().y * direction > 0f;
 
         /// <summary>
         /// Called every frame while the Settings tab is shown. If a bind is being
@@ -166,9 +173,10 @@ namespace MadiLib
                     try { if (keys[key].wasPressedThisFrame) { pressed = key; break; } }
                     catch (Exception) { }
                 }
-                if (pressed == null)
+                string? name = pressed?.ToString() ?? (Scrolled(1) ? "WheelUp" : Scrolled(-1) ? "WheelDown" : null);
+                if (name == null)
                     return;
-                capturing.Entry.Value = (keys.ctrlKey.isPressed ? "Ctrl+" : "") + (keys.shiftKey.isPressed ? "Shift+" : "") + (keys.altKey.isPressed ? "Alt+" : "") + pressed;
+                capturing.Entry.Value = (keys.ctrlKey.isPressed ? "Ctrl+" : "") + (keys.shiftKey.isPressed ? "Shift+" : "") + (keys.altKey.isPressed ? "Alt+" : "") + name;
             }
 
             capturing = null;

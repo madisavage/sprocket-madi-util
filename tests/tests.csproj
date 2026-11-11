@@ -23,6 +23,7 @@
     <ProjectReference Include="../hydropneumatic/hydropneumatic.csproj" />
     <ProjectReference Include="../shellCam/shellCam.csproj" />
     <ProjectReference Include="../madiUtil/madiUtil.csproj" />
+    <ProjectReference Include="../fireControl/fireControl.csproj" />
     <!-- The plugins' game and BepInEx references, copied so their types load -->
     <Reference Include="$(BepInEx)/interop/Sprocket.Blueprints.dll" />
     <Reference Update="@(Reference)" Private="true" />
