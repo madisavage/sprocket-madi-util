@@ -40,10 +40,15 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
     exit 1
 fi
 
+# Registry entries carry this version in their dependencies, and new plugins need an entry
+python3 tools/registry.py --check || { echo "Registry entries are out of date: run python3 tools/registry.py and commit." >&2; exit 1; }
+
 if ! $dry_run; then
     command -v gh >/dev/null || { echo "gh (GitHub CLI) is not installed." >&2; exit 1; }
     [[ "$(git branch --show-current)" == main ]] || { echo "Release from main." >&2; exit 1; }
-    [[ -z "$(git status --porcelain)" ]] || { echo "Commit or stash your changes first." >&2; exit 1; }
+    # Only what ships or the registry reads must be committed; notes, tools, tests and docs may be dirty
+    dirty=$(git status --porcelain -- . ':!*.md' ':!tools' ':!tests' ':!docs')
+    [[ -z "$dirty" ]] || { printf 'Commit or stash these changes first:\n%s\n' "$dirty" >&2; exit 1; }
     git fetch --tags --quiet origin
     [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || { echo "main isn't the same as origin/main; push or pull first." >&2; exit 1; }
     if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
