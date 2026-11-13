@@ -17,7 +17,9 @@ using Sprocket.UI;
 using Sprocket.Vehicles.Cannons;
 using Sprocket.Vehicles.Cannons.Editor;
 using Sprocket.Vehicles.Weapons;
+using GUI = UnityEngine.GUI;
 using Physics = UnityPhysicsModule::UnityEngine.Physics;
+using Rect = UnityCoreModule::UnityEngine.Rect;
 using Ray = UnityCoreModule::UnityEngine.Ray;
 using Time = UnityCoreModule::UnityEngine.Time;
 using Transform = UnityCoreModule::UnityEngine.Transform;
@@ -38,6 +40,7 @@ namespace FireControl
         internal static ConfigEntry<float> StereoBase = null!;
         internal static ConfigEntry<float> StereoError = null!;
         internal static ConfigEntry<float> StereoTime = null!;
+        internal static ConfigEntry<float> LaserTime = null!;
         internal static ManualLogSource Logger = null!;
 
         public override void Load()
@@ -55,12 +58,16 @@ namespace FireControl
             StereoTime = Config.Bind("Rangefinder", "Stereoscopic ranging time", 4f, new ConfigDescription(
                 "Seconds a stereoscopic reading takes.",
                 new AcceptableValueRange<float>(0f, 30f), new SoftMax(10f), new Step(0.5f)));
+            LaserTime = Config.Bind("Rangefinder", "Laser ranging time", 0.3f, new ConfigDescription(
+                "Seconds a laser reading takes.",
+                new AcceptableValueRange<float>(0f, 5f), new SoftMax(1f), new Step(0.1f)));
             Keybinds.Register(this, "Fire control", "Raise gun", "WheelUp", () => Aim.Adjust(1));
             Keybinds.Register(this, "Fire control", "Lower gun", "WheelDown", () => Aim.Adjust(-1));
             Keybinds.Register(this, "Fire control", "Range", "T", Aim.Range);
             Keybinds.Register(this, "Fire control", "Reset elevation", "Alt+T", Aim.Reset);
-            SettingsTab.AddSection("Fire control", "Fire control", ManualStep, StereoBase, StereoError, StereoTime);
+            SettingsTab.AddSection("Fire control", "Fire control", ManualStep, StereoBase, StereoError, StereoTime, LaserTime);
             Hud.AddPanel(Aim.Status);
+            Hud.AddPanel(Aim.Progress);
             var harmony = new Harmony("madi.firecontrol");
             harmony.PatchAll();
             Logger.LogInfo($"Patched: {string.Join(", ", System.Linq.Enumerable.Select(harmony.GetPatchedMethods(), m => $"{m.DeclaringType?.Name}.{m.Name}"))}");
@@ -106,7 +113,7 @@ namespace FireControl
         private static float manual;
         // Last reading (m), and when a stereo reading in progress lands
         private static float? range;
-        private static float pendingRange, pendingAt = float.NaN;
+        private static float pendingRange, pendingFrom, pendingAt = float.NaN;
         // The aim ray as the sight gave it, before raising
         private static Ray sight;
         private static Transform? hull;
@@ -145,16 +152,24 @@ namespace FireControl
                     nearest = hit.distance;
             if (float.IsPositiveInfinity(nearest))
                 return;
-            if (kind == Rangefinder.Laser)
-            {
-                range = nearest;
-                pendingAt = float.NaN;
-                return;
-            }
-            // Stereo error grows with range squared and shrinks with base length
-            float sigma = Plugin.StereoError.Value / 1000f * nearest * nearest / Plugin.StereoBase.Value;
+            // Stereo error grows with range squared and shrinks with base length; laser is exact
+            float sigma = kind == Rangefinder.Laser ? 0f : Plugin.StereoError.Value / 1000f * nearest * nearest / Plugin.StereoBase.Value;
             pendingRange = MathF.Max(1f, nearest + sigma * Gaussian());
-            pendingAt = Time.time + Plugin.StereoTime.Value;
+            pendingFrom = Time.time;
+            pendingAt = pendingFrom + (kind == Rangefinder.Laser ? Plugin.LaserTime : Plugin.StereoTime).Value;
+        }
+
+        /// <summary>A bar over the status panel filling up while a reading is in progress.</summary>
+        internal static float Progress(float left, float bottom)
+        {
+            if (float.IsNaN(pendingAt) || PlayerVehicle.Root == null || pendingAt <= pendingFrom)
+                return 0f;
+            const float width = 160f, height = 26f, pad = 5f;
+            GUI.Box(new Rect(left, bottom - height, width, height), "");
+            float remaining = MathF.Max(0f, pendingAt - Time.time);
+            HudDraw.Bar(new Rect(left + pad, bottom - height + pad, width - 2 * pad, height - 2 * pad), 1f - remaining / (pendingAt - pendingFrom), HudDraw.Next);
+            HudDraw.Label(new Rect(left + pad, bottom - height + pad, width - 2 * pad, height - 2 * pad), $"Ranging {remaining:0.0} s", 13, HudDraw.Idle);
+            return height;
         }
 
         private static float Gaussian() =>
@@ -262,7 +277,7 @@ namespace FireControl
                 if (GunSettings.Set(blueprint, "rangefinder", i == 0 ? null : ((Rangefinder)i).ToString().ToLowerInvariant()))
                     cannon.blueprintSlot?.MarkModified();
                 __instance.RequestRedraw();
-            }, "Ranges the point under the crosshair (Range key) and raises the gun for the loaded round. Stereoscopic: slower, and off by more at long range. Laser: instant and exact.");
+            }, "Ranges the point under the crosshair (Range key) and raises the gun for the loaded round. Stereoscopic: slower, and off by more at long range. Laser: quick and exact. The ranging times are in the settings.");
             drawer.Float(elevations.Get(blueprint, () => new FloatProperty(
                 "Default elevation",
                 (Func<float>)(() => GunSettings.ElevationOf(blueprint)),
