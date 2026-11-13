@@ -26,6 +26,9 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.UI.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehiclePartImporting.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.PartDefinitions.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.ApplicationPlugins.dll" Private="false" />
   </ItemGroup>
 
 </Project>
