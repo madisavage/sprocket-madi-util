@@ -13,147 +13,6 @@ using Vector3 = UnityCoreModule::UnityEngine.Vector3;
 
 namespace HighExplosive
 {
-    /// <summary>A penetration simulation's fragment, as far as the jet needs it; distances in m.</summary>
-    internal readonly record struct FragmentInfo(PenetrationFragmentFlag Flags, short Parent, short Material, float Travel, float Speed, float Mass, float Diameter)
-    {
-        internal bool IsJet => (Flags & PenetrationFragmentFlag.OriginalPenetrator) != 0;
-
-        /// <summary>The game's penetration (mm) at this fragment's speed, with the jet's penetrator constant <paramref name="k"/>.</summary>
-        internal float Penetration(ushort k) => Impacts.Penetration(new PenetratorInfo(Mass, Diameter, 0f, 0f, k, default, new Vector3(Speed, 0f, 0f)));
-    }
-
-    /// <summary>
-    /// Reads a penetration simulation's fragments.
-    /// </summary>
-    /// <remarks>
-    /// Il2CppInterop marshals <c>out PenetrationFragment</c>, a struct it
-    /// wraps as a class, as a pointer, so the game writes the whole struct
-    /// over it and the stack breaks. The native methods are called with a
-    /// buffer the struct's size instead, and its fields read at their native
-    /// offsets.
-    /// </remarks>
-    internal static class Fragments
-    {
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate void GetFragmentFn(IntPtr simulation, int index, IntPtr fragment, IntPtr method);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate void GetFinalFn(IntPtr simulation, IntPtr fragment, IntPtr method);
-
-        private static bool ready;
-        private static GetFragmentFn getFragment = null!;
-        private static GetFinalFn getFinal = null!;
-        private static IntPtr getFragmentInfo, getFinalInfo, buffer;
-        private static int travel, speed, diameter, mass, parent, material, flags;
-
-        private static void Init()
-        {
-            IntPtr Info(string name) => (IntPtr)Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(AccessTools.Method(typeof(PenetrationSimulation), name))!.GetValue(null)!;
-            getFragmentInfo = Info(nameof(PenetrationSimulation.GetFragment));
-            getFinalInfo = Info(nameof(PenetrationSimulation.GetFinalOriginalPenetrator));
-            // MethodInfo starts with its native code pointer
-            getFragment = Marshal.GetDelegateForFunctionPointer<GetFragmentFn>(Marshal.ReadIntPtr(getFragmentInfo));
-            getFinal = Marshal.GetDelegateForFunctionPointer<GetFinalFn>(Marshal.ReadIntPtr(getFinalInfo));
-
-            buffer = Marshal.AllocHGlobal(MadiLib.Native.ValueSize<PenetrationFragment>());
-            static int Offset(string name) => MadiLib.Native.StructOffset<PenetrationFragment>(name);
-            travel = Offset("TravelDistance");
-            speed = Offset("Speed");
-            diameter = Offset("Diameter");
-            mass = Offset("Mass");
-            parent = Offset("ParentIndex");
-            material = Offset("MaterialIndex");
-            flags = Offset("Flags");
-            ready = true;
-        }
-
-        internal static FragmentInfo Get(IntPtr simulation, int index)
-        {
-            if (!ready)
-                Init();
-            getFragment(simulation, index, buffer, getFragmentInfo);
-            return Read();
-        }
-
-        internal static FragmentInfo Final(IntPtr simulation)
-        {
-            if (!ready)
-                Init();
-            getFinal(simulation, buffer, getFinalInfo);
-            return Read();
-        }
-
-        private static float Float(int offset) => BitConverter.Int32BitsToSingle(Marshal.ReadInt32(buffer, offset));
-
-        private static FragmentInfo Read() => new(
-            (PenetrationFragmentFlag)Marshal.ReadByte(buffer, flags),
-            Marshal.ReadInt16(buffer, parent),
-            Marshal.ReadInt16(buffer, material),
-            Float(travel),
-            Float(speed),
-            Float(mass),
-            Float(diameter));
-    }
-
-    /// <summary>
-    /// Writes and reads fields of a penetration simulation's own fragments,
-    /// in its fragment array, as <c>Fragment</c> is a struct Il2CppInterop
-    /// can't write. The array is read each time, as it grows as fragments
-    /// are made.
-    /// </summary>
-    internal static class FragmentArray
-    {
-        private sealed class Layout
-        {
-            internal readonly int Fragments, Size, Speed, Mass, Travel, Spawn, Direction, Flags;
-
-            internal Layout()
-            {
-                Fragments = MadiLib.Native.FieldOffset<PenetrationSimulation>("fragments");
-                Size = MadiLib.Native.ValueSize<Fragment>();
-                static int Offset(string name) => MadiLib.Native.StructOffset<Fragment>(name);
-                Speed = Offset("speed");
-                Mass = Offset("mass");
-                Travel = Offset("travelDistance");
-                Spawn = Offset("spawnPoint");
-                Direction = Offset("direction");
-                Flags = Offset("flags");
-            }
-        }
-
-        private static Layout? layout;
-        private static Layout L => layout ??= new Layout();
-
-        private static IntPtr At(IntPtr simulation, int index, int offset) =>
-            MadiLib.Native.Element(Marshal.ReadIntPtr(simulation, L.Fragments), index, L.Size) + offset;
-
-        private static void Write(IntPtr simulation, int index, int offset, float value) =>
-            Marshal.WriteInt32(At(simulation, index, offset), BitConverter.SingleToInt32Bits(value));
-
-        private static Vector3 Vector(IntPtr simulation, int index, int offset)
-        {
-            IntPtr at = At(simulation, index, offset);
-            float F(int i) => BitConverter.Int32BitsToSingle(Marshal.ReadInt32(at, 4 * i));
-            return new Vector3(F(0), F(1), F(2));
-        }
-
-        internal static void SetSpeed(IntPtr simulation, int index, float value) => Write(simulation, index, L.Speed, value);
-
-        internal static void SetMass(IntPtr simulation, int index, float value) => Write(simulation, index, L.Mass, value);
-
-        internal static void SetTravel(IntPtr simulation, int index, float value) => Write(simulation, index, L.Travel, value);
-
-        /// <summary>Where fragment <paramref name="index"/> starts, in sim space.</summary>
-        internal static Vector3 Spawn(IntPtr simulation, int index) => Vector(simulation, index, L.Spawn);
-
-        internal static Vector3 Direction(IntPtr simulation, int index) => Vector(simulation, index, L.Direction);
-
-        /// <summary>The fragment's own flags, as the game keeps them; <see cref="FragmentInfo.Flags"/> are converted.</summary>
-        internal static ushort RawFlags(IntPtr simulation, int index) => (ushort)Marshal.ReadInt16(At(simulation, index, L.Flags));
-
-        internal static void SetRawFlags(IntPtr simulation, int index, ushort value) => Marshal.WriteInt16(At(simulation, index, L.Flags), (short)value);
-    }
-
     /// <summary>
     /// A HEAT jet's penetration as a budget: each plate takes its
     /// line-of-sight thickness (times its material's RHA factor) off it, and
@@ -194,6 +53,8 @@ namespace HighExplosive
         private static readonly HashSet<int> stopped = new();
         // Set once the jet is stopped this hit: a ricochet's jet fragment can name a spall fragment as its parent
         private static bool jetStopped;
+        // Gap index, the NERA loss (mm) at its end; worked out once per gap this hit
+        private static readonly Dictionary<int, float> nera = new();
 
         internal static void Start(ushort penetratorConstant)
         {
@@ -202,6 +63,7 @@ namespace HighExplosive
             Stopped = 0;
             stopped.Clear();
             jetStopped = false;
+            nera.Clear();
         }
 
         internal static void End() => active = false;
@@ -213,10 +75,25 @@ namespace HighExplosive
             jetStopped |= jet;
         }
 
-        /// <summary>The jet's budget arriving at the end of <paramref name="gap"/>: its penetration, less the gap's air loss if it left a plate.</summary>
-        private static float Arriving(FragmentInfo gap) =>
+        /// <summary>
+        /// The jet's budget arriving at the end of gap <paramref name="index"/>: its penetration, less the gap's air loss if it left
+        /// a plate, less <see cref="Nera"/>'s.
+        /// </summary>
+        private static float Arriving(PenetrationSimulation simulation, int index, FragmentInfo gap) =>
             // The first gap is the shell's flight to the vehicle; any after it left a plate
-            gap.Penetration(k) - (gap.Parent >= 0 ? Heat.AirLoss.Value * gap.Travel : 0f);
+            gap.Penetration(k) - (gap.Parent >= 0 ? Heat.AirLoss.Value * gap.Travel + Nera(simulation, index, gap) : 0f);
+
+        /// <summary>
+        /// What NERA takes off the jet by the end of gap <paramref name="index"/>: <see cref="Rounds.Nera.Loss"/> × <see cref="Heat.NeraStrength"/>.
+        /// </summary>
+        private static float Nera(PenetrationSimulation simulation, int index, FragmentInfo gap)
+        {
+            if (Heat.NeraStrength.Value <= 0f)
+                return 0f;
+            if (!nera.TryGetValue(index, out float loss))
+                nera[index] = loss = Heat.NeraStrength.Value * Rounds.Nera.Loss(simulation, gap.Parent, gap.Travel, Heat.LogHits.Value ? line => Heat.Log.LogInfo("HEAT " + line) : null);
+            return loss;
+        }
 
         /// <summary>From <see cref="Impacts.FragmentSimulating"/>.</summary>
         internal static void Simulating(PenetrationSimulation __0, short __1)
@@ -249,7 +126,7 @@ namespace HighExplosive
                 float budget = gap.Penetration(k);
                 if (budget <= 0f)
                     return;
-                float arriving = Arriving(gap);
+                float arriving = Arriving(__0, parent.Parent, gap);
                 float rha = __0.materials[parent.Material].rhaFactor;
                 float taken = parent.Travel * 1000f * rha;
                 float left = arriving - taken;
@@ -271,7 +148,7 @@ namespace HighExplosive
                     FragmentArray.SetSpeed(simulation, __1, gap.Speed);
                 }
                 if (Heat.LogHits.Value)
-                    Heat.Log.LogInfo($"HEAT plate #{fragment.Parent} (material {parent.Material}, RHA x{rha:0.##}): {budget:0} mm at {gap.Speed:0} m/s, gap {gap.Travel * 1000f:0} mm takes {budget - arriving:0} mm, "
+                    Heat.Log.LogInfo($"HEAT plate #{fragment.Parent} (material {parent.Material}, RHA x{rha:0.##}):{budget:0} mm at {gap.Speed:0} m/s, gap {gap.Travel * 1000f:0} mm takes {budget - arriving:0} mm, "
                         + $"plate {parent.Travel * 1000f:0} mm takes {taken:0} mm -> {Math.Max(left, 0f):0} mm left, #{__1} "
                         + (left > 0f ? $"leaves at {gap.Speed:0} m/s, {gap.Mass * MathF.Pow(left / budget, 1f / 0.715f):0.000} kg" : "stopped")
                         + $" (game: {fragment.Speed:0} m/s)");
@@ -298,10 +175,12 @@ namespace HighExplosive
                 IntPtr simulation = __0.Pointer;
                 FragmentInfo gap = Fragments.Get(simulation, __1);
                 // The first gap is the shell's flight to the vehicle
-                if (!gap.IsJet || gap.Parent < 0 || (gap.Flags & PenetrationFragmentFlag.InMaterial) != 0 || Arriving(gap) > 0f)
+                if (!gap.IsJet || gap.Parent < 0 || (gap.Flags & PenetrationFragmentFlag.InMaterial) != 0 || Arriving(__0, __1, gap) > 0f)
                     return;
                 float budget = gap.Penetration(k);
-                float along = Heat.AirLoss.Value > 0f ? Math.Clamp(budget / Heat.AirLoss.Value, 0f, gap.Travel) : 0f;
+                // NERA bulges in at the start of the gap; the air takes the rest
+                float left = budget - Nera(__0, __1, gap);
+                float along = Heat.AirLoss.Value > 0f ? Math.Clamp(left / Heat.AirLoss.Value, 0f, gap.Travel) : 0f;
                 Vector3 direction = FragmentArray.Direction(simulation, __1);
                 Vector3 point = FragmentArray.Spawn(simulation, __1) + direction * along;
                 FragmentArray.SetTravel(simulation, __1, along);

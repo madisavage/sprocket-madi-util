@@ -1,0 +1,14 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "nerarubber",
+	"date": "1979.01.01",
+	"properties": {
+		"rhaFactor": 0.04,
+		"hardness": 0.06,
+		"costMultiplier": 2,
+		"spallFactor": 0.9,
+		"density": 1150,
+		"nera": 60
+	}
+}

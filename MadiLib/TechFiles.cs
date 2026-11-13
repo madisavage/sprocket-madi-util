@@ -45,6 +45,22 @@ namespace MadiLib
             return read[directory] = files;
         }
 
+        /// <summary>
+        /// The armour materials whose <c>properties</c> set our own <paramref name="key"/>
+        /// (e.g. <c>"nera": 150</c>) to a nonzero number, with their file name and that number, keyed as the penetration sim
+        /// knows a plate: by its spall factor, RHA factor and density, as it carries no tech ID.
+        /// </summary>
+        /// <remarks>shortcut: two materials with the same three values would both match; every file in the game's folder is unique today, so check again if a match is ever wrong.</remarks>
+        public static Dictionary<(float Spall, float Rha, float Density), (string Name, float Value)> Flagged(string directory, string key)
+        {
+            var flagged = new Dictionary<(float, float, float), (string, float)>();
+            foreach (var (path, root) in Read(directory))
+                if (root["properties"] is JsonObject p && p[key] is JsonValue v && v.TryGetValue(out double flag) && flag != 0
+                    && p["spallFactor"] is JsonValue s && p["rhaFactor"] is JsonValue r && p["density"] is JsonValue d)
+                    flagged[(s.GetValue<float>(), r.GetValue<float>(), d.GetValue<float>())] = (Path.GetFileNameWithoutExtension(path), (float)flag);
+            return flagged;
+        }
+
         /// <summary><paramref name="node"/> as a string, or null when it isn't one.</summary>
         public static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue(out string? text) ? text : null;
     }

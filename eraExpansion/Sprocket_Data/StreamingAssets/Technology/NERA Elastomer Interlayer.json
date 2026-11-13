@@ -1,0 +1,14 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "neraelast",
+	"date": "1995.01.01",
+	"properties": {
+		"rhaFactor": 0.07,
+		"hardness": 0.09,
+		"costMultiplier": 8,
+		"spallFactor": 0.3,
+		"density": 1100,
+		"nera": 100
+	}
+}

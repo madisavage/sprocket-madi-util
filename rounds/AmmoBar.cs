@@ -7,7 +7,6 @@ using MadiLib;
 using UnityEngine;
 using Color = UnityCoreModule::UnityEngine.Color;
 using Rect = UnityCoreModule::UnityEngine.Rect;
-using RectOffset = UnityCoreModule::UnityEngine.RectOffset;
 using Texture2D = UnityCoreModule::UnityEngine.Texture2D;
 
 namespace Rounds
@@ -45,7 +44,7 @@ namespace Rounds
                 return 0f;
             // Built here, not at load: GUI.skin only exists inside OnGUI
             name ??= new GUIStyle(GUI.skin.label) { fontSize = 11, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Clip };
-            key ??= new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Bold, alignment = TextAnchor.UpperLeft, padding = new RectOffset(0, 0, 0, 0) };
+            key ??= new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Bold, alignment = TextAnchor.UpperLeft }.Padded(0, 0, 0, 0);
             count ??= new GUIStyle(GUI.skin.label) { fontSize = CountFont, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = false, clipping = TextClipping.Overflow };
             label ??= new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = true };
 

@@ -22,6 +22,22 @@ namespace MadiLib
     /// </summary>
     public static class HudDraw
     {
+        /// <summary>
+        /// Sets <paramref name="style"/>'s padding in place and returns it. Use this,
+        /// not <c>new RectOffset(l, r, t, b)</c>: that constructor is stripped from the
+        /// game and only some interop builds restore it (not the MelonLoader bridge's),
+        /// so it throws MissingMethodException for some players.
+        /// </summary>
+        public static GUIStyle Padded(this GUIStyle style, int left, int right, int top, int bottom)
+        {
+            RectOffset padding = style.padding;
+            padding.left = left;
+            padding.right = right;
+            padding.top = top;
+            padding.bottom = bottom;
+            return style;
+        }
+
         /// <summary>Width of <see cref="Outline"/>'s frame, in pixels.</summary>
         public const float Frame = 2f;
 
@@ -91,8 +107,8 @@ namespace MadiLib
                 labels[(fontSize, anchor)] = style = new GUIStyle(GUI.skin.label)
                 {
                     fontSize = fontSize, fontStyle = FontStyle.Bold, alignment = anchor, wordWrap = false,
-                    clipping = TextClipping.Overflow, padding = new RectOffset(0, 0, 0, 0)
-                };
+                    clipping = TextClipping.Overflow
+                }.Padded(0, 0, 0, 0);
             Color before = GUI.color;
             GUI.color = color;
             GUI.Label(r, text, style);
@@ -102,7 +118,7 @@ namespace MadiLib
         /// <summary>Draws <paramref name="icon"/> scaled down to fit <paramref name="r"/>, tinted by <paramref name="color"/>.</summary>
         public static void Image(Rect r, Texture2D icon, Color color)
         {
-            image ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, imagePosition = ImagePosition.ImageOnly, padding = new RectOffset(0, 0, 0, 0) };
+            image ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, imagePosition = ImagePosition.ImageOnly }.Padded(0, 0, 0, 0);
             Color before = GUI.color;
             GUI.color = color;
             GUI.Label(r, new GUIContent { image = icon }, image);

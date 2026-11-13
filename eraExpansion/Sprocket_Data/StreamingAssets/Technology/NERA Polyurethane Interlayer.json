@@ -1,0 +1,14 @@
+{
+	"v": "0.0",
+	"id": "",
+	"type": "nerapu",
+	"date": "1985.01.01",
+	"properties": {
+		"rhaFactor": 0.06,
+		"hardness": 0.08,
+		"costMultiplier": 4,
+		"spallFactor": 0.5,
+		"density": 1200,
+		"nera": 80
+	}
+}

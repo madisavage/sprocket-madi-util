@@ -7,7 +7,6 @@ using Sprocket.Gameplay;
 using UnityEngine;
 using MonoBehaviour = UnityCoreModule::UnityEngine.MonoBehaviour;
 using Rect = UnityCoreModule::UnityEngine.Rect;
-using RectOffset = UnityCoreModule::UnityEngine.RectOffset;
 using Screen = UnityCoreModule::UnityEngine.Screen;
 using Vector2 = UnityCoreModule::UnityEngine.Vector2;
 
@@ -58,7 +57,7 @@ namespace MadiLib
             if (panels.Count == 0 || Event.current.type != EventType.Repaint || PhotomodeWatch.Active)
                 return;
             // Built here, not at load: GUI.skin only exists inside OnGUI
-            style ??= new GUIStyle(GUI.skin.box) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(10, 10, 6, 6) };
+            style ??= new GUIStyle(GUI.skin.box) { fontSize = 18, alignment = TextAnchor.MiddleLeft }.Padded(10, 10, 6, 6);
 
             float bottom = Screen.height - Margin;
             for (int i = 0; i < panels.Count; i++)

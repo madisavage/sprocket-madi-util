@@ -48,11 +48,15 @@ namespace Subcaliber
 
         internal static ConfigEntry<float> TargetHardness = null!;
         internal static ConfigEntry<float> SpallMultiplier = null!;
+        internal static ConfigEntry<float> NeraShare = null!;
+        internal static ConfigEntry<bool> LogNera = null!;
 
         /// <summary>Lanz-Odermatt coefficients per penetrator material, by material name.</summary>
         private static Dictionary<string, Coefficients> materials = new();
 
         private static ManualLogSource log = null!;
+
+        internal static void Log(string line) => log.LogInfo(line);
 
         internal static void Load(ConfigFile config, ManualLogSource logger)
         {
@@ -64,6 +68,13 @@ namespace Subcaliber
                 "Scales each spall burst a long rod makes: 2 is two of the game's bursts, 1.25 is one and a quarter-mass one. 1 is the game's, 0 none.",
                 new AcceptableValueRange<float>(0f, 30f), new SoftMax(3f), new Step(0.05f)));
             SpallMultiplier.SettingChanged += (_, _) => Impacts.Resimulate();
+            NeraShare = config.Bind("Long rod", "NERA share", 0.2f, new ConfigDescription(
+                "Share of a NERA element's effect on a HEAT jet that a long rod takes, as its bulging plates knock the rod off line: 0.2 loses a fifth of the mm a jet would. 0 ignores NERA.",
+                new AcceptableValueRange<float>(0f, 1f), new Step(0.05f)));
+            NeraShare.SettingChanged += (_, _) => Impacts.Resimulate();
+            LogNera = config.Bind("Long rod", "Log NERA", false, "Logs each NERA element a long rod goes through and the penetration it takes, to BepInEx/LogOutput.log.");
+            Impacts.FragmentSimulating += RodNera.Simulating;
+            Impacts.HitEnded += RodNera.End;
 
             string path = Path.Combine(Paths.ConfigPath, "madi.subcaliber.longrod.json");
             if (!File.Exists(path))
@@ -147,7 +158,63 @@ namespace Subcaliber
             PenetratorInfo p = penetrator;
             Impacts.SetPenetration(ref penetrator, Penetration(Plugin.Penetrator(round, owner.Caliber).Ratio, round.Length, p.Diameter * 1000f, p.Mass, round.Material, p.Velocity.magnitude, p.PenetratorConstant));
             if (round.Length >= MinCalibers)
+            {
                 Impacts.SpallBursts = SpallMultiplier.Value;
+                RodNera.Start(penetrator.PenetratorConstant);
+            }
+        }
+    }
+
+    /// <summary>
+    /// NERA against a long rod: leaving a NERA element, the rod loses <see cref="Nera.Loss"/> × <see cref="LongRod.NeraShare"/>
+    /// of its penetration, taken off its mass (de Marre goes as <c>m^0.715</c> at a given speed) before the game
+    /// simulates its flight to the next plate. The room behind the element is the distance to the next armour along its path.
+    /// </summary>
+    internal static class RodNera
+    {
+        // Set from a long rod's hit until it ends; its penetrator constant
+        private static bool active;
+        private static ushort k;
+
+        internal static void Start(ushort penetratorConstant)
+        {
+            active = LongRod.NeraShare.Value > 0f && Nera.Materials.Count > 0;
+            k = penetratorConstant;
+        }
+
+        internal static void End() => active = false;
+
+        internal static void Simulating(PenetrationSimulation __0, short __1)
+        {
+            if (!active || __0 == null)
+                return;
+            try
+            {
+                IntPtr simulation = __0.Pointer;
+                FragmentInfo gap = Fragments.Get(simulation, __1);
+                // The rod itself, leaving a plate
+                if (!gap.IsJet || gap.Parent < 0 || (gap.Flags & PenetrationFragmentFlag.InMaterial) != 0)
+                    return;
+                FragmentInfo plate = Fragments.Get(simulation, gap.Parent);
+                if ((plate.Flags & PenetrationFragmentFlag.InMaterial) == 0)
+                    return;
+                float loss = LongRod.NeraShare.Value * Nera.Loss(__0, gap.Parent, Nera.Ahead(__0, __1), LongRod.LogNera.Value ? line => LongRod.Log("Long rod " + line) : null);
+                float penetration = gap.Penetration(k);
+                if (loss <= 0f || penetration <= 0f)
+                    return;
+                float left = penetration - loss;
+                if (left <= 0f)
+                    FragmentArray.SetSpeed(simulation, __1, 0f);
+                else
+                    FragmentArray.SetMass(simulation, __1, gap.Mass * MathF.Pow(left / penetration, 1f / 0.715f));
+                if (LongRod.LogNera.Value)
+                    LongRod.Log($"Long rod #{__1}: {penetration:0} mm, NERA takes {loss:0} mm -> {Math.Max(left, 0f):0} mm");
+            }
+            catch (Exception e)
+            {
+                LongRod.Log($"Couldn't apply NERA to the long rod, the game's stands: {e}");
+                End();
+            }
         }
     }
 

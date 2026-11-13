@@ -14,7 +14,6 @@ using Sprocket;
 using Sprocket.DamageModelling;
 using Sprocket.Vehicles;
 using Time = UnityCoreModule::UnityEngine.Time;
-using UnityMatrix = UnityCoreModule::UnityEngine.Matrix4x4;
 
 namespace ShellCam
 {
@@ -267,7 +266,7 @@ namespace ShellCam
             {
                 int bad;
                 int[] objects;
-                (hit.Points, hit.Triangles, objects, bad) = Native.Armour(sim);
+                (hit.Points, hit.Triangles, objects, bad) = ArmourMesh.Read(sim);
                 if (bad > 0)
                     Plugin.Logger.LogWarning($"Hit's armour has {bad} non-finite vertices (a broken vehicle file?); left out of the replay");
                 Health.Read(sim, objects, hit);
@@ -455,35 +454,27 @@ namespace ShellCam
     }
 
     /// <summary>
-    /// Reads a simulation's fragments and armour meshes at their native
-    /// offsets: <c>Fragment</c> and <c>MeshStructure</c> are structs that
+    /// Reads a simulation's fragments at their native offsets (its armour
+    /// is <see cref="ArmourMesh.Read"/>): <c>Fragment</c> is a struct that
     /// Il2CppInterop wraps as classes, so its arrays of them read garbage
     /// (see highExplosive's <c>Fragments</c>).
     /// </summary>
     internal static class Native
     {
-        private static readonly int header = MadiLib.Native.ArrayHeader;
 
         private static bool ready;
-        private static int fragments, meshes, fragmentSize, meshSize, materialSize, spawn, direction, travel, speed, parent, flags, vertices, triangles, materialMap, objectIndex;
+        private static int fragments, fragmentSize, spawn, direction, travel, speed, parent, flags;
 
         private static void Init()
         {
             fragments = MadiLib.Native.FieldOffset<PenetrationSimulation>("fragments");
-            meshes = MadiLib.Native.FieldOffset<PenetrationSimulation>("meshes");
             fragmentSize = MadiLib.Native.ValueSize<Fragment>();
-            meshSize = MadiLib.Native.ValueSize<MeshStructure>();
-            materialSize = MadiLib.Native.ValueSize<TriangleMaterialInfo>();
             spawn = MadiLib.Native.StructOffset<Fragment>("spawnPoint");
             direction = MadiLib.Native.StructOffset<Fragment>("direction");
             travel = MadiLib.Native.StructOffset<Fragment>("travelDistance");
             speed = MadiLib.Native.StructOffset<Fragment>("speed");
             parent = MadiLib.Native.StructOffset<Fragment>("parentIndex");
             flags = MadiLib.Native.StructOffset<Fragment>("flags");
-            vertices = MadiLib.Native.StructOffset<MeshStructure>("vertices");
-            triangles = MadiLib.Native.StructOffset<MeshStructure>("triangles");
-            materialMap = MadiLib.Native.StructOffset<MeshStructure>("materialMap");
-            objectIndex = MadiLib.Native.StructOffset<TriangleMaterialInfo>("objectIndex");
             ready = true;
         }
 
@@ -496,59 +487,6 @@ namespace ShellCam
                 Init();
             IntPtr at = MadiLib.Native.Element(Marshal.ReadIntPtr(simulation, fragments), index, fragmentSize);
             return (Vector(at, spawn), Vector(at, direction), Float(at, travel), Float(at, speed), Marshal.ReadInt16(at, parent), (FragmentFlag)(ushort)Marshal.ReadInt16(at, flags));
-        }
-
-        /// <summary>Every armour mesh of the structure <paramref name="sim"/> ran on, moved into sim space by its space frame, merged, with each triangle's index into the sim's objects (-1 if unknown).</summary>
-        internal static (Vector3[] Points, int[] Triangles, int[] Objects, int Bad) Armour(PenetrationSimulation sim)
-        {
-            if (!ready)
-                Init();
-            var frames = sim.spaceFrames;
-            IntPtr array = Marshal.ReadIntPtr(sim.Pointer, meshes);
-            if (array == IntPtr.Zero || frames == null)
-                return (Array.Empty<Vector3>(), Array.Empty<int>(), Array.Empty<int>(), 0);
-            int count = Math.Min(MadiLib.Native.Length(array), frames.Length);
-            var points = new List<Vector3>();
-            var tris = new List<int>();
-            var objects = new List<int>();
-            int bad = 0;
-            for (int m = 0; m < count; m++)
-            {
-                IntPtr mesh = MadiLib.Native.Element(array, m, meshSize);
-                IntPtr verts = Marshal.ReadIntPtr(mesh, vertices), indices = Marshal.ReadIntPtr(mesh, triangles), map = Marshal.ReadIntPtr(mesh, materialMap);
-                if (verts == IntPtr.Zero || indices == IntPtr.Zero)
-                    continue;
-                int vertexCount = MadiLib.Native.Length(verts), indexCount = MadiLib.Native.Length(indices);
-                int mapCount = map == IntPtr.Zero ? 0 : MadiLib.Native.Length(map);
-                var xyz = new float[vertexCount * 3];
-                var index = new int[indexCount];
-                Marshal.Copy(verts + header, xyz, 0, xyz.Length);
-                Marshal.Copy(indices + header, index, 0, index.Length);
-                UnityMatrix f = frames[m].localToSimSpace;
-                int offset = points.Count;
-                for (int v = 0; v < vertexCount; v++)
-                {
-                    float x = xyz[3 * v], y = xyz[3 * v + 1], z = xyz[3 * v + 2];
-                    points.Add(new Vector3(
-                        f.m00 * x + f.m01 * y + f.m02 * z + f.m03,
-                        f.m10 * x + f.m11 * y + f.m12 * z + f.m13,
-                        f.m20 * x + f.m21 * y + f.m22 * z + f.m23));
-                }
-                for (int v = offset; v < points.Count; v++)
-                    if (!Vectors.Finite(points[v]))
-                        bad++;
-                bool Good(int i) => (uint)index[i] < vertexCount && Vectors.Finite(points[offset + index[i]]);
-                for (int i = 0; i + 2 < indexCount; i += 3)
-                    if (Good(i) && Good(i + 1) && Good(i + 2))
-                    {
-                        tris.Add(offset + index[i]);
-                        tris.Add(offset + index[i + 1]);
-                        tris.Add(offset + index[i + 2]);
-                        // The map has an entry per triangle, as the game's own hit lookup reads it
-                        objects.Add(i / 3 < mapCount ? Marshal.ReadInt16(map, header + i / 3 * materialSize + objectIndex) : -1);
-                    }
-            }
-            return (points.ToArray(), tris.ToArray(), objects.ToArray(), bad);
         }
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -35,6 +36,7 @@ namespace HighExplosive
         internal static ConfigEntry<float> BreakupMass = null!;
         internal static ConfigEntry<float> BreakupCone = null!;
         internal static ConfigEntry<bool> LogHits = null!;
+        internal static ConfigEntry<float> NeraStrength = null!;
         internal static ManualLogSource Log = null!;
 
         internal static void Load(ConfigFile config, ManualLogSource log)
@@ -76,7 +78,11 @@ namespace HighExplosive
                 new AcceptableValueRange<float>(0.25f, 10f), new Step(0.25f)));
             LogHits = config.Bind("HEAT", "Log hits", false,
                 "Logs each HEAT jet's setup and its path through the armour: each plate's residual penetration and whether the jet perforated, stopped or left the vehicle.");
-            SettingsTab.AddSection("Rounds", "HEAT", PeakPenetration, StandoffDrag, StandoffMass, JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, LogHits);
+            NeraStrength = config.Bind("HEAT", "NERA strength", 1f, new ConfigDescription(
+                "Times the penetration a HEAT jet loses to NERA. A NERA element is a plate whose material file has e.g. \"nera\": 150 in its properties (the most it takes, in mm), with an optional flyer plate touching its back. "
+                + "That loss goes as sin² of the jet's angle to the plate (none head on, 75% at 60 degrees), its thickness over 10 mm and the room behind it over 30 mm, each capped at 1. 0 turns NERA off.",
+                new AcceptableValueRange<float>(0f, 5f), new Step(0.1f)));
+            SettingsTab.AddSection("Rounds", "HEAT", PeakPenetration, StandoffDrag, StandoffMass, JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, NeraStrength, LogHits);
             Impacts.FragmentSimulating += JetBudget.Simulating;
             Impacts.FragmentSimulated += JetBudget.Simulated;
             Impacts.HitSimulated += JetLog.Simulated;

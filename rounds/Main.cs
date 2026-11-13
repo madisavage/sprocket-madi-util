@@ -57,6 +57,7 @@ namespace Rounds
                 Loadout.Register("ap", "AP", (_, _, _, _) => { }, icon: icon,
                     penetration: (owner, _, speed) => Impacts.DeMarre(owner.Caliber, ShellProperties.GetProjectileMass(owner.Caliber), speed, owner.PenetratorConstant));
             Hud.AddPanel(AmmoBar.Draw);
+            Nera.Load();
             var harmony = new Harmony("madi.rounds");
             harmony.PatchAll();
             DynamicSight.Patch(harmony);

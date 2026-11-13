@@ -66,7 +66,7 @@ namespace Subcaliber
                 "Charge mass per volume of case, in kg/m³. Pushing its own gas slows light projectiles: full-bore rounds are unchanged, a light sabot round loses a lot. 0 is the game's, no charge mass.",
                 new AcceptableValueRange<float>(0f, 20000f), new SoftMax(2000f), new Step(50f)));
             LongRod.Load(Config, Log);
-            SettingsTab.AddSection("Rounds", "Subcaliber", MaxVelocity, PropellantDensity, LongRod.TargetHardness, LongRod.SpallMultiplier);
+            SettingsTab.AddSection("Rounds", "Subcaliber", MaxVelocity, PropellantDensity, LongRod.TargetHardness, LongRod.SpallMultiplier, LongRod.NeraShare, LongRod.LogNera);
 
             string path = Path.Combine(Paths.ConfigPath, "madi.subcaliber.materials.json");
             if (!File.Exists(path))
@@ -287,7 +287,10 @@ namespace Subcaliber
         internal static void Simulate(ref PenetratorInfo penetrator)
         {
             if (Calibers >= LongRod.MinCalibers)
+            {
                 Impacts.SpallBursts = LongRod.SpallMultiplier.Value;
+                RodNera.Start(penetrator.PenetratorConstant);
+            }
             float k = MassScale;
             if (k == 1f)
                 return;
