@@ -49,6 +49,15 @@ namespace GuidedMunitions
         internal static ConfigEntry<float> FinDrag = null!;
         internal static ConfigEntry<float> LiftToDrag = null!;
         internal static ConfigEntry<float> UnitLength = null!;
+        internal static ConfigEntry<float> SaclosYear = null!, BeamYear = null!;
+        internal static ConfigEntry<float> WireSpeed = null!;
+
+        /// <summary>Fastest <paramref name="guidance"/> lets its round fly, m/s: a wire's payout limit, or none.</summary>
+        internal static float MaxSpeed(Guidance guidance) => guidance.Beam ? float.PositiveInfinity : WireSpeed.Value;
+
+        /// <summary>The speed round <paramref name="id"/>'s max turn is rated at: burnout, or the wire's limit if lower.</summary>
+        internal static float Rated(CannonBlueprint gun, string id, Guidance guidance) =>
+            MathF.Min(RocketPropelled.Plugin.Speeds(gun, id)?.Burnout ?? 0f, MaxSpeed(guidance));
 
         // shortcut: a guidance unit is a full-bore section of this density, kg/m³; make it a config if it needs tuning
         private const float UnitDensity = 1500f;
@@ -74,7 +83,12 @@ namespace GuidedMunitions
                 new AcceptableValueRange<float>(1f, 20f), new Step(0.5f)));
             FinDrag.SettingChanged += (_, _) => Loadout.Invalidate();
             Hud.AddPanel(Indicator.Draw);
-            SettingsTab.AddSection("Rounds", "Guidance", FinDrag, LiftToDrag, UnitLength);
+            SaclosYear = Introduced.Bind(Config, "Guidance", "SACLOS (wire) guidance", 1966f, "SACLOS introduced");
+            BeamYear = Introduced.Bind(Config, "Guidance", "beam-riding guidance", 1981f, "Beam riding introduced");
+            WireSpeed = Config.Bind("Guidance", "Max wire speed", 300f, new ConfigDescription(
+                "Fastest a wire-guided (SACLOS) round flies while its wire pays out, m/s: faster and the wire would snap, so the round is held to this until the wire runs out. Beam riders have no limit. TOW tops out near 280.",
+                new AcceptableValueRange<float>(50f, 2000f), new SoftMax(600f), new Step(10f)));
+            SettingsTab.AddSection("Rounds", "Guidance", SaclosYear, BeamYear, WireSpeed, FinDrag, LiftToDrag, UnitLength);
             Loadout.Modify(Modify);
             Loadout.AddFields(GuidanceEditor.Draw);
             Loadout.Launched += Launch;
@@ -107,8 +121,8 @@ namespace GuidedMunitions
             // Slow rounds flying 3 km need longer than a shell
             if (definition.Lifetime < MinLifetime)
                 definition.Lifetime = MinLifetime;
-            // Max turn is rated at burnout speed, as the Turn radius readout shows it
-            float rated = RocketPropelled.Plugin.Speeds(owner, id)?.Burnout ?? 0f;
+            // Max turn is rated at burnout speed (or the wire's limit), as the Turn radius readout shows it
+            float rated = Rated(owner, id, guidance);
             if (PlayerVehicle.Contains(gun))
                 Guide(register, projectile, guidance, rated, (_, _) => Sight.Line, null);
             else
@@ -128,9 +142,11 @@ namespace GuidedMunitions
         {
             Vector3? start = null;
             float accel = guidance.MaxG * Saclos.Gravity, wire = guidance.WireLength, omega = guidance.Response;
+            bool beam = guidance.Beam;
+            float maxSpeed = MaxSpeed(guidance);
             var motion = new LineMotion();
             // The player's round (no AI label) shows on the HUD
-            Indicator.Shot? shot = label == null ? Indicator.Track(wire) : null;
+            Indicator.Shot? shot = label == null ? Indicator.Track(wire, beam ? "beam" : "wire") : null;
             bool Ends(string why, float age, Vector3 position)
             {
                 if (shot != null)
@@ -154,16 +170,17 @@ namespace GuidedMunitions
                         shot.Distance = Vector3.Distance(position, start.Value);
                     }
                     if (Vector3.Distance(position, start.Value) > wire)
-                        return Ends("wire ran out", age, position);
+                        return Ends(beam ? "out of the beam's range" : "wire ran out", age, position);
                     if (sight(position, velocity) is not { } line)
                         return Ends("sight lost", age, position);
-                    if (!Saclos.InView(position, line.Origin, line.Direction))
-                        return Ends("out of the sight's view", age, position);
+                    if (beam ? !Saclos.InBeam(position, line.Origin, line.Direction) : !Saclos.InView(position, line.Origin, line.Direction))
+                        return Ends(beam ? "left the beam" : "out of the sight's view", age, position);
                     if (Terrain.Cuts(line.Origin, position))
                         return Ends("terrain cut the line", age, position);
                     motion.Update(line.Origin, line.Direction, dt);
                     velocity = Saclos.Steer(position, velocity, line.Origin, line.Direction, accel, dt, rated, LiftToDrag.Value, omega,
                         motion.OriginVelocity, motion.TurnRate);
+                    velocity = Saclos.Capped(velocity, maxSpeed);
                     return true;
                 }
                 catch (Exception e)
@@ -341,36 +358,69 @@ namespace GuidedMunitions
     /// </summary>
     internal static class GuidanceEditor
     {
-        private static readonly string[] options = { "None", "SACLOS" };
+        // Label, stored mode (null for none), first year (null for always)
+        private static readonly (string Label, string? Mode, Func<float>? Year)[] options =
+        {
+            ("None", null, null),
+            ("SACLOS", Guidance.Saclos, () => Plugin.SaclosYear.Value),
+            ("Beam riding", Guidance.BeamRiding, () => Plugin.BeamYear.Value),
+        };
+
+        // Gun and round, its "not available until" row
+        private static readonly Dictionary<(IntPtr, string), StringProperty> notes = new();
+
+        private static float YearOf(string? mode) => options.FirstOrDefault(o => o.Mode == mode).Year?.Invoke() ?? 0f;
 
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
             if (cannon.Blueprint is not { } gun || !RocketPropelled.Plugin.HasMotor(gun, id))
                 return;
-            bool has = Loadout.Get<GuidedRound>(gun, id)?.Guidance != null;
-            EditorGui.Dropdown(drawer, "Guidance", options, has ? 1 : 0, i =>
+            string? mode = Loadout.Get<GuidedRound>(gun, id)?.Guidance?.Mode;
+            // Modes too new for the vehicle are hidden, except the round's own
+            var offered = options.Where(o => o.Mode == mode || Introduced.Allowed(o.Year?.Invoke() ?? 0f)).ToList();
+            EditorGui.Dropdown(drawer, "Guidance", offered.Select(o => o.Label).ToList(), offered.FindIndex(o => o.Mode == mode), i =>
             {
-                Loadout.Edit<GuidedRound>(gun, id, r => r.Guidance = i == 0 ? null : r.Guidance ?? new Guidance());
+                string? picked = offered[i].Mode;
+                Loadout.Edit<GuidedRound>(gun, id, r =>
+                {
+                    if (picked == null)
+                        r.Guidance = null;
+                    else
+                        (r.Guidance ??= new Guidance()).Mode = picked;
+                });
                 changed();
                 Loadout.Redraw();
-            }, "SACLOS: the round steers onto its gunner's sight line, so it hits what the sight stays on, burning or coasting, until its wire runs out or terrain cuts the line to it. The AI's gunners guide theirs onto their target.");
-            if (has)
-                RoundFields.Draw(drawer, RoundFields.For(gun, id, "guidance", () => Make(gun, id, changed)));
+            }, "SACLOS: the round steers onto its gunner's sight line, so it hits what the sight stays on, burning or coasting, until its wire runs out or terrain cuts the line to it. "
+                + $"Downsides: the wire holds it to {Plugin.WireSpeed.Value:0} m/s (Max wire speed), so a hot motor is wasted and the round takes longer to arrive; its range ends with the wire. "
+                + $"Beam riding: the same, steering by a beam along the sight line instead of a wire, with no speed limit. Downside: once {Saclos.GatherDistance:0} m out it must stay within {Saclos.BeamRadius:0} m of the beam's centre, so a fast swing of the sight loses it. "
+                + "The AI's gunners guide theirs onto their target. Kinds newer than the vehicle's year are hidden (MadiLib's Historical availability).");
+            if (mode == null)
+                return;
+            if (!Introduced.Allowed(YearOf(mode)))
+            {
+                if (!notes.TryGetValue((gun.Pointer, id), out StringProperty? note))
+                    notes[(gun.Pointer, id)] = note = EditorGui.Readout("Too new",
+                        () => Introduced.Note(YearOf(Loadout.Get<GuidedRound>(gun, id)?.Guidance?.Mode)),
+                        "This guidance is newer than the vehicle's year. It still works; pick another or a later year to clear this.");
+                drawer.Readonly(note);
+            }
+            // Per mode, so the range field's label follows it
+            RoundFields.Draw(drawer, RoundFields.For(gun, id, "guidance." + mode, () => Make(gun, id, changed, mode == Guidance.BeamRiding)));
         }
 
         // Per gun and round: the inputs "Hits at" was last flown for, and its result
         private static readonly Dictionary<(IntPtr, string), ((float, float, float, float, float, float, int, float) For, (float Min, float Max) Result)> hitRanges = new();
 
-        private static (FloatProperty[], StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
+        private static (FloatProperty[], StringProperty[]) Make(CannonBlueprint gun, string id, Action changed, bool beam)
         {
             Guidance G() => Loadout.Get<GuidedRound>(gun, id)?.Guidance ?? new Guidance();
             StringProperty[] readouts =
             {
                 EditorGui.Readout("Turn radius", () =>
                 {
-                    float v = RocketPropelled.Plugin.Speeds(gun, id)?.Burnout ?? 0f;
+                    float v = Plugin.Rated(gun, id, G());
                     return $"{v * v / (G().MaxG * Saclos.Gravity):0} m";
-                }, "Tightest turn at burnout velocity, without drag or gravity."),
+                }, "Tightest turn at burnout velocity (a wire-guided round's held to Max wire speed), without drag or gravity."),
                 EditorGui.Readout("Hits at", () =>
                 {
                     Guidance g = G();
@@ -378,22 +428,33 @@ namespace GuidedMunitions
                     var thrust = RocketPropelled.Plugin.Thrust(gun, id);
                     // Flown again only when an input changes: the thrust curve counts as its samples at the sim's steps
                     var hash = new HashCode();
+                    float maxSpeed = Plugin.MaxSpeed(g);
+                    hash.Add(maxSpeed);
                     if (thrust != null)
                         for (float t = 0f; t < 30f; t += 0.02f)
                             hash.Add(thrust(t));
-                    var key = (speeds?.Launch ?? 0f, g.MaxG, g.WireLength, speeds?.Burnout ?? 0f, Plugin.LiftToDrag.Value, g.Response, hash.ToHashCode(), Plugin.FinDrag.Value);
+                    var key = (speeds?.Launch ?? 0f, g.MaxG, g.WireLength, Plugin.Rated(gun, id, g), Plugin.LiftToDrag.Value, g.Response, hash.ToHashCode(), Plugin.FinDrag.Value);
                     if (!hitRanges.TryGetValue((gun.Pointer, id), out var cached) || cached.For != key)
                     {
                         // The full-bore warhead's drag with the fins', on its mass, as the game does in flight
                         float mass = ShellProperties.GetProjectileMass(gun.Caliber), fins = 1f + Plugin.FinDrag.Value * g.MaxG;
                         Func<float, float>? decel = Loadout.FullBoreDrag(gun.Caliber) is { } drag && mass > 0f ? v => drag(v) * fins / mass : null;
                         hitRanges[(gun.Pointer, id)] = cached = (key, Saclos.HitRanges(key.Item1, g.MaxG * Saclos.Gravity, g.WireLength, key.Item4,
-                            key.Item5, g.Response, thrust, decel: decel));
+                            key.Item5, g.Response, thrust, decel: decel, maxSpeed: maxSpeed));
                     }
                     var (min, max) = cached.Result;
                     return float.IsInfinity(min) ? "misses" : $"{min:0}-{max:0} m";
-                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire length. Its motor, guidance unit, ignition delay, drag (the fins' too) and turn costs count; a full-bore shell is the warhead."),
+                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire or beam range. Its motor, guidance unit, ignition delay, drag (the fins' too) and turn costs count; a full-bore shell is the warhead."),
                 EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * G().MaxG * 100f:0}%", "Extra drag from the fins, over the round's own."),
+                beam
+                    ? EditorGui.Readout("Beam", () => $"stay within {Saclos.BeamRadius:0} m",
+                        $"Once {Saclos.GatherDistance:0} m out, the round is lost if it strays more than {Saclos.BeamRadius:0} m from the beam's centre: swing the sight slowly enough for it to follow.")
+                    : EditorGui.Readout("Top speed", () =>
+                    {
+                        float burnout = RocketPropelled.Plugin.Speeds(gun, id)?.Burnout ?? 0f, wire = Plugin.WireSpeed.Value;
+                        // Short: the readout column wraps past about 16 characters
+                        return burnout > wire ? $"{wire:0} m/s capped" : $"{burnout:0} m/s";
+                    }, "Fastest the round flies guided. A wire-guided round is held to Max wire speed (Guidance settings) until the wire runs out, or the wire would snap; \"capped\" means the motor could go faster, and that thrust is wasted. Beam riding has no limit."),
             };
             FloatProperty Field(string name, Func<Guidance, float> get, Action<Guidance, float> set, string tooltip, float min, float softMax, float max, float step) =>
                 RoundFields.Field<GuidedRound>(gun, id, name, () => get(G()), (r, value) => set(r.Guidance ??= new Guidance(), value), tooltip, changed, readouts, min, step, max, softMax);
@@ -401,8 +462,9 @@ namespace GuidedMunitions
             {
                 Field("Max turn", g => g.MaxG, (g, v) => g.MaxG = v,
                     "Hardest turn the fins pull, in g, holding up the round's weight too. More turns tighter and holds the line better, but the fins add drag.", 1f, 20f, 50f, 0.5f),
-                Field("Wire length", g => g.WireLength, (g, v) => g.WireLength = v,
-                    "Metres the round flies from launch before its command link runs out; it flies on unguided after.", 500f, 5000f, 10000f, 100f),
+                Field(beam ? "Beam range" : "Wire length", g => g.WireLength, (g, v) => g.WireLength = v,
+                    beam ? "Metres from launch the beam reaches; the round flies on unguided past it."
+                        : "Metres the round flies from launch before its command link runs out; it flies on unguided after.", 500f, 5000f, 10000f, 100f),
                 Field("Response", g => g.Response, (g, v) => g.Response = v,
                     "How fast guidance pulls the round onto the sight line, rad/s: it settles in about 1/this s. Lower lags more, so it overshoots turns and needs more range to settle; higher snaps on but pulls harder.", 0.5f, 5f, 10f, 0.1f),
             };
@@ -417,16 +479,24 @@ namespace GuidedMunitions
         public Guidance? Guidance { get; set; }
     }
 
-    /// <summary>SACLOS guidance: the round steers onto the gunner's sight line.</summary>
+    /// <summary>Command guidance: the round steers onto the gunner's sight line, by wire (SACLOS) or riding a beam.</summary>
     internal sealed class Guidance
     {
+        internal const string Saclos = "saclos", BeamRiding = "beam";
+
+        /// <summary>How the round is guided: <see cref="Saclos"/> (also older files, which have none) or <see cref="BeamRiding"/>.</summary>
+        public string Mode { get; set; } = Saclos;
+
+        /// <summary>Whether it rides a beam rather than following a wire.</summary>
+        internal bool Beam => Mode == BeamRiding;
+
         /// <summary>Hardest turn, g.</summary>
         public float MaxG { get; set; } = 10f;
 
-        /// <summary>Metres from launch before the command link runs out.</summary>
+        /// <summary>Metres from launch before the command link runs out: the wire's length, or the beam's range.</summary>
         public float WireLength { get; set; } = 3000f;
 
         /// <summary>How fast it settles onto the sight line, rad/s.</summary>
-        public float Response { get; set; } = Saclos.DefaultOmega;
+        public float Response { get; set; } = GuidedMunitions.Saclos.DefaultOmega;
     }
 }

@@ -130,7 +130,12 @@ namespace Composite
                 picked = ElementSelection.AppendMirrors(mesh, picked);
             var faces = new Dictionary<int, Vector3>();
             foreach (Face face in picked)
-                faces[face.index] = new Vector3(face.normal.x, face.normal.y, face.normal.z);
+            {
+                var normal = new Vector3(face.normal.x, face.normal.y, face.normal.z);
+                // Zero-area faces have a NaN or zero normal; there is nothing to stack behind them
+                if (Usable(normal))
+                    faces[face.index] = normal;
+            }
             if (faces.Count == 0)
             {
                 operations.NotifyError("Select the faces to stack first.");
@@ -143,7 +148,13 @@ namespace Composite
             {
                 var world = new UnityCoreModule::UnityEngine.Vector3(axis == 1 ? 1f : 0f, axis == 2 ? 1f : 0f, axis == 3 ? 1f : 0f);
                 var local = meshEditor.context.WorldToMesh.MultiplyVector(world);
-                direction = Vector3.Normalize(new Vector3(local.x, local.y, local.z));
+                var mapped = new Vector3(local.x, local.y, local.z);
+                if (!Usable(mapped))
+                {
+                    operations.NotifyError("That axis doesn't map into this compartment's mesh; pick another.");
+                    return;
+                }
+                direction = Vector3.Normalize(mapped);
             }
             // Inward, the first copy clears the faces' own thickness (they thicken inward); outward, its own.
             ushort own = faces.Keys.Max(f => before.serializedFaces[f].thicknesses.Max());
@@ -288,6 +299,29 @@ namespace Composite
         /// so the mean face keeps its spacing.
         /// </remarks>
         /// <exception cref="InvalidOperationException">The axis lies along the faces.</exception>
+        /// <summary>
+        /// A vertex's offset per metre of plate spacing, from the normals of
+        /// its selected faces; with <paramref name="axis"/>, along it toward
+        /// the side the faces face, divided by <paramref name="along"/> (the
+        /// faces' mean |axis · normal|). Normals that aren't finite or are
+        /// near zero length are skipped.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The normals cancel out (or none are usable).</exception>
+        internal static Vector3 Direction(IReadOnlyList<Vector3> normals, Vector3? axis, float along = 1f)
+        {
+            var usable = normals.Where(Usable).ToList();
+            Vector3 sum = usable.Aggregate(Vector3.Zero, (a, b) => a + b);
+            if (!(sum.Length() >= 1e-4f))
+                throw new InvalidOperationException("Selected faces point opposite ways at a shared corner; select one side.");
+            Vector3 mean = Vector3.Normalize(sum);
+            if (axis is { } a)
+                return a * MathF.Sign(Vector3.Dot(a, mean)) / along;
+            // just a random cap maximum here, no rime or reason and this is evil
+            return mean / MathF.Max(usable.Min(n => Vector3.Dot(mean, n)), 0.25f);
+        }
+
+        private static bool Usable(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z) && v.LengthSquared() > 1e-12f;
+
         internal static MeshBlueprint Stacked(MeshBlueprint source, IReadOnlyDictionary<int, Vector3> faces, int layers, float thickness, float gap, bool inward, Vector3? axis, float? start = null)
         {
             var positions = source.vertexPositions.ToList();
@@ -312,14 +346,7 @@ namespace Composite
             float along = axis is { } a0 ? faces.Values.Average(n => MathF.Abs(Vector3.Dot(a0, n))) : 1f;
             if (along < 0.05f)
                 throw new InvalidOperationException("That axis runs along the selected faces; pick another.");
-            var directions = normals.ToDictionary(p => p.Key, p =>
-            {
-                Vector3 mean = Vector3.Normalize(p.Value.Aggregate(Vector3.Zero, (a, b) => a + b));
-                if (axis is { } a)
-                    return a * MathF.Sign(Vector3.Dot(a, mean)) / along;
-                // just a random cap maximum here, no rime or reason and this is evil
-                return mean / MathF.Max(p.Value.Min(n => Vector3.Dot(mean, n)), 0.25f);
-            });
+            var directions = normals.ToDictionary(p => p.Key, p => Direction(p.Value, axis, along));
 
             var result = serialized.Select((face, f) => faces.ContainsKey(f) ? Copy(face, v => v, _ => NoEdge, mm, keepEdges: true) : face).ToList();
             float sign = inward ? -1f : 1f;
@@ -349,6 +376,8 @@ namespace Composite
                     result.Add(Copy(serialized[f], v => vertexMap[v], e => edgeMap.TryGetValue(e, out int n) ? (ushort)n : NoEdge, mm, keepEdges: false));
                 }
             }
+            if (positions.Any(x => !float.IsFinite(x)))
+                throw new InvalidOperationException("Stacking made a broken vertex; nothing was added. Try fewer or different faces.");
             // Past this the ushort thicken-edge indices above have wrapped
             if (edges.Count / 2 > ushort.MaxValue + 1)
                 throw new InvalidOperationException(TooManyPlates);

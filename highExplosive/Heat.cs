@@ -82,7 +82,9 @@ namespace HighExplosive
                 "Times the penetration a HEAT jet loses to NERA. A NERA element is a plate whose material file has e.g. \"nera\": 150 in its properties (the most it takes, in mm), with an optional flyer plate touching its back. "
                 + "That loss goes as sin² of the jet's angle to the plate (none head on, 75% at 60 degrees), its thickness over 10 mm and the room behind it over 30 mm, each capped at 1. 0 turns NERA off.",
                 new AcceptableValueRange<float>(0f, 5f), new Step(0.1f)));
-            SettingsTab.AddSection("Rounds", "HEAT", PeakPenetration, StandoffDrag, StandoffMass, JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, NeraStrength, LogHits);
+            var introduced = MadiLib.Introduced.Bind(config, "HEAT", "HEAT rounds", 1942f);
+            Loadout.Introduce(HeatRound.Type, () => introduced.Value);
+            SettingsTab.AddSection("Rounds", "HEAT", introduced, PeakPenetration, StandoffDrag, StandoffMass, JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, NeraStrength, LogHits);
             Impacts.FragmentSimulating += JetBudget.Simulating;
             Impacts.FragmentSimulated += JetBudget.Simulated;
             Impacts.HitSimulated += JetLog.Simulated;

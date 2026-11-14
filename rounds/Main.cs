@@ -680,6 +680,9 @@ namespace Rounds
         // Cannon blueprint and round id, its name field
         private static readonly Dictionary<(IntPtr, string), StringProperty> names = new();
 
+        // Cannon blueprint and round id, its "not available until" row
+        private static readonly Dictionary<(IntPtr, string), StringProperty> notes = new();
+
         private static void Postfix(CannonEditor __instance, IGUILayout __0)
         {
             Cannon? cannon = __instance.Component;
@@ -691,7 +694,6 @@ namespace Rounds
                 return;
             Action changed = () => cannon.blueprintSlot?.MarkModified();
             Loadout.redraw = __instance.RequestRedraw;
-            List<string> labels = Loadout.Types.Select(t => t.Label).ToList();
             foreach (var (id, name, type) in Loadout.List(owner))
             {
                 if (!names.TryGetValue((owner.Pointer, id), out StringProperty? field))
@@ -706,12 +708,22 @@ namespace Rounds
                         "Shown in the HUD, the rack panel and the Delete button.");
                 drawer.InputField(field);
                 int index = Loadout.Types.FindIndex(t => t.Type == type);
-                EditorGui.Dropdown(drawer, "Type", labels, index, i =>
+                // Types too new for the vehicle are hidden, except the round's own
+                var offered = Loadout.Types.Where(t => t.Type == type || MadiLib.Introduced.Allowed(Loadout.YearOf(t.Type))).ToList();
+                EditorGui.Dropdown(drawer, "Type", offered.Select(t => t.Label).ToList(), offered.FindIndex(t => t.Type == type), i =>
                 {
-                    Loadout.SetType(owner, id, Loadout.Types[i].Type);
+                    Loadout.SetType(owner, id, offered[i].Type);
                     changed();
                     __instance.RequestRedraw();
-                }, "What kind of round this is.");
+                }, "What kind of round this is. Types newer than the vehicle's year are hidden (MadiLib's Historical availability).");
+                if (!MadiLib.Introduced.Allowed(Loadout.YearOf(owner, id, type)))
+                {
+                    if (!notes.TryGetValue((owner.Pointer, id), out StringProperty? note))
+                        notes[(owner.Pointer, id)] = note = EditorGui.Readout("Too new",
+                            () => MadiLib.Introduced.Note(Loadout.YearOf(owner, id, Loadout.List(owner).FirstOrDefault(r => r.Id == id).Type ?? "")),
+                            "This round is newer than the vehicle's year. It still fires; pick another type or a later year to clear this.");
+                    drawer.Readonly(note);
+                }
                 if (index >= 0)
                     Loadout.Types[index].Draw(drawer, cannon, id, changed);
                 foreach (RoundDrawer fields in Loadout.Fields)

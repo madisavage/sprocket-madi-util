@@ -19,6 +19,7 @@ namespace MadiLib
         internal static ManualLogSource Logger = null!;
         internal static ConfigEntry<float> ScrollSensitivity = null!;
         internal static ConfigEntry<bool> Profiling = null!;
+        internal static ConfigEntry<bool> Historical = null!;
 
         /// <summary>Starts keybind polling and HUD drawing, and registers the Settings tab.</summary>
         public override void Load()
@@ -29,7 +30,9 @@ namespace MadiLib
                 new AcceptableValueRange<float>(1f, 300f), new SoftMax(30f), new Step(0.5f)));
             Profiling = Config.Bind("Debug", "Profile", false,
                 "Every 5 seconds, logs how long each plugin's hooks took, slowest first, to BepInEx/LogOutput.log. Costs a little frame rate while on.");
-            SettingsTab.AddSection("MadiLib", "MadiLib", ScrollSensitivity, Profiling);
+            Historical = Config.Bind("Designer", "Historical availability", true,
+                "Hides choices the vehicle's tech year is too early for, such as round types before their Introduced year (each plugin's settings). Vehicles that already have them keep them, with a note.");
+            SettingsTab.AddSection("MadiLib", "MadiLib", ScrollSensitivity, Profiling, Historical);
             ClassInjector.RegisterTypeInIl2Cpp<MadiLibMenu>();
             AddComponent<KeybindPoller>();
             AddComponent<HudDrawer>();

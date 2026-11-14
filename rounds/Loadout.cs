@@ -193,6 +193,28 @@ namespace Rounds
             Types.Add((type, label, draw, projectile, hit, iconOf, penetration));
         }
 
+        // Round type, the year it can first be picked, and the year a given round of it can (sabot: APDS, APFSDS, DU)
+        private static readonly Dictionary<string, (Func<float> Year, Func<CannonBlueprint, string, float>? OfRound)> years = new();
+
+        /// <summary>
+        /// Limits <paramref name="type"/> to vehicles dated <paramref name="year"/>
+        /// or later, as <see cref="MadiLib.Introduced"/>: the designer's Type
+        /// dropdown hides it before then, and a round already of it is flagged,
+        /// not changed. Types never limited, such as <c>"ap"</c>, are always available.
+        /// </summary>
+        /// <param name="type">The round type, as passed to <see cref="Register"/>.</param>
+        /// <param name="year">The type's first year, read each draw so a setting can change it.</param>
+        /// <param name="ofRound">A given round's year from its gun and id, for types whose rounds differ (null uses <paramref name="year"/>).</param>
+        public static void Introduce(string type, Func<float> year, Func<CannonBlueprint, string, float>? ofRound = null) =>
+            years[type] = (year, ofRound);
+
+        /// <summary>The first year <paramref name="type"/> can be picked; 0 for always.</summary>
+        internal static float YearOf(string type) => years.TryGetValue(type, out var y) ? y.Year() : 0f;
+
+        /// <summary>The first year round <paramref name="id"/> of <paramref name="type"/> is available; 0 for always.</summary>
+        internal static float YearOf(CannonBlueprint owner, string id, string type) =>
+            years.TryGetValue(type, out var y) ? y.OfRound?.Invoke(owner, id) ?? y.Year() : 0f;
+
         /// <summary>Whether the player asked for the AI's decisions to be logged (rounds' <b>Log AI</b>).</summary>
         public static bool LogAi => Plugin.LogAi.Value;
 

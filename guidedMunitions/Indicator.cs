@@ -25,6 +25,7 @@ namespace GuidedMunitions
         {
             internal Vector3 Position;
             internal float Distance, Seen, Wire;
+            internal string Link = "wire";
             internal string? Lost;
             internal float LostAt;
         }
@@ -35,9 +36,9 @@ namespace GuidedMunitions
         private static readonly List<Shot> shots = new();
 
         /// <summary>Starts showing a new guided round of the player's.</summary>
-        internal static Shot Track(float wire)
+        internal static Shot Track(float wire, string link)
         {
-            var shot = new Shot { Seen = Time.time, Wire = wire };
+            var shot = new Shot { Seen = Time.time, Wire = wire, Link = link };
             shots.Add(shot);
             return shot;
         }
@@ -57,7 +58,7 @@ namespace GuidedMunitions
             {
                 Shot shot = shots[i];
                 var (text, color) = shot.Lost != null ? ($"Guidance lost: {shot.Lost}", HudDraw.Blocked)
-                    : ($"GUIDED  {shot.Distance / 1000f:0.0} km / {shot.Wire / 1000f:0.0} km wire", HudDraw.Ok);
+                    : ($"GUIDED  {shot.Distance / 1000f:0.0} km / {shot.Wire / 1000f:0.0} km {shot.Link}", HudDraw.Ok);
                 HudDraw.Label(new Rect(left + pad, bottom - height + pad + i * line, width - 2 * pad, line), text, 16, color, TextAnchor.MiddleLeft);
                 if (camera != null)
                     Box(camera, shot.Position, color);

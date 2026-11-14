@@ -25,7 +25,7 @@ namespace MadiUtil
     internal static class Pressure
     {
         /// <summary>Lowest pressure the slider goes to, as a share of the era's.</summary>
-        internal const float MinShare = 0.1f;
+        internal const float MinShare = 0.0f;
 
         // Each cannon tech's date and operating pressure, oldest first
         internal static List<(DateOnly Date, uint Pressure)> Eras = new();

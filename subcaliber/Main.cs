@@ -53,6 +53,21 @@ namespace Subcaliber
 
         internal static ConfigEntry<float> MaxVelocity = null!;
         internal static ConfigEntry<float> PropellantDensity = null!;
+        internal static ConfigEntry<float> ApdsYear = null!, LongRodYear = null!, UraniumYear = null!;
+
+        /// <summary>Whether <paramref name="material"/> is depleted uranium, which has its own year.</summary>
+        internal static bool Uranium(string? material) => material?.Contains("uranium", StringComparison.OrdinalIgnoreCase) == true;
+
+        /// <summary>The first year <paramref name="round"/> is available: as new as its newest feature, long rod or depleted uranium.</summary>
+        internal static float YearOf(SabotRound round)
+        {
+            float year = ApdsYear.Value;
+            if (round.Length >= LongRod.MinCalibers)
+                year = MathF.Max(year, LongRodYear.Value);
+            if (Uranium(round.Material))
+                year = MathF.Max(year, UraniumYear.Value);
+            return year;
+        }
 
         /// <summary>Penetrator materials and their densities (kg/m³), in file order.</summary>
         internal static Dictionary<string, float> Materials = new();
@@ -66,7 +81,11 @@ namespace Subcaliber
                 "Charge mass per volume of case, in kg/m³. Pushing its own gas slows light projectiles: full-bore rounds are unchanged, a light sabot round loses a lot. 0 is the game's, no charge mass.",
                 new AcceptableValueRange<float>(0f, 20000f), new SoftMax(2000f), new Step(50f)));
             LongRod.Load(Config, Log);
-            SettingsTab.AddSection("Rounds", "Subcaliber", MaxVelocity, PropellantDensity, LongRod.TargetHardness, LongRod.SpallMultiplier, LongRod.NeraShare, LongRod.LogNera);
+            ApdsYear = MadiLib.Introduced.Bind(Config, "Introduced", "sabot rounds (APDS)", 1944f, "Sabot");
+            LongRodYear = MadiLib.Introduced.Bind(Config, "Introduced", $"long-rod sabot rounds (APFSDS, {LongRod.MinCalibers:0} calibers or longer)", 1960f, "Long rod");
+            UraniumYear = MadiLib.Introduced.Bind(Config, "Introduced", "depleted uranium penetrators", 1978f, "Depleted uranium");
+            Loadout.Introduce(SabotRound.Type, () => ApdsYear.Value, (owner, id) => YearOf(Round(owner, id)));
+            SettingsTab.AddSection("Rounds", "Subcaliber", ApdsYear, LongRodYear, UraniumYear, MaxVelocity, PropellantDensity, LongRod.TargetHardness, LongRod.SpallMultiplier, LongRod.NeraShare, LongRod.LogNera);
 
             string path = Path.Combine(Paths.ConfigPath, "madi.subcaliber.materials.json");
             if (!File.Exists(path))
@@ -186,7 +205,14 @@ namespace Subcaliber
                 {
                     Field("Projectile diameter", p => gun.Caliber * p.Ratio, (r, v) => r.Diameter = v,
                         "Diameter of the penetrator the round fires, in mm. Below the caliber it is a discarding sabot round.", 1f, 1f),
-                    Field("Penetrator length", p => p.Calibers, (r, v) => r.Length = v,
+                    Field("Penetrator length", p => p.Calibers, (r, v) =>
+                    {
+                        // Crossing into or out of long rod can change the round's year: the panel's "Too new" row must follow
+                        bool crossed = r.Length >= LongRod.MinCalibers != v >= LongRod.MinCalibers;
+                        r.Length = v;
+                        if (crossed && !Introduced.Allowed(Plugin.LongRodYear.Value))
+                            Loadout.Redraw();
+                    },
                         "Penetrator length in calibers of its own diameter. The game's shells are 3.", 1f, 0.5f, 300f, 30f),
                     Field("Sabot coverage", p => p.SabotCoverage, (r, v) => r.SabotCoverage = v,
                         "Fraction of the penetrator's length the sabot covers. 1 is all of it, as an APDS pot sabot; a long rod's saddle sabot grips about a quarter to a third.", 0.05f, 0.05f, 1f),
@@ -196,6 +222,10 @@ namespace Subcaliber
             });
             // The gun's caliber, which can change
             set.Fields[0].Max = gun.Caliber;
+            // Long rods only from their year; a rod already longer keeps its length, and can only shorten
+            float top = Introduced.Allowed(Plugin.LongRodYear.Value) ? 300f : MathF.Max(LongRod.MinCalibers - 0.5f, Plugin.Round(gun, id).Length);
+            set.Fields[1].Max = top;
+            set.Fields[1].SoftMax = MathF.Min(30f, top);
             foreach (FloatProperty field in set.Fields)
                 drawer.Float(field);
 
@@ -204,16 +234,23 @@ namespace Subcaliber
                 Loadout.Edit<SabotRound>(gun, id, r => r.Material = name);
                 changed();
                 EditorGui.Refresh(set.Readouts);
-            });
+                // The material can change the round's year
+                Loadout.Redraw();
+            }, limited: true);
 
             foreach (StringProperty readout in set.Readouts)
                 drawer.Readonly(readout);
         }
 
-        /// <summary>Draws a dropdown of <see cref="Plugin.Materials"/> with <paramref name="selected"/> chosen.</summary>
-        internal static void MaterialDropdown(IGUIElementDrawer drawer, string selected, Action<string> onSelect)
+        /// <summary>
+        /// Draws a dropdown of <see cref="Plugin.Materials"/> with <paramref name="selected"/> chosen;
+        /// <paramref name="limited"/> hides depleted uranium before its year, unless it is the one chosen.
+        /// </summary>
+        internal static void MaterialDropdown(IGUIElementDrawer drawer, string selected, Action<string> onSelect, bool limited = false)
         {
-            List<string> names = Plugin.Materials.Keys.ToList();
+            List<string> names = Plugin.Materials.Keys
+                .Where(n => !limited || n == selected || !Plugin.Uranium(n) || Introduced.Allowed(Plugin.UraniumYear.Value))
+                .ToList();
             EditorGui.Dropdown(
                 drawer,
                 "Material",

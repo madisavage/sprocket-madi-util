@@ -59,7 +59,9 @@ namespace HighExplosive
                 new AcceptableValueRange<float>(0f, 10f), new Step(0.25f)));
             LogBursts = config.Bind("APHE", "Log bursts", false,
                 "Logs each APHE shell's path to its burst, the burst, and what each fragment made after it did: its flags, material, distance and speed.");
-            SettingsTab.AddSection("Rounds", "APHE", Fragmentation, MaxFragments, Spread, Gurney, FragmentMass, PenetrationLoss, LogBursts);
+            var introduced = MadiLib.Introduced.Bind(config, "APHE", "APHE rounds", 1914f);
+            Loadout.Introduce(ApheRound.Type, () => introduced.Value);
+            SettingsTab.AddSection("Rounds", "APHE", introduced, Fragmentation, MaxFragments, Spread, Gurney, FragmentMass, PenetrationLoss, LogBursts);
             using (var icon = Plugin.Icon(ApheRound.Type))
                 Loadout.Register(ApheRound.Type, "APHE", ApheEditor.Draw, (game, cannon, id, functions) =>
                     cannon.Blueprint is { } owner ? Plugin.Shell(game, functions, 1f, explode: false) : null, Hit, icon, penetration: (owner, id, speed) =>

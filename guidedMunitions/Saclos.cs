@@ -31,6 +31,27 @@ namespace GuidedMunitions
             return distance <= near || Vector3.Dot(offset, direction) >= distance * MathF.Cos(TrackerAngle * MathF.PI / 180f);
         }
 
+        /// <summary>Beam riding: how far off the beam's axis, m, the round's receiver still reads it.</summary>
+        // shortcut: one fixed beam radius for every round; make it a round field if designs need different beams
+        internal const float BeamRadius = 5f;
+
+        /// <summary>Beam riding: distance along the beam, m, by which the round must have gathered into it; before, it's lost only as <see cref="InView"/> says.</summary>
+        internal const float GatherDistance = 200f;
+
+        /// <summary>
+        /// Whether a beam-riding round at <paramref name="position"/> still rides the beam from
+        /// <paramref name="origin"/> along unit <paramref name="direction"/>: inside <see cref="InView"/>'s
+        /// cone while gathering (the first <see cref="GatherDistance"/> m), then within <see cref="BeamRadius"/> m of its axis.
+        /// </summary>
+        internal static bool InBeam(Vector3 position, Vector3 origin, Vector3 direction)
+        {
+            if (!InView(position, origin, direction))
+                return false;
+            Vector3 offset = position - origin;
+            float along = Vector3.Dot(offset, direction);
+            return along < GatherDistance || (offset - along * direction).Length() <= BeamRadius;
+        }
+
         /// <summary>
         /// The velocity after one step of <paramref name="dt"/> s for a round at
         /// <paramref name="position"/> flying at <paramref name="velocity"/>, steering onto the line
@@ -71,6 +92,13 @@ namespace GuidedMunitions
             return turned * (speed / turned.Length());
         }
 
+        /// <summary><paramref name="velocity"/> slowed to at most <paramref name="maxSpeed"/> m/s, as a paying-out wire holds a round back.</summary>
+        internal static Vector3 Capped(Vector3 velocity, float maxSpeed)
+        {
+            float speed = velocity.Length();
+            return speed > maxSpeed ? velocity * (maxSpeed / speed) : velocity;
+        }
+
         /// <summary>
         /// The ranges in m at which a round hits: fired from <paramref name="offset"/> m below the sight
         /// at a target on the sight line, as the gun aims at the crosshair, it passes within <paramref name="tolerance"/> m
@@ -78,10 +106,12 @@ namespace GuidedMunitions
         /// (long flights cost the most, and the readout updates as a slider drags), under gravity, with
         /// <paramref name="thrust"/> (m/s² along its path at each second after launch; null for none), steering all the way
         /// as in <see cref="Steer"/>, and slowed by <paramref name="decel"/> (drag, m/s² at a speed; null for none). Min is where the run of hits ending at the longest
-        /// hit starts; both are infinity if none hit.
+        /// hit starts; both are infinity if none hit. Its speed never passes <paramref name="maxSpeed"/> m/s
+        /// (a wire's limit, as <see cref="Capped"/>).
         /// </summary>
         internal static (float Min, float Max) HitRanges(float launch, float maxAccel, float maxRange, float ratedSpeed = 0f, float liftToDrag = 0f,
-            float omega = DefaultOmega, Func<float, float>? thrust = null, float offset = 2f, float tolerance = 0.5f, Func<float, float>? decel = null)
+            float omega = DefaultOmega, Func<float, float>? thrust = null, float offset = 2f, float tolerance = 0.5f, Func<float, float>? decel = null,
+            float maxSpeed = float.PositiveInfinity)
         {
             var ranges = new List<float>();
             for (float r = 25f; r <= maxRange; r += r < 2000f ? 25f : 100f)
@@ -97,8 +127,8 @@ namespace GuidedMunitions
             float Miss(float range)
             {
                 var start = new Vector3(0f, -offset, 0f);
-                var end = MadiLib.Trajectory.Fly(start, Vector3.Normalize(new Vector3(0f, offset, range)) * launch, range, 30f, 0.02f, Gravity, decel, thrust,
-                    (float age, float dt, Vector3 p, ref Vector3 v) => v = Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag, omega));
+                var end = MadiLib.Trajectory.Fly(start, Vector3.Normalize(new Vector3(0f, offset, range)) * MathF.Min(launch, maxSpeed), range, 30f, 0.02f, Gravity, decel, thrust,
+                    (float age, float dt, Vector3 p, ref Vector3 v) => v = Capped(Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag, omega), maxSpeed));
                 return end.Crossed ? MathF.Sqrt(end.Position.X * end.Position.X + end.Position.Y * end.Position.Y) : float.PositiveInfinity;
             }
         }

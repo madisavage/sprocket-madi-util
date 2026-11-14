@@ -191,6 +191,27 @@ blueprint.Name = NameTags.With(blueprint.Name ?? "", tag, $"[stab {NameTags.Form
 
 The game's Technology folder (`TechFiles.Folder`), parsed once and shared: `Read(folder)` gives each file's path and root `JsonObject`, read as the game reads them (trailing commas and comments allowed), unreadable files left out. Never change them. `Text(node)` reads a string value, or null.
 
+## Introduced
+
+Limits designer choices to the vehicle's tech year, such as round types (`Rounds.Loadout.Introduce`), and later ATGMs, rangefinders or active protection. It is a designer rule only: a vehicle that already has something too new keeps it, and battles never check, so loading an old file loses nothing. MadiLib's **Historical availability** setting (Designer section, on by default) turns every limit off.
+
+```csharp
+// In Load: a setting players can change, shown in your Settings section
+var introduced = Introduced.Bind(Config, "HEAT", "HEAT rounds", 1942f);
+SettingsTab.AddSection("Rounds", "HEAT", introduced /*, ... */);
+
+// In your editor panel: hide the choice, or flag one already picked
+if (Introduced.Allowed(introduced.Value))
+    options.Add("HEAT");
+else if (picked == "HEAT")
+    drawer.Readonly(EditorGui.Readout("Too new", () => Introduced.Note(introduced.Value)));
+```
+
+- `Year` is the vehicle's tech year in the designer, or null before the designer has run.
+- `Allowed(year)` is true when the year has come, when Historical availability is off, or with no designer year.
+- `Note(year)` is the text to show on something picked too early: `Not available until 1960`.
+- `Bind(config, section, what, year, key = "Introduced")` binds a float year setting (1900 to 2100, step 1) whose description says what it is for. Pass `key` for several years in one section.
+
 ## Trajectory
 
 A pure flight simulator (no game types). `Trajectory.Fly(position, velocity, range, maxTime, dt, gravity, decel, thrust, steer)` flies downrange along +Z (up is +Y) until the projectile crosses `range` m, turns back, or `maxTime` s pass, and returns its `State` (position, velocity, time, `Crossed`). `decel` is drag deceleration (m/s²) at a speed, `thrust` acceleration along the path at an age, `steer` changes the velocity after each step.

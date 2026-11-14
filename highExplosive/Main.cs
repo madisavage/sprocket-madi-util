@@ -68,7 +68,9 @@ namespace HighExplosive
             Logger = Log;
             AirBlast.Load(Config);
             SettingsTab.AddSection("Rounds", "High explosive blast", AirBlast.Rays, AirBlast.Penetration, AirBlast.Radius, AirBlast.Mass, AirBlast.Cone);
-            SettingsTab.AddSection("Rounds", "HESH", HeshPenetration, HeshNormalization, AirBlast.HeshPenetration);
+            var hesh = MadiLib.Introduced.Bind(Config, "HESH", "HESH rounds", 1945f);
+            Loadout.Introduce(HeKind.Hesh.Type, () => hesh.Value);
+            SettingsTab.AddSection("Rounds", "HESH", hesh, HeshPenetration, HeshNormalization, AirBlast.HeshPenetration);
             foreach (HeKind kind in new[] { HeKind.He, HeKind.Hesh })
                 using (var icon = Icon(kind.Type))
                     Loadout.Register(kind.Type, kind.Label, (drawer, cannon, id, changed) => Editor.Draw(drawer, cannon, id, changed, kind), (game, cannon, id, functions) =>

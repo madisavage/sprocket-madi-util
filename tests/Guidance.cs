@@ -24,6 +24,27 @@ namespace Tests
         }
 
         [Fact]
+        public void WireHoldsSpeedDown()
+        {
+            Assert.Equal(300f, Saclos.Capped(new Vector3(0f, 0f, 500f), 300f).Length(), 3);
+            Assert.Equal(new Vector3(0f, 100f, 0f), Saclos.Capped(new Vector3(0f, 100f, 0f), 300f));
+            // A fast round held to a slow wire still settles and hits
+            Assert.False(float.IsInfinity(Saclos.HitRanges(500f, 10f * Saclos.Gravity, 3000f, 200f, 4f, maxSpeed: 200f).Max));
+        }
+
+        [Fact]
+        public void BeamHoldsOnlyNearItsAxisOnceGathered()
+        {
+            // Gathering: 10 m off a beam at 100 m is inside the tracker cone, so still held
+            Assert.True(Saclos.InBeam(new Vector3(10f, 0f, 100f), Vector3.Zero, Vector3.UnitZ));
+            // Past the gather distance only the beam's radius counts
+            Assert.True(Saclos.InBeam(new Vector3(Saclos.BeamRadius - 1f, 0f, 1000f), Vector3.Zero, Vector3.UnitZ));
+            Assert.False(Saclos.InBeam(new Vector3(Saclos.BeamRadius + 1f, 0f, 1000f), Vector3.Zero, Vector3.UnitZ));
+            // Behind the sight is never in the beam
+            Assert.False(Saclos.InBeam(new Vector3(0f, 0f, -100f), Vector3.Zero, Vector3.UnitZ));
+        }
+
+        [Fact]
         public void SettlesOntoTheLineUnderGravity()
         {
             // Launched 5 m below and 1 m left of a sight line straight ahead, at 200 m/s

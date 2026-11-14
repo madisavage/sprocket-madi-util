@@ -14,6 +14,7 @@ using Properties;
 using Sprocket;
 using Sprocket.Blueprints;
 using Sprocket.UI;
+using Sprocket.Vehicles;
 using Sprocket.Vehicles.Turrets;
 using Sprocket.Vehicles.Cannons;
 using Sprocket.Vehicles.Weapons.Cannons;
@@ -68,8 +69,8 @@ namespace Stabilizer
         /// <summary>
         /// The HUD panel for the player's vehicle: an icon per stabilized
         /// drive (a gun turning both ways gets two), green while on, amber
-        /// over its speed limit, grey with stabilizers switched off; a
-        /// drive's limit (km/h) is shown under it.
+        /// over its speed limit, grey with stabilizers switched off, red
+        /// with the drive destroyed; a drive's limit (km/h) is shown under it.
         /// </summary>
         private static float Indicator(float left, float bottom)
         {
@@ -79,16 +80,17 @@ namespace Stabilizer
             if (!ShowIndicator.Value)
                 return 0f;
             const float icon = 40f, pad = 4f, caption = 14f;
-            var shown = new List<(string Resource, float Limit, UnityCoreModule::UnityEngine.Color Color)>();
-            foreach (var (part, name, speed, limit, seen) in Drives.Status.Values)
+            var shown = new List<(string Resource, string Caption, UnityCoreModule::UnityEngine.Color Color)>();
+            foreach (var (part, name, speed, limit, seen, destroyed) in Drives.Status.Values)
             {
                 if (now - seen >= 1f || part == null || !PlayerVehicle.Contains(part))
                     continue;
-                var color = !PlayerEnabled ? HudDraw.Off : limit > 0f && speed > limit ? HudDraw.Next : HudDraw.Ok;
+                var color = destroyed ? HudDraw.Blocked : !PlayerEnabled ? HudDraw.Off : limit > 0f && speed > limit ? HudDraw.Next : HudDraw.Ok;
+                string label = destroyed ? "destroyed" : limit > 0f ? $"{limit:0} km/h" : "";
                 if (name is "traverse" or "gun azimuth" or "gun")
-                    shown.Add((name == "traverse" ? "traverse.png" : "azimuth.png", limit, color));
+                    shown.Add((name == "traverse" ? "traverse.png" : "azimuth.png", label, color));
                 if (name is "elevation" or "gun")
-                    shown.Add(("elevation.png", limit, color));
+                    shown.Add(("elevation.png", label, color));
             }
             if (shown.Count == 0)
                 return 0f;
@@ -96,12 +98,12 @@ namespace Stabilizer
             GUI.Box(new Rect(left, bottom - height, pad + shown.Count * (icon + pad), height), "");
             for (int i = 0; i < shown.Count; i++)
             {
-                var (resource, limit, color) = shown[i];
+                var (resource, text, color) = shown[i];
                 var cell = new Rect(left + pad + i * (icon + pad), bottom - height + pad, icon, icon);
                 if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } image)
                     HudDraw.Image(cell, image, color);
-                if (limit > 0f)
-                    HudDraw.Label(new Rect(cell.x - pad, cell.yMax, icon + 2 * pad, caption), $"{limit:0} km/h", 10, color);
+                if (text.Length > 0)
+                    HudDraw.Label(new Rect(cell.x - pad, cell.yMax, icon + 2 * pad, caption), text, 10, color);
             }
             return height;
         }
@@ -312,8 +314,11 @@ namespace Stabilizer
         // Behaviour, its speed limit (km/h, 0 for none)
         internal static readonly Dictionary<IntPtr, float> Stabilized = new();
 
-        // Behaviour, what it turns, its HUD name, hull speed, speed limit and when it last ran
-        internal static readonly Dictionary<IntPtr, (Transform Part, string Name, float Speed, float Limit, float Time)> Status = new();
+        // Behaviour, what it turns, its HUD name, hull speed, speed limit, when it last ran and whether its drive is destroyed
+        internal static readonly Dictionary<IntPtr, (Transform Part, string Name, float Speed, float Limit, float Time, bool Destroyed)> Status = new();
+
+        // Behaviour, the drive part that owns it: TurretBehaviour has no health of its own
+        private static readonly Dictionary<IntPtr, VehicleComponent> parts = new();
 
         // Behaviour, every stabilized turret seen aiming and when, for re-stabilizing before its guns fire
         internal static readonly Dictionary<IntPtr, (TurretBehaviour Turret, float Time)> Turrets = new();
@@ -327,35 +332,52 @@ namespace Stabilizer
         internal static void Prune(float now)
         {
             dead.Clear();
-            foreach (var (pointer, (part, _, _, _, seen)) in Status)
+            foreach (var (pointer, (part, _, _, _, seen, _)) in Status)
                 if (part == null || now - seen > 10f)
                     dead.Add(pointer);
             foreach (IntPtr pointer in dead)
             {
                 // Kept for a live drive that's only idle, or the game paused: only its run sets it again
                 if (Status[pointer].Part == null)
+                {
                     Stabilized.Remove(pointer);
+                    parts.Remove(pointer);
+                }
                 Status.Remove(pointer);
             }
         }
 
-        private static void Set(Il2CppObjectBase? behaviour, float? limit)
+        /// <summary>
+        /// Whether <paramref name="behaviour"/>'s drive part is at zero health.
+        /// The game's own handling of a dead drive is native and unknown; the
+        /// stabilizer writes the axis angle directly, so it has to stop itself.
+        /// </summary>
+        internal static bool Destroyed(Il2CppObjectBase behaviour) =>
+            parts.TryGetValue(behaviour.Pointer, out VehicleComponent? part) && (part == null || part.HealthFraction <= 0f);
+
+        private static void Set(Il2CppObjectBase? behaviour, VehicleComponent part, float? limit)
         {
             if (behaviour == null)
                 return;
             if (limit is { } value)
+            {
                 Stabilized[behaviour.Pointer] = value;
+                parts[behaviour.Pointer] = part;
+            }
             else
+            {
                 Stabilized.Remove(behaviour.Pointer);
+                parts.Remove(behaviour.Pointer);
+            }
         }
 
         [HarmonyPostfix, HarmonyPatch(typeof(TraverseMotor), nameof(TraverseMotor.EnableBehaviour))]
         private static void Traverse(TraverseMotor __instance) =>
-            Set(__instance.behaviour, Plugin.Limit(__instance.traverseBlueprintSlot?.Blueprint));
+            Set(__instance.behaviour, __instance, Plugin.Limit(__instance.traverseBlueprintSlot?.Blueprint));
 
         [HarmonyPostfix, HarmonyPatch(typeof(LayingDrive), nameof(LayingDrive.EnableBehaviour))]
         private static void Laying(LayingDrive __instance) =>
-            Set(__instance.behaviour, Plugin.Limit(__instance.blueprintSlot?.Blueprint));
+            Set(__instance.behaviour, __instance, Plugin.Limit(__instance.blueprintSlot?.Blueprint));
 
         [HarmonyPostfix, HarmonyPatch(typeof(TraverseMotorEditor), nameof(TraverseMotorEditor.OnGUI))]
         private static void TraverseEditor(TraverseMotorEditor __instance, IGUILayout __0)
@@ -385,13 +407,14 @@ namespace Stabilizer
             if (turret?.parent == null || !Drives.Stabilized.TryGetValue(__instance.Pointer, out float limit))
                 return;
             Drives.Turrets[__instance.Pointer] = (__instance, Time.realtimeSinceStartup);
-            if (!Plugin.Enabled(turret))
+            bool destroyed = Drives.Destroyed(__instance);
+            if (destroyed || !Plugin.Enabled(turret))
             {
-                Drives.Status[__instance.Pointer] = (turret, "traverse", 0f, limit, Time.realtimeSinceStartup);
+                Drives.Status[__instance.Pointer] = (turret, "traverse", 0f, limit, Time.realtimeSinceStartup, destroyed);
                 return;
             }
             float speed = Axes.Stabilize(__instance.physicsHandle, turret, turret.parent.TransformDirection(__instance.axis), limit, 1f);
-            Drives.Status[__instance.Pointer] = (turret, "traverse", speed, limit, Time.realtimeSinceStartup);
+            Drives.Status[__instance.Pointer] = (turret, "traverse", speed, limit, Time.realtimeSinceStartup, false);
             // The drive only applies its angle to the model while it's moving; keep model and angle together
             __instance.Apply();
         }
@@ -411,16 +434,17 @@ namespace Stabilizer
                 return;
             float speed = 0f;
             string name = __instance.AzimuthLocked ? "elevation" : __instance.ElevationLocked ? "gun azimuth" : "gun";
-            if (!Plugin.Enabled(trunnions))
+            bool destroyed = Drives.Destroyed(__instance);
+            if (destroyed || !Plugin.Enabled(trunnions))
             {
-                Drives.Status[__instance.Pointer] = (trunnions, name, speed, limit, Time.realtimeSinceStartup);
+                Drives.Status[__instance.Pointer] = (trunnions, name, speed, limit, Time.realtimeSinceStartup, destroyed);
                 return;
             }
             if (!__instance.ElevationLocked)
                 speed = Axes.Stabilize(__instance.elevationHandle, trunnions, trunnions.right, limit, -1f);
             if (!__instance.AzimuthLocked)
                 speed = Axes.Stabilize(__instance.azimuthHandle, trunnions, trunnions.parent.rotation * __instance.zeroLocalRot * Vector3.up, limit, 1f);
-            Drives.Status[__instance.Pointer] = (trunnions, name, speed, limit, Time.realtimeSinceStartup);
+            Drives.Status[__instance.Pointer] = (trunnions, name, speed, limit, Time.realtimeSinceStartup, false);
             // The drive only applies its angles to the model while it's moving; keep model and angles together
             __instance.Apply();
         }
