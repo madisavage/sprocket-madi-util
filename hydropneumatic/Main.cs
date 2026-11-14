@@ -244,6 +244,9 @@ namespace Hydropneumatic
         private static Pose.State? target;
         private static Transform? root;
         private static float seen, levelPitch = float.NaN, integral;
+        // The physics step and frame last run, so vehicles with more than one track a side run them once
+        private static float strutsAt = float.NaN;
+        private static int frameAt = -1;
         // Half the wheelbase and track spacing (m), for the HUD's pitch and roll limits too
         internal static float HalfLength = 2f, HalfWidth = 1f;
         /// <summary>The player's travel (± mm) as of the last frame: the tag's, or less if the suspension can't reach it.</summary>
@@ -354,9 +357,12 @@ namespace Hydropneumatic
                 *preload = track.Stock + Pose.Preload(Current, __instance.sideMultiplier, HalfWidth);
                 track.Written = true;
                 Arms(track);
-                // Once per step, after the right track: both tracks' arms are in
-                if (__instance.sideMultiplier > 0)
+                // Once per step, on the first player track's call; tracks not yet stepped give last step's arms
+                if (strutsAt != Time.fixedTime)
+                {
+                    strutsAt = Time.fixedTime;
                     Struts(__0);
+                }
             }
             catch (Exception e)
             {
@@ -472,10 +478,11 @@ namespace Hydropneumatic
         [HarmonyPostfix, HarmonyPatch(typeof(TrackBehaviour), nameof(TrackBehaviour.Update))]
         private static void Frame(TrackBehaviour __instance)
         {
-            // Once a frame: the left track's call, on a tagged player track
-            if (__instance.sideMultiplier > 0 || !Ready || Released(__instance) || Get(__instance) is not { Settings: var (tagTravel, rate) }
-                || PlayerVehicle.Root is not { } hull || !PlayerVehicle.Contains(__instance.Transform))
+            // Once a frame, on the first tagged player track's call
+            if (!Ready || Released(__instance) || Get(__instance) is not { Settings: var (tagTravel, rate) }
+                || PlayerVehicle.Root is not { } hull || !PlayerVehicle.Contains(__instance.Transform) || frameAt == Time.frameCount)
                 return;
+            frameAt = Time.frameCount;
             using var _ = MadiLib.Profile.Measure("hydropneumatic: frame");
             if (hull != root)
             {

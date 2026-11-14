@@ -102,15 +102,11 @@ namespace RocketPropelled
         /// <summary>Distance flown from launch at <paramref name="v0"/> m/s to burnout, m, without drag or gravity.</summary>
         internal float BurnDistance(float v0, float dry)
         {
-            const int steps = 400;
-            float dt = (BurnOut - Delay) / steps, v = v0, x = v0 * Delay;
-            for (int i = 0; i < steps; i++)
-            {
-                float a = Acceleration(Delay + (i + 0.5f) * dt, dry);
-                x += (v + 0.5f * a * dt) * dt;
-                v += a * dt;
-            }
-            return x;
+            float end = BurnOut;
+            Burn burn = this;
+            return end <= 0f ? 0f
+                : MadiLib.Trajectory.Fly(System.Numerics.Vector3.Zero, new System.Numerics.Vector3(0f, 0f, v0), float.PositiveInfinity, end, end / 400f,
+                    thrust: t => burn.Acceleration(t, dry)).Position.Z;
         }
     }
 }

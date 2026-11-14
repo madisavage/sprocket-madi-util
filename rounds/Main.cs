@@ -75,7 +75,7 @@ namespace Rounds
             }
             catch (Exception e)
             {
-                Log.LogError($"Couldn't hook shell hits, the shell cam won't see the player's: {e}");
+                Log.LogError($"Couldn't hook shell hits; rounds' hits act as the game's shell, and the shell cam won't see the player's: {e}");
             }
         }
     }
@@ -200,7 +200,8 @@ namespace Rounds
 
         /// <summary>
         /// Picks an AI gun's next round: its most penetrating round with shells
-        /// left on its vehicle, rated at the speed the AI leads it by; ties go
+        /// left on its vehicle, rated at its speed at the range of the enemy nearest
+        /// the gun's aim (with none, at the speed the AI leads it by); ties go
         /// to the panel's order. Keeps its pick if no round has shells.
         /// </summary>
         private static void AiPick(IntPtr gun, Cannon cannon, CannonBlueprint owner, string reason)
@@ -209,10 +210,11 @@ namespace Rounds
             CannonBlueprint blueprint = cannon.Blueprint ?? owner;
             AiVelocity.Games.TryGetValue(gun, out var game);
             var rounds = Loadout.List(owner);
-            // shortcut: rated at launch/burnout speed, not at the target's range; rate at its distance if the AI picks badly far out
+            float? range = game == null ? null : AiRange.Of(cannon);
             var rated = rounds.Where(r => left.GetValueOrDefault(r.Id) > 0).Select(r =>
             {
-                float speed = AiVelocity.Speed(gun, blueprint, game, r.Id);
+                // A round that doesn't reach the target rates at no speed
+                float speed = range is float at ? AiVelocity.AtRange(gun, blueprint, game!, r.Id, at)?.Speed ?? 0f : AiVelocity.Speed(gun, blueprint, game, r.Id);
                 return (r.Id, r.Name, Speed: speed, Penetration: Loadout.Penetration(owner, r.Id, speed));
             }).OrderByDescending(r => r.Penetration).ToList();
             string? best = rated.Count > 0 ? rated[0].Id : PickOrFirst(selected, gun, owner);
@@ -221,7 +223,7 @@ namespace Rounds
             if (Plugin.LogAi.Value && (!selected.TryGetValue(gun, out string? before) || before != best))
             {
                 var empty = rounds.Where(r => left.GetValueOrDefault(r.Id) == 0).Select(r => r.Name).ToList();
-                Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Vehicle>()?.name ?? "vehicle"} (gun {gun.ToInt64():X}), {reason}: picks \"{rounds.FirstOrDefault(r => r.Id == best).Name}\""
+                Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Vehicle>()?.name ?? "vehicle"} (gun {gun.ToInt64():X}), {reason}{(range is float d ? $", target {d:0} m" : "")}: picks \"{rounds.FirstOrDefault(r => r.Id == best).Name}\""
                     + (rated.Count == 0 ? ", no round has shells left" : " from " + string.Join(", ", rated.Select(r => $"{r.Name} {r.Penetration:0} mm @{r.Speed:0} m/s ×{left[r.Id]}")))
                     + (empty.Count > 0 ? $"; none left: {string.Join(", ", empty)}" : ""));
             }
@@ -370,10 +372,6 @@ namespace Rounds
                 return;
             waiting.Remove(gun);
             carried[gun] = (id, rack.Pointer);
-            // That may have been the AI's last shell of its pick
-            if (selected.TryGetValue(gun, out string? pick) && !players.Contains(gun) && owner != null && Cannons.TryGetValue(gun, out Cannon? ai)
-                && Left(ai).GetValueOrDefault(pick) == 0)
-                AiPick(gun, ai, owner, $"out of {Loadout.List(owner).FirstOrDefault(r => r.Id == pick).Name}");
             if (Cannons.TryGetValue(gun, out Cannon? cannon) && PlayerVehicle.Contains(cannon) && id != Loaded(gun, Loadout.Owner(cannon)))
                 DynamicSight.Clear();
         }
@@ -391,8 +389,16 @@ namespace Rounds
             bool changed = !loaded.TryGetValue(gun, out string? before) || before != id;
             loaded[gun] = id;
             Log($"gun {gun.ToInt64():X} loaded {id}");
+            // That may have been the AI's last shell of its pick. Only now it's in the gun: picking again while the loader
+            // carries it hides its rack from stagedAmmo, which puts the shell back and takes the new pick's, back and forth
+            if (selected.TryGetValue(gun, out string? pick) && !players.Contains(gun) && Cannons.TryGetValue(gun, out Cannon? ai)
+                && Loadout.Owner(ai) is { } owner && Left(ai).GetValueOrDefault(pick) == 0)
+                AiPick(gun, ai, owner, $"out of {Loadout.List(owner).FirstOrDefault(r => r.Id == pick).Name}");
             if (changed)
                 LoadedChanged(gun);
+            // Its target's range moves between loads, and a rocket's aim speed goes by it
+            else if (!players.Contains(gun))
+                AiVelocity.Update(gun);
         }
 
         /// <summary><paramref name="gun"/> fired, for the shell log.</summary>

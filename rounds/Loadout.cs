@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Il2CppInterop.Runtime.InteropTypes;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Properties;
 using Sprocket.Blueprints;
 using Sprocket.DamageModelling;
@@ -101,6 +102,13 @@ namespace Rounds
         /// that speeds up in flight.
         /// </summary>
         public float AimVelocity;
+
+        /// <summary>
+        /// Acceleration along its path (m/s²) at an age after launch (s), as a
+        /// rocket motor pushes; null for none. Lets rounds work out its speed and
+        /// time to a range (<see cref="MadiLib.Trajectory"/>) for the AI.
+        /// </summary>
+        public Func<float, float>? Thrust;
     }
 
     /// <summary>
@@ -428,13 +436,25 @@ namespace Rounds
             // Checked on the cached copies: this runs every frame, the move once
             if (Parsed(owner)["rounds"] is JsonObject || Parsed(shell)["rounds"] is not JsonObject)
                 return owner;
-            if (Read(owner) is not { } root || Read(shell) is not { } old || old["rounds"] is not JsonObject rounds)
-                return owner;
+            if (Moved(owner.Description, shell.Description) is { } moved)
+                (owner.Description, shell.Description) = moved;
+            return owner;
+        }
+
+        /// <summary>
+        /// The cannon's and shell slot's descriptions with <c>"rounds"</c> moved
+        /// from the shell's to the cannon's, the shell's other keys kept; null
+        /// when there is nothing to move, the cannon has rounds already, or
+        /// either holds text that isn't JSON.
+        /// </summary>
+        internal static (string Owner, string Shell)? Moved(string? owner, string? shell)
+        {
+            if (MadiLib.Descriptions.Parse(owner) is not { } root || root["rounds"] is JsonObject
+                || MadiLib.Descriptions.Parse(shell) is not { } old || old["rounds"] is not JsonObject rounds)
+                return null;
             old.Remove("rounds");
             root["rounds"] = rounds;
-            owner.Description = root.ToJsonString();
-            shell.Description = old.Count == 0 ? "" : old.ToJsonString();
-            return owner;
+            return (root.ToJsonString(), old.Count == 0 ? "" : old.ToJsonString());
         }
 
         /// <summary>
@@ -448,6 +468,41 @@ namespace Rounds
             float caliber = gun.Caliber;
             float Velocity(float l, float c) => ShellProperties.CalculateFireInfo(gun.BoreLength, caliber, 3f * caliber * l, c * gun.PropellantLength, gun.OperatingPressure).MuzzleVelocity;
             return Velocity(length, charge) / Velocity(1f, 1f);
+        }
+
+        // Caliber (mm), a full-bore shell's definition made for its drag; null where making one failed
+        private static readonly Dictionary<float, ProjectileDefinition?> fullBore = new();
+
+        /// <summary>
+        /// The drag force (N) at a speed (m/s) on the game's full-bore shell of
+        /// <paramref name="caliber"/> mm (steel, 3 calibers long), for designer readouts
+        /// with no projectile in flight; null if the game won't make one.
+        /// </summary>
+        public static Func<float, float>? FullBoreDrag(float caliber)
+        {
+            if (!fullBore.TryGetValue(caliber, out ProjectileDefinition? def))
+            {
+                try
+                {
+                    float d = caliber / 1000f;
+                    // The constructor wants at least one function; this one only sits there, as the definition never flies
+                    var functions = new Il2CppReferenceArray<ProjectileFunction>(new ProjectileFunction[] { new ArmourPiercingProjectileFunction() });
+                    def = new ProjectileDefinition("drag", new ProjectileTypeID(-1), Il2CppSystem.Guid.Empty, ShellProperties.GetProjectileMass((ushort)MathF.Round(caliber)),
+                        d, 3f * d, 0f, 60f, functions, new Il2CppReferenceArray<ProjectileFunction>(0));
+                    if (!(def.CalculateDragForce(300f) > 0f))
+                    {
+                        Plugin.Logger.LogWarning($"A {caliber:0} mm shell made in the designer has no drag (drag constant {def.dragConstant}); readouts leave drag out");
+                        def = null;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Plugin.Logger.LogWarning($"Couldn't make a {caliber:0} mm shell for designer readouts, which leave drag out: {e.Message}");
+                    def = null;
+                }
+                fullBore[caliber] = def;
+            }
+            return def == null ? null : v => def.CalculateDragForce(v);
         }
 
         // Shell slot, the cannon using it, for racks, which only know their shell slot

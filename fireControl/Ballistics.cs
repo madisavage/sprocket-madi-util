@@ -1,4 +1,6 @@
 using System;
+using System.Numerics;
+using MadiLib;
 
 namespace FireControl
 {
@@ -37,22 +39,8 @@ namespace FireControl
         /// <summary>The shell's height at <paramref name="range"/> m downrange, fired at <paramref name="angle"/>; null if it falls short.</summary>
         internal static float? Height(float speed, float angle, Func<float, float> decel, float range, float gravity)
         {
-            float x = 0f, y = 0f, vx = speed * MathF.Cos(angle), vy = speed * MathF.Sin(angle);
-            for (float t = 0f; t < MaxTime; t += Step)
-            {
-                float v = MathF.Sqrt(vx * vx + vy * vy);
-                float d = v > 1e-6f ? decel(v) / v : 0f;
-                vx -= vx * d * Step;
-                vy -= (vy * d + gravity) * Step;
-                float nx = x + vx * Step, ny = y + vy * Step;
-                if (nx >= range)
-                    return y + (ny - y) * (range - x) / (nx - x);
-                if (vx <= 0f)
-                    return null;
-                x = nx;
-                y = ny;
-            }
-            return null;
+            var end = Trajectory.Fly(Vector3.Zero, new Vector3(0f, MathF.Sin(angle), MathF.Cos(angle)) * speed, range, MaxTime, Step, gravity, decel);
+            return end.Crossed ? end.Position.Y : null;
         }
     }
 }

@@ -34,8 +34,6 @@ namespace Rounds
         private static readonly Dictionary<string, Il2CppSystem.Guid> guids = new();
         // Definition, its round
         private static readonly Dictionary<IntPtr, Entry> entries = new();
-        // Flight mass and diameter, the round; all a hit's penetrator tells of its projectile
-        internal static readonly Dictionary<(float Mass, float Diameter), Entry> Hits = new();
         private static int version;
 
         internal static void Invalidate()
@@ -85,18 +83,12 @@ namespace Rounds
                 return null;
             register.AddUser(guid);
 
-            float mass = shape.Mass;
-            // Hits match by (mass, diameter), so also avoid a stock shell of the penetrator's caliber
-            float stock = ShellProperties.GetProjectileMass((ushort)MathF.Round(shape.Diameter * 1000f));
-            while (Hits.ContainsKey((mass, shape.Diameter)) || mass == game.Mass && shape.Diameter == game.Diameter || mass == stock)
-                mass = MathF.BitIncrement(mass);
-            def.Mass = mass;
+            def.Mass = shape.Mass;
             def.Diameter = shape.Diameter;
             def.Length = shape.Length;
             def.dragConstant = shape.Drag;
             entry = new Entry(def, shape, game.Diameter, game.ID.Value, type.Hit, owner, id);
             entries[def.Pointer] = entry;
-            Hits[(mass, shape.Diameter)] = entry;
             guids[key] = guid;
             return entry;
         }
@@ -105,6 +97,9 @@ namespace Rounds
         internal static Entry? Of(int id) =>
             IProjectileTypeRegister.Instance is { } register && register.TryGet(new ProjectileTypeID(id), out IProjectileType type)
             && type?.TryCast<ProjectileDefinition>() is { } def && entries.TryGetValue(def.Pointer, out Entry? entry) ? entry : null;
+
+        /// <summary>The round of the projectile definition at <paramref name="def"/>, if it's one of ours.</summary>
+        internal static Entry? Of(IntPtr def) => entries.TryGetValue(def, out Entry? entry) ? entry : null;
 
         /// <summary>Puts <paramref name="entry"/>'s definition in launch or flight state.</summary>
         internal static void Size(Entry entry, bool launch)
@@ -171,8 +166,8 @@ namespace Rounds
 
     /// <summary>
     /// Gives each cannon its loaded round's muzzle velocity, which the gunner
-    /// AI leads and drops its shots by. The game caches the full-bore
-    /// shell's on the cannon when it is built.
+    /// AI leads and drops its shots by (through <see cref="GunLayerAiLead"/>).
+    /// The game caches the full-bore shell's on the cannon when it is built.
     /// </summary>
     [HarmonyPatch(typeof(Cannon), nameof(Cannon.Build))]
     internal static class AiVelocity
@@ -195,7 +190,27 @@ namespace Rounds
                 || behaviour.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource?.GetProjectileDefinition(behaviour.LoadedProjectileTypeID) is not { } game)
                 return;
             Games[gun] = game;
-            cannon.muzzleVelocity = Speed(gun, blueprint, game);
+            float speed = Speed(gun, blueprint, game);
+            // The AI gunner takes flight time as range over this speed: its mean speed to the target, drag and motor counted
+            if (!PlayerVehicle.Contains(cannon) && AiRange.Of(cannon) is float range && AtRange(gun, blueprint, game, null, range) is { } at && at.Time > 0f)
+            {
+                float before = speed;
+                speed = range / at.Time;
+                if (Plugin.LogAi.Value)
+                    Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Sprocket.Vehicles.Vehicle>()?.name ?? "vehicle"} aim: target {range:0} m, there in {at.Time:0.00} s at {at.Speed:0} m/s; leads by {speed:0} m/s (else {before:0})");
+            }
+            cannon.muzzleVelocity = speed;
+        }
+
+        /// <summary>The speed round <paramref name="round"/> (else the loaded one) of <paramref name="gun"/> leaves the muzzle at, m/s.</summary>
+        internal static float Launch(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition game, string? round = null) =>
+            Projectiles.For(gun, game, round) is { } entry ? blueprint.MuzzleVelocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length) : blueprint.MuzzleVelocity;
+
+        /// <summary>Round <paramref name="round"/>'s (else the loaded one's) speed and flight time at <paramref name="range"/> m, with its drag and any motor; null if it doesn't get there.</summary>
+        internal static (float Speed, float Time)? AtRange(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition game, string? round, float range)
+        {
+            var entry = Projectiles.For(gun, game, round);
+            return AiRange.At(entry?.Def ?? game, Launch(gun, blueprint, game, round), range, entry?.Shape.Thrust);
         }
 
         /// <summary>

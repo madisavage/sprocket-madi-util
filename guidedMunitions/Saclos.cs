@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace GuidedMunitions
@@ -73,51 +74,32 @@ namespace GuidedMunitions
         /// <summary>
         /// The ranges in m at which a round hits: fired from <paramref name="offset"/> m below the sight
         /// at a target on the sight line, as the gun aims at the crosshair, it passes within <paramref name="tolerance"/> m
-        /// of the target. Each target range up to <paramref name="maxRange"/> is flown in 25 m steps, under gravity, with
+        /// of the target. Each target range up to <paramref name="maxRange"/> is flown in 25 m steps to 2 km and 100 m past it
+        /// (long flights cost the most, and the readout updates as a slider drags), under gravity, with
         /// <paramref name="thrust"/> (m/s² along its path at each second after launch; null for none), steering all the way
-        /// as in <see cref="Steer"/>. Min is where the run of hits ending at the longest
+        /// as in <see cref="Steer"/>, and slowed by <paramref name="decel"/> (drag, m/s² at a speed; null for none). Min is where the run of hits ending at the longest
         /// hit starts; both are infinity if none hit.
         /// </summary>
         internal static (float Min, float Max) HitRanges(float launch, float maxAccel, float maxRange, float ratedSpeed = 0f, float liftToDrag = 0f,
-            float omega = DefaultOmega, Func<float, float>? thrust = null, float offset = 2f, float tolerance = 0.5f)
+            float omega = DefaultOmega, Func<float, float>? thrust = null, float offset = 2f, float tolerance = 0.5f, Func<float, float>? decel = null)
         {
-            const float step = 25f;
-            int count = (int)(maxRange / step);
-            var hits = new bool[count];
-            for (int i = 0; i < count; i++)
-                hits[i] = Miss((i + 1) * step) <= tolerance;
-            int last = Array.LastIndexOf(hits, true);
+            var ranges = new List<float>();
+            for (float r = 25f; r <= maxRange; r += r < 2000f ? 25f : 100f)
+                ranges.Add(r);
+            int last = ranges.FindLastIndex(r => Miss(r) <= tolerance);
             if (last < 0)
                 return (float.PositiveInfinity, float.PositiveInfinity);
             int first = last;
-            while (first > 0 && hits[first - 1])
+            while (first > 0 && Miss(ranges[first - 1]) <= tolerance)
                 first--;
-            return ((first + 1) * step, (last + 1) * step);
+            return (ranges[first], ranges[last]);
 
             float Miss(float range)
             {
-                const float dt = 0.02f, seconds = 30f;
-                var p = new Vector3(0f, -offset, 0f);
-                Vector3 v = Vector3.Normalize(new Vector3(0f, offset, range)) * launch;
-                var down = new Vector3(0f, -Gravity * dt, 0f);
-                for (float t = 0f; t < seconds; t += dt)
-                {
-                    v += down;
-                    Vector3 next = p + v * dt;
-                    if (next.Z >= range)
-                    {
-                        Vector3 at = Vector3.Lerp(p, next, (range - p.Z) / (next.Z - p.Z));
-                        return MathF.Sqrt(at.X * at.X + at.Y * at.Y);
-                    }
-                    p = next;
-                    float speed = v.Length();
-                    if (thrust != null && speed >= 1f)
-                        v *= 1f + thrust(t) * dt / speed;
-                    v = Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag, omega);
-                    if (v.Z <= 0f)
-                        break;
-                }
-                return float.PositiveInfinity;
+                var start = new Vector3(0f, -offset, 0f);
+                var end = MadiLib.Trajectory.Fly(start, Vector3.Normalize(new Vector3(0f, offset, range)) * launch, range, 30f, 0.02f, Gravity, decel, thrust,
+                    (float age, float dt, Vector3 p, ref Vector3 v) => v = Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag, omega));
+                return end.Crossed ? MathF.Sqrt(end.Position.X * end.Position.X + end.Position.Y * end.Position.Y) : float.PositiveInfinity;
             }
         }
     }

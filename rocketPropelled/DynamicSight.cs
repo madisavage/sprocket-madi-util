@@ -64,7 +64,7 @@ namespace RocketPropelled
         /// <summary>
         /// <c>TryPredictVelocity(RoundInfo info, CannonBehaviour)</c>: the sight
         /// drops predictions and measurements under 20 m/s and falls back to
-        /// the cannon's velocity, which for a rocket is the AI's burnout lead;
+        /// the cannon's velocity, which for a rocket is the AI's lead speed;
         /// a rocket's prediction is its launch velocity instead.
         /// </summary>
         private static void PredictPostfix(object info)

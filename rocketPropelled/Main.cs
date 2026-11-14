@@ -138,7 +138,8 @@ namespace RocketPropelled
 
         /// <summary>
         /// A round with a motor: the charge pushes the motor too, so it leaves
-        /// slower, and the AI leads it by its burnout velocity.
+        /// slower, and the AI leads it by its burnout velocity until it has a target
+        /// (then rounds uses its mean speed to it).
         /// </summary>
         private static bool Modify(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions)
         {
@@ -152,8 +153,10 @@ namespace RocketPropelled
             if (Charge(gun, id) < 1f)
                 shape.LaunchLength = game.Length * LengthFor(gun, ratio, shape.LaunchLength / game.Length);
             LaunchSpeeds[(gun.Pointer, id)] = launch;
-            // shortcut: AI leads by burnout speed, no drag, so it overleads short shots; a drop table per round would fix it
+            // Burnout speed until the AI has a target: rounds then leads by its mean speed to the target's range
             shape.AimVelocity = launch + burn.DeltaV(shape.Mass + burn.Case);
+            float dry = shape.Mass + burn.Case;
+            shape.Thrust = t => burn.Acceleration(t, dry);
             return true;
         }
     }

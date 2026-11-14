@@ -122,8 +122,8 @@ namespace StagedAmmo
         public IntPtr Shown;
         public ProjectileSizeID Size;
         public float NextFilter;
-        // Which racks the loader was shown for the next round, to filter again when it changes
-        public ulong ShownKey;
+        // Which racks (by index into Sources) the loader is shown, to filter again when it changes
+        public bool[] ShownRacks = Array.Empty<bool>();
         public float LastSeen;
         public bool IsPlayer;
         // The gun's WeaponBehaviour, as rounds keys guns
@@ -308,7 +308,7 @@ namespace StagedAmmo
                 staging.Size = size;
                 Filter(finder, staging, now);
             }
-            else if (RoundsLink.Present && ShownKey(staging) != staging.ShownKey)
+            else if (RoundsLink.Present && !Showing(staging).AsSpan().SequenceEqual(staging.ShownRacks))
             {
                 // The game only asks for ammo again when a rack's contents change, not which racks it's shown
                 Filter(finder, staging, now);
@@ -373,31 +373,28 @@ namespace StagedAmmo
 
         private static AmmoRackBehaviour? Rack(IAmmoSourceComponent? source) => source?.AmmoSource?.TryCast<AmmoRackBehaviour>();
 
-        /// <summary>The ready racks holding the gun's next round, one bit each (the first 64).</summary>
-        private static ulong HoldingNext(Staging staging)
-        {
-            ulong bits = 0;
-            for (int i = 0; i < Math.Min(staging.Ready.Length, 64); i++)
-                if (staging.Ready[i] && Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack))
-                    bits |= 1UL << i;
-            return bits;
-        }
-
         /// <summary>
-        /// The ready racks holding the gun's next round, or with none, the
-        /// stowage racks holding it (top bit set): what the loader is shown.
+        /// The racks the loader is shown, by index into the gun's sources: its
+        /// ready racks; with rounds, only ready racks holding the gun's next
+        /// round, or with none, stowage racks holding it if allowed, else none.
         /// </summary>
-        private static ulong ShownKey(Staging staging) => ShownKey(staging, HoldingNext(staging));
-
-        private static ulong ShownKey(Staging staging, ulong ready)
+        private static bool[] Showing(Staging staging)
         {
-            if (ready != 0 || staging.Auto || !Plugin.LoadFromStowage.Value)
-                return ready;
-            ulong stowed = 1UL << 63;
-            for (int i = 0; i < Math.Min(staging.Sources.Length, 63); i++)
-                if (Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack))
-                    stowed |= 1UL << i;
-            return stowed;
+            int count = staging.Ready.Length;
+            var holds = new bool[count];
+            bool readyHolds = false;
+            for (int i = 0; i < count; i++)
+            {
+                holds[i] = Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack);
+                readyHolds |= staging.Ready[i] && holds[i];
+            }
+            bool fromStowage = !readyHolds && !staging.Auto && Plugin.LoadFromStowage.Value;
+            var show = new bool[count];
+            for (int i = 0; i < count; i++)
+                show[i] = !RoundsLink.HasRounds(Rack(staging.Sources[i])) ? staging.Ready[i]
+                    : fromStowage ? holds[i]
+                    : staging.Ready[i] && holds[i];
+            return show;
         }
 
         /// <summary>
@@ -442,26 +439,10 @@ namespace StagedAmmo
                     staging.ReadyRacks.Add(rack.Pointer);
                 }
             }
-            // With rounds, the loader is only shown ready racks holding the gun's next round; with none,
-            // stowage racks holding it if allowed, else none
-            ulong holdingNext = HoldingNext(staging);
-            staging.ShownKey = ShownKey(staging, holdingNext);
-            // Checked rack by rack, not by holdingNext's bits, which stop at 64 racks
-            var holds = new bool[count];
-            bool readyHolds = false;
+            staging.ShownRacks = Showing(staging);
             for (int i = 0; i < count; i++)
             {
-                holds[i] = Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack);
-                readyHolds |= staging.Ready[i] && holds[i];
-            }
-            bool fromStowage = !readyHolds && !staging.Auto && Plugin.LoadFromStowage.Value;
-            for (int i = 0; i < count; i++)
-            {
-                AmmoRackBehaviour? rack = Rack(staging.Sources[i]);
-                bool show = !RoundsLink.HasRounds(rack) ? staging.Ready[i]
-                    : fromStowage ? holds[i]
-                    : staging.Ready[i] && holds[i];
-                if (!show)
+                if (!staging.ShownRacks[i])
                     continue;
                 readySources.Add(staging.Sources[i]);
                 readyPaths.Add(staging.Paths[i]);

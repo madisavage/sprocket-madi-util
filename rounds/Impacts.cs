@@ -113,6 +113,9 @@ namespace Rounds
         /// </summary>
         public static int StruckProjectile = -1;
 
+        // The definition of the shell making the current hit, or zero; its round's hit handler runs on it
+        internal static IntPtr StruckDefinition;
+
         /// <summary>
         /// Raised as one of the player's guns fires, with the mass and
         /// diameter its shell's hits will have (<see cref="PenetratorInfo"/>)
@@ -291,7 +294,7 @@ namespace Rounds
                 Impacts.Simulating = false;
                 Impacts.RaiseSimulated(ref __0);
             }
-            else if (Projectiles.Hits.TryGetValue((__0.Mass, __0.Diameter), out var round) && round.Hit != null)
+            else if (Projectiles.Of(Impacts.StruckDefinition) is { Hit: not null } round)
             {
                 // A failing round falls back to the game's shell for this hit only
                 try { round.Hit(ref __0, round.Owner, round.Id); }
@@ -326,7 +329,7 @@ namespace Rounds
     }
 
     /// <summary>
-    /// Sets <see cref="Impacts.StruckProjectile"/> around a shell's hit, by a
+    /// Sets <see cref="Impacts.StruckProjectile"/> and <see cref="Impacts.StruckDefinition"/> around a shell's hit, by a
     /// native detour on <c>ArmourPiercingProjectileFunction.HitDamageModel</c>,
     /// the only caller that knows the shell: a hit's penetrator doesn't say.
     /// </summary>
@@ -339,7 +342,7 @@ namespace Rounds
         // Kept alive for as long as the detour points at it
         private static HitDamageModel? hook, original;
         private static INativeDetour? detour;
-        private static int id;
+        private static int id, def;
 
         internal static unsafe void Apply()
         {
@@ -348,6 +351,7 @@ namespace Rounds
             IntPtr method = (IntPtr)field!.GetValue(null)!;
             // Field offsets count the object header, which a struct behind a pointer doesn't have
             id = MadiLib.Native.StructOffset<ProjectileInstance>("ID");
+            def = MadiLib.Native.StructOffset<ProjectileInstance>("def");
             hook = Hook;
             // MethodInfo starts with its native code pointer
             detour = INativeDetour.CreateAndApply(*(IntPtr*)method, hook, out original);
@@ -356,6 +360,7 @@ namespace Rounds
         private static byte Hook(IntPtr function, IntPtr projectile, IntPtr hit, IntPtr method)
         {
             Impacts.StruckProjectile = Marshal.ReadInt32(projectile, id);
+            Impacts.StruckDefinition = Marshal.ReadIntPtr(projectile, def);
             try
             {
                 return original!(function, projectile, hit, method);
@@ -363,6 +368,7 @@ namespace Rounds
             finally
             {
                 Impacts.StruckProjectile = -1;
+                Impacts.StruckDefinition = IntPtr.Zero;
             }
         }
     }

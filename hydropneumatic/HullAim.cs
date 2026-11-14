@@ -146,7 +146,10 @@ namespace Hydropneumatic
 
         private static Transform? root;
         private static Cannon? gun;
-        private static float seen, command, lookedUp, aimed, layError = float.NaN, layIntegral, layForce, layHold, layRate, layGrip;
+        private static float seen, command, lookedUp, aimed, layError = float.NaN, layIntegral, layMoment, layHold, layRate, layGrip;
+        // The physics step the laying moment was last worked out in, and the player's track count
+        private static float layAt = float.NaN;
+        private static int trackCount;
         private static bool steering, turning, failed, leftContact, rightContact, layCapped;
 
         /// <summary>Flips hull aiming; off hands pitch back to the keys.</summary>
@@ -176,6 +179,7 @@ namespace Hydropneumatic
             {
                 root = hull;
                 lookedUp = now;
+                trackCount = hull.GetComponentsInChildren<TrackBehaviour>().Length;
                 layHold = 0f;
                 gun = null;
                 foreach (Cannon cannon in hull.GetComponentsInChildren<Cannon>())
@@ -296,9 +300,10 @@ namespace Hydropneumatic
                 float x = Vector3.Dot(at - body.worldCenterOfMass, hull.right);
                 if (MathF.Abs(x) < 0.1f)
                     return;
-                // Once a step, on the left track's call; both tracks give half the moment
-                if (__instance.sideMultiplier < 0)
+                // Once a step, on the first track's call; every track gives an equal share of the moment
+                if (layAt != Time.fixedTime)
                 {
+                    layAt = Time.fixedTime;
                     Vector3 up = hull.up;
                     float accel;
                     float rate = Vector3.Dot(body.angularVelocity, up) * Mathf.Rad2Deg;
@@ -306,13 +311,14 @@ namespace Hydropneumatic
                     // Moving the way it pushes: about the push sliding takes
                     if (MathF.Abs(rate) > 0.5f && MathF.Sign(rate) == MathF.Sign(layIntegral))
                         layHold = MathF.Abs(layIntegral);
-                    // A force f at x along forward turns the hull by -x·f about up: |f| per track for half the moment
-                    float cap = layGrip * body.mass * Physics.gravity.magnitude / 2f;
-                    layForce = accel * Ride.Inertia(body, up) / (2f * MathF.Abs(x));
-                    layCapped = MathF.Abs(layForce) > cap;
-                    layForce = Math.Clamp(layForce, -cap, cap);
+                    layMoment = accel * Ride.Inertia(body, up);
                 }
-                body.AddForceAtPosition(hull.forward * (-MathF.Sign(x) * layForce), at, ForceMode.Force);
+                // A force f at x along forward turns the hull by -x·f about up: |f| per track for its share of the moment
+                int n = Math.Max(2, trackCount);
+                float cap = layGrip * body.mass * Physics.gravity.magnitude / n;
+                float force = layMoment / (n * MathF.Abs(x));
+                layCapped = MathF.Abs(force) > cap;
+                body.AddForceAtPosition(hull.forward * (-MathF.Sign(x) * Math.Clamp(force, -cap, cap)), at, ForceMode.Force);
             }
             catch (Exception e)
             {

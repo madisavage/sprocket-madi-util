@@ -179,22 +179,30 @@ namespace GuidedMunitions
     }
 
     /// <summary>Whether terrain stands between a sight and its round, which cuts the guidance.</summary>
+    /// <remarks>
+    /// The game has no "Terrain" layer, so this casts against every layer and
+    /// counts only <c>TerrainCollider</c> hits; vehicles and props on the line don't cut it.
+    /// </remarks>
     internal static class Terrain
     {
-        // The terrain layer's mask; 0 if the game has no "Terrain" layer, which turns the cut off
-        private static int? mask;
+        // (layer, collider type) pairs already logged, so a map's blockers show once each in the log
+        private static readonly HashSet<(int, string)> seen = new();
 
         internal static bool Cuts(Vector3 from, Vector3 to)
         {
-            if (mask == null)
+            var start = new UnityVector3(from.X, from.Y, from.Z);
+            var line = new UnityVector3(to.X - from.X, to.Y - from.Y, to.Z - from.Z);
+            foreach (var hit in Physics.RaycastAll(start, line.normalized, line.magnitude))
             {
-                int layer = LayerMask.NameToLayer("Terrain");
-                mask = layer < 0 ? 0 : 1 << layer;
-                if (layer < 0)
-                    Plugin.Logger.LogWarning("No \"Terrain\" layer, so terrain doesn't cut guidance. Layers: "
-                        + string.Join(", ", Enumerable.Range(0, 32).Select(i => $"{i} {LayerMask.LayerToName(i)}").Where(n => n.Length > 3)));
+                if (hit.collider == null)
+                    continue;
+                string type = hit.collider.GetIl2CppType().Name;
+                if (seen.Add((hit.collider.gameObject.layer, type)))
+                    Plugin.Logger.LogInfo($"Guidance line crossed a {type} on layer {hit.collider.gameObject.layer} ({LayerMask.LayerToName(hit.collider.gameObject.layer)})");
+                if (type == "TerrainCollider")
+                    return true;
             }
-            return mask != 0 && Physics.Linecast(new UnityVector3(from.X, from.Y, from.Z), new UnityVector3(to.X, to.Y, to.Z), mask.Value);
+            return false;
         }
     }
 
@@ -350,6 +358,9 @@ namespace GuidedMunitions
                 RoundFields.Draw(drawer, RoundFields.For(gun, id, "guidance", () => Make(gun, id, changed)));
         }
 
+        // Per gun and round: the inputs "Hits at" was last flown for, and its result
+        private static readonly Dictionary<(IntPtr, string), ((float, float, float, float, float, float, int, float) For, (float Min, float Max) Result)> hitRanges = new();
+
         private static (FloatProperty[], StringProperty[]) Make(CannonBlueprint gun, string id, Action changed)
         {
             Guidance G() => Loadout.Get<GuidedRound>(gun, id)?.Guidance ?? new Guidance();
@@ -364,10 +375,24 @@ namespace GuidedMunitions
                 {
                     Guidance g = G();
                     var speeds = RocketPropelled.Plugin.Speeds(gun, id);
-                    var (min, max) = Saclos.HitRanges(speeds?.Launch ?? 0f, g.MaxG * Saclos.Gravity, g.WireLength, speeds?.Burnout ?? 0f,
-                        Plugin.LiftToDrag.Value, g.Response, RocketPropelled.Plugin.Thrust(gun, id));
+                    var thrust = RocketPropelled.Plugin.Thrust(gun, id);
+                    // Flown again only when an input changes: the thrust curve counts as its samples at the sim's steps
+                    var hash = new HashCode();
+                    if (thrust != null)
+                        for (float t = 0f; t < 30f; t += 0.02f)
+                            hash.Add(thrust(t));
+                    var key = (speeds?.Launch ?? 0f, g.MaxG, g.WireLength, speeds?.Burnout ?? 0f, Plugin.LiftToDrag.Value, g.Response, hash.ToHashCode(), Plugin.FinDrag.Value);
+                    if (!hitRanges.TryGetValue((gun.Pointer, id), out var cached) || cached.For != key)
+                    {
+                        // The full-bore warhead's drag with the fins', on its mass, as the game does in flight
+                        float mass = ShellProperties.GetProjectileMass(gun.Caliber), fins = 1f + Plugin.FinDrag.Value * g.MaxG;
+                        Func<float, float>? decel = Loadout.FullBoreDrag(gun.Caliber) is { } drag && mass > 0f ? v => drag(v) * fins / mass : null;
+                        hitRanges[(gun.Pointer, id)] = cached = (key, Saclos.HitRanges(key.Item1, g.MaxG * Saclos.Gravity, g.WireLength, key.Item4,
+                            key.Item5, g.Response, thrust, decel: decel));
+                    }
+                    var (min, max) = cached.Result;
                     return float.IsInfinity(min) ? "misses" : $"{min:0}-{max:0} m";
-                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire length. Its motor, guidance unit, ignition delay and turn costs count; drag doesn't, so it's hopeful for long coasts, and a full-bore shell is the warhead."),
+                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire length. Its motor, guidance unit, ignition delay, drag (the fins' too) and turn costs count; a full-bore shell is the warhead."),
                 EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * G().MaxG * 100f:0}%", "Extra drag from the fins, over the round's own."),
             };
             FloatProperty Field(string name, Func<Guidance, float> get, Action<Guidance, float> set, string tooltip, float min, float softMax, float max, float step) =>

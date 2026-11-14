@@ -10,6 +10,7 @@
     <Reference Include="$(BepInEx)/interop/Sprocket.Projectiles.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.LayingDriveDesigner.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleController.dll" Private="false" />
+    <Reference Include="$(BepInEx)/interop/Sprocket.VehicleControl.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleDesigner.Access.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.VehicleFramework.dll" Private="false" />
     <Reference Include="$(BepInEx)/interop/Sprocket.Vehicles.dll" Private="false" />

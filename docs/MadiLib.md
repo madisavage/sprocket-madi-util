@@ -191,6 +191,16 @@ blueprint.Name = NameTags.With(blueprint.Name ?? "", tag, $"[stab {NameTags.Form
 
 The game's Technology folder (`TechFiles.Folder`), parsed once and shared: `Read(folder)` gives each file's path and root `JsonObject`, read as the game reads them (trailing commas and comments allowed), unreadable files left out. Never change them. `Text(node)` reads a string value, or null.
 
+## Trajectory
+
+A pure flight simulator (no game types). `Trajectory.Fly(position, velocity, range, maxTime, dt, gravity, decel, thrust, steer)` flies downrange along +Z (up is +Y) until the projectile crosses `range` m, turns back, or `maxTime` s pass, and returns its `State` (position, velocity, time, `Crossed`). `decel` is drag deceleration (m/s²) at a speed, `thrust` acceleration along the path at an age, `steer` changes the velocity after each step.
+
+```csharp
+// Height 1000 m out of an 800 m/s shell fired level, with drag
+var end = Trajectory.Fly(Vector3.Zero, new Vector3(0f, 0f, 800f), 1000f, 60f, gravity: 9.81f, decel: v => 1e-4f * v * v);
+float drop = end.Crossed ? end.Position.Y : float.NaN;
+```
+
 ## Native
 
 Reading game structs at their native offsets, for structs Il2CppInterop wraps as classes (its arrays of them read garbage) and fields it can't reach. Offsets are looked up by name at runtime.

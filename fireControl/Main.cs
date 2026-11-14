@@ -17,6 +17,7 @@ using Sprocket.UI;
 using Sprocket.Vehicles.Cannons;
 using Sprocket.Vehicles.Cannons.Editor;
 using Sprocket.Vehicles.Weapons;
+using Sprocket.WeaponFramework;
 using GUI = UnityEngine.GUI;
 using Physics = UnityPhysicsModule::UnityEngine.Physics;
 using Rect = UnityCoreModule::UnityEngine.Rect;
@@ -109,15 +110,17 @@ namespace FireControl
         private const float MaxRange = 8000f;
         private static readonly Random random = new();
 
-        // Mils by hand, on top of the ranged elevation
-        private static float manual;
-        // Last reading (m), and when a stereo reading in progress lands
-        private static float? range;
+        // Per cannon: mils by hand, on top of the ranged elevation, and its last reading (m)
+        private static readonly Dictionary<IntPtr, float> manual = new(), ranges = new();
+        // The cannon a reading in progress is for, the reading, and when it started and lands
+        private static IntPtr pendingGun;
         private static float pendingRange, pendingFrom, pendingAt = float.NaN;
-        // The aim ray as the sight gave it, before raising
+        // The aim ray as the sight gave it, before raising, and the player's controller (its fire group picks the gun)
         private static Ray sight;
+        private static VehicleController? controller;
         private static Transform? hull;
-        private static Cannon? gun;
+        // The player's guns and their fire groups (flags, as the controller's)
+        private static readonly List<(Cannon Cannon, int Group)> guns = new();
         private static float lookedUp;
         // Per cannon: range, speed and projectile its elevation was last worked out for, and the result (radians)
         private static readonly Dictionary<IntPtr, ((float Range, float Speed, IntPtr Projectile) For, float? Angle)> solutions = new();
@@ -128,17 +131,40 @@ namespace FireControl
 
         internal static void Adjust(int direction)
         {
-            if (PlayerVehicle.Root != null)
-                manual += direction * Plugin.ManualStep.Value;
+            if (Gun() is { } cannon)
+                manual[cannon.Pointer] = manual.GetValueOrDefault(cannon.Pointer) + direction * Plugin.ManualStep.Value;
         }
 
+        /// <summary>Clears the active gun's by-hand mils and range.</summary>
         internal static void Reset()
         {
-            manual = 0f;
+            if (Gun() is not { } cannon)
+                return;
+            manual.Remove(cannon.Pointer);
+            ranges.Remove(cannon.Pointer);
+            if (pendingGun == cannon.Pointer)
+                pendingAt = float.NaN;
+        }
+
+        /// <summary>Forgets every gun's settings, for a new vehicle.</summary>
+        private static void Clear()
+        {
+            manual.Clear();
+            ranges.Clear();
             solutions.Clear();
             laid.Clear();
-            range = null;
+            guns.Clear();
             pendingAt = float.NaN;
+        }
+
+        /// <summary>Lands a reading in progress once its time is up.</summary>
+        private static void Land()
+        {
+            if (!float.IsNaN(pendingAt) && Time.time >= pendingAt)
+            {
+                ranges[pendingGun] = pendingRange;
+                pendingAt = float.NaN;
+            }
         }
 
         /// <summary>Ranges the point under the crosshair with the gun's rangefinder.</summary>
@@ -154,6 +180,7 @@ namespace FireControl
                 return;
             // Stereo error grows with range squared and shrinks with base length; laser is exact
             float sigma = kind == Rangefinder.Laser ? 0f : Plugin.StereoError.Value / 1000f * nearest * nearest / Plugin.StereoBase.Value;
+            pendingGun = cannon.Pointer;
             pendingRange = MathF.Max(1f, nearest + sigma * Gaussian());
             pendingFrom = Time.time;
             pendingAt = pendingFrom + (kind == Rangefinder.Laser ? Plugin.LaserTime : Plugin.StereoTime).Value;
@@ -179,55 +206,58 @@ namespace FireControl
         {
             if (PlayerVehicle.Root == null || Gun() is not { } cannon)
                 return null;
+            Land();
             var kind = GunSettings.RangefinderOf(cannon.Blueprint);
-            float mils = GunSettings.ElevationOf(cannon.Blueprint) + manual;
+            float mils = GunSettings.ElevationOf(cannon.Blueprint) + manual.GetValueOrDefault(cannon.Pointer);
             if (kind == Rangefinder.None && mils == 0f)
                 return null;
-            string ranged = !float.IsNaN(pendingAt) ? "ranging…"
-                : range is float r ? $"{r:0} m" + (solutions.TryGetValue(cannon.Pointer, out var s) && s.Angle == null ? " (out of reach)" : "")
+            string ranged = !float.IsNaN(pendingAt) && pendingGun == cannon.Pointer ? "ranging…"
+                : ranges.TryGetValue(cannon.Pointer, out float r) ? $"{r:0} m" + (solutions.TryGetValue(cannon.Pointer, out var s) && s.Angle == null ? " (out of reach)" : "")
                 : kind == Rangefinder.None ? "" : "no range";
             string extra = mils == 0f ? "" : $"{mils:+0.0;-0.0} mil";
             return $"Fire control: {ranged}{(ranged.Length > 0 && extra.Length > 0 ? ", " : "")}{extra}";
         }
 
-        /// <summary>The player's gun with a rangefinder, else their first; looked up again on a new vehicle or each second while none.</summary>
+        /// <summary>
+        /// The gun the player is using: in the controller's fire group, one with a
+        /// rangefinder first; else the player's first gun. The guns are looked up
+        /// again on a new vehicle or each second while none.
+        /// </summary>
         private static Cannon? Gun()
         {
             Transform? root = PlayerVehicle.Root;
             float now = Time.realtimeSinceStartup;
-            if (root != hull || gun == null && now - lookedUp > 1f)
+            if (root != hull || guns.Count == 0 && now - lookedUp > 1f)
             {
                 if (root != hull)
-                    Reset();
+                    Clear();
                 hull = root;
                 lookedUp = now;
-                gun = null;
+                guns.Clear();
                 if (root != null)
                     foreach (Cannon cannon in root.GetComponentsInChildren<Cannon>())
-                    {
-                        gun ??= cannon;
-                        if (GunSettings.RangefinderOf(cannon.Blueprint) != Rangefinder.None)
-                        {
-                            gun = cannon;
-                            break;
-                        }
-                    }
+                        guns.Add((cannon, cannon.Cast<IFiregroupUser>().FireGroup));
             }
-            return gun;
+            if (guns.Count == 0)
+                return null;
+            int group = controller == null ? 0 : (int)controller.FireGroup;
+            Cannon? pick = null;
+            foreach (var (cannon, cannonGroup) in guns)
+                if (cannon != null && (group == 0 || (cannonGroup & group) != 0))
+                {
+                    if (GunSettings.RangefinderOf(cannon.Blueprint) != Rangefinder.None)
+                        return cannon;
+                    pick ??= cannon;
+                }
+            return pick ?? guns[0].Cannon;
         }
 
         /// <summary>Radians to raise <paramref name="cannon"/> above the sight's aim now: its default, by hand, and for the range with its loaded round.</summary>
-        private static float Elevation(Cannon? cannon)
+        private static float Elevation(Cannon cannon)
         {
-            if (!float.IsNaN(pendingAt) && Time.time >= pendingAt)
-            {
-                range = pendingRange;
-                pendingAt = float.NaN;
-            }
-            if (cannon == null)
-                return manual / 1000f;
-            float angle = (GunSettings.ElevationOf(cannon.Blueprint) + manual) / 1000f;
-            if (range is not float r || cannon.behaviour is not { } behaviour)
+            Land();
+            float angle = (GunSettings.ElevationOf(cannon.Blueprint) + manual.GetValueOrDefault(cannon.Pointer)) / 1000f;
+            if (!ranges.TryGetValue(cannon.Pointer, out float r) || cannon.behaviour is not { } behaviour)
                 return angle;
             // An unloaded gun's type is -1: keep the last solution
             if (behaviour.LoadedProjectileTypeID.Value >= 0
@@ -245,9 +275,13 @@ namespace FireControl
             return angle + (solutions.TryGetValue(cannon.Pointer, out var last) ? last.Angle ?? 0f : 0f);
         }
 
-        /// <summary>The sight's aim ray, for ranging.</summary>
+        /// <summary>The sight's aim ray, for ranging, and the controller, for its fire group.</summary>
         [HarmonyPrefix, HarmonyPatch(typeof(VehicleController), nameof(VehicleController.UpdateControl))]
-        private static void Sight(Ray aimRay) => sight = aimRay;
+        private static void Sight(VehicleController __instance, Ray aimRay)
+        {
+            sight = aimRay;
+            controller = __instance;
+        }
 
         /// <summary>
         /// Raises the direction the player's laying drives lay the gun in; the sight's view keeps the player's aim.
@@ -260,7 +294,8 @@ namespace FireControl
                 return;
             if (!laid.TryGetValue(__instance.Pointer, out Cannon? cannon))
                 laid[__instance.Pointer] = cannon = trunnions.GetComponentInChildren<Cannon>();
-            float angle = Elevation(cannon);
+            // Each gun keeps its own by-hand mils and range
+            float angle = cannon == null ? 0f : Elevation(cannon);
             if (angle != 0f)
                 worldDirection = Vector3.RotateTowards(worldDirection, Vector3.up, angle, 0f);
         }

@@ -91,10 +91,10 @@ printf 'Assets:\n'
 printf '  %s\n' "${assets[@]}"
 $dry_run && { echo "Dry run: nothing tagged or published."; exit 0; }
 
-git tag -a "$version" -m "$version"
-git push origin "$version"
+# gh makes the tag on origin/main (checked equal to HEAD above), so a failed upload leaves no tag behind
 # Read by the mod manager; GitHub hides HTML comments. --generate-notes appends the changes below it
 compat="<!-- sp-compat {\"hamish.sprocket\": [\"$game_range\"]} -->"
-gh release create "$version" "${assets[@]}" --title "$version" --notes "$compat
+gh release create "$version" "${assets[@]}" --target main --title "$version" --notes "$compat
 Built against Sprocket $game_version." --generate-notes
+git fetch --tags --quiet origin
 echo "Released $version."
