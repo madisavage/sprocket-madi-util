@@ -40,6 +40,8 @@ namespace MadiLib
                 }
                 catch (Exception e) when (e is JsonException or IOException)
                 {
+                    // No logger in unit tests
+                    Plugin.Logger?.LogWarning($"Skipped tech file {Path.GetFileName(path)}, it can't be read: {e.Message}");
                 }
             }
             return read[directory] = files;

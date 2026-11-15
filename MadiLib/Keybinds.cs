@@ -158,29 +158,66 @@ namespace MadiLib
         /// <param name="page">The Settings tab to redraw when rebinding finishes.</param>
         internal static void Capture(MadiLibMenu page)
         {
-            if (capturing == null || Keyboard.current is not { } keys)
+            if (capturing == null)
+                return;
+            Keyboard keys = Keyboard.current;
+            if (keys == null)
                 return;
 
             if (keys.backspaceKey.wasPressedThisFrame)
                 capturing.Entry.Value = "";
             else if (!keys.escapeKey.wasPressedThisFrame)
             {
-                Key? pressed = null;
-                foreach (Key key in Enum.GetValues<Key>())
-                {
-                    if (key == Key.None || Array.IndexOf(modifiers, key) >= 0)
-                        continue;
-                    try { if (keys[key].wasPressedThisFrame) { pressed = key; break; } }
-                    catch (Exception) { }
-                }
-                string? name = pressed?.ToString() ?? (Scrolled(1) ? "WheelUp" : Scrolled(-1) ? "WheelDown" : null);
+                string? name = PressedName(keys);
                 if (name == null)
                     return;
-                capturing.Entry.Value = (keys.ctrlKey.isPressed ? "Ctrl+" : "") + (keys.shiftKey.isPressed ? "Shift+" : "") + (keys.altKey.isPressed ? "Alt+" : "") + name;
+                string held = "";
+                if (keys.ctrlKey.isPressed)
+                    held += "Ctrl+";
+                if (keys.shiftKey.isPressed)
+                    held += "Shift+";
+                if (keys.altKey.isPressed)
+                    held += "Alt+";
+                capturing.Entry.Value = held + name;
             }
 
             capturing = null;
             page.GUIRepaint = true;
+        }
+
+        // Keys this keyboard doesn't have: looking them up throws, so they're logged once and skipped
+        private static readonly HashSet<Key> missingKeys = new();
+
+        /// <summary>The bind name of the key (not a modifier) or wheel turn pressed this frame, or null for none.</summary>
+        private static string? PressedName(Keyboard keys)
+        {
+            foreach (Key key in Enum.GetValues<Key>())
+            {
+                if (key == Key.None)
+                    continue;
+                if (Array.IndexOf(modifiers, key) >= 0)
+                    continue;
+                if (missingKeys.Contains(key))
+                    continue;
+                bool pressed;
+                try
+                {
+                    pressed = keys[key].wasPressedThisFrame;
+                }
+                catch (Exception e)
+                {
+                    missingKeys.Add(key);
+                    Plugin.Logger.LogInfo($"Key {key} can't be bound on this keyboard: {e.Message}");
+                    continue;
+                }
+                if (pressed)
+                    return key.ToString();
+            }
+            if (Scrolled(1))
+                return "WheelUp";
+            if (Scrolled(-1))
+                return "WheelDown";
+            return null;
         }
 
         /// <summary>
