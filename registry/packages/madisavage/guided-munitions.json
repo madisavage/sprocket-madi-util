@@ -27,17 +27,17 @@
     "dependencies": [
         {
             "id": "madisavage.madi-lib",
-            "version": ">=26.11.11",
+            "version": ">=26.11.15",
             "when": "*"
         },
         {
             "id": "madisavage.rounds",
-            "version": ">=26.11.11",
+            "version": ">=26.11.15",
             "when": "*"
         },
         {
             "id": "madisavage.rocket-propelled",
-            "version": ">=26.11.11",
+            "version": ">=26.11.15",
             "when": "*"
         }
     ],
