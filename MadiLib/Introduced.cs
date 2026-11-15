@@ -25,7 +25,16 @@ namespace MadiLib
         /// </summary>
         public static bool Allowed(float year) => Allowed(year, Year);
 
-        internal static bool Allowed(float year, int? now) => !Plugin.Historical.Value || now is not int y || y >= year;
+        internal static bool Allowed(float year, int? now)
+        {
+            // Historical availability off: everything can be picked
+            if (!Plugin.Historical.Value)
+                return true;
+            // Outside the designer: nothing is limited
+            if (now == null)
+                return true;
+            return now.Value >= year;
+        }
 
         /// <summary>The note shown on something picked before <paramref name="year"/>.</summary>
         public static string Note(float year) => $"Not available until {year:0}";

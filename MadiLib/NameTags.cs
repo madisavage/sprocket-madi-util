@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace MadiLib
@@ -34,9 +33,23 @@ namespace MadiLib
         public static float[]? Numbers(Regex tag, string word, string? name, float[] defaults)
         {
             Match match = tag.Match(name ?? "");
-            if (!match.Success || Any(word).Match(name!).Value.Trim() != match.Value.Trim())
+            if (!match.Success)
                 return null;
-            return defaults.Select((fallback, i) => match.Groups[i + 1].Success ? float.Parse(match.Groups[i + 1].Value, CultureInfo.InvariantCulture) : fallback).ToArray();
+            // The first [word ...] in the name isn't this tag: it's malformed
+            string first = Any(word).Match(name!).Value.Trim();
+            if (first != match.Value.Trim())
+                return null;
+            float[] numbers = new float[defaults.Length];
+            for (int i = 0; i < defaults.Length; i++)
+            {
+                // Group 0 is the whole tag, so number i is group i + 1
+                Group group = match.Groups[i + 1];
+                if (group.Success)
+                    numbers[i] = float.Parse(group.Value, CultureInfo.InvariantCulture);
+                else
+                    numbers[i] = defaults[i];
+            }
+            return numbers;
         }
 
         /// <summary>Whether <paramref name="name"/> has <paramref name="tag"/>, a tag without numbers, by the same rule as <see cref="Numbers"/>.</summary>
@@ -46,7 +59,9 @@ namespace MadiLib
         public static string With(string name, string word, string? newTag)
         {
             string untagged = Any(word).Replace(name, "").Trim();
-            return newTag == null ? untagged : $"{untagged} {newTag}".Trim();
+            if (newTag == null)
+                return untagged;
+            return $"{untagged} {newTag}".Trim();
         }
 
         /// <summary><paramref name="value"/> as a tag writes it: invariant culture, up to two decimals.</summary>

@@ -27,9 +27,9 @@ namespace MadiLib
         /// </summary>
         public static IReadOnlyList<(string Path, JsonObject Root)> Read(string directory)
         {
-            if (read.TryGetValue(directory, out var files))
+            if (read.TryGetValue(directory, out List<(string Path, JsonObject Root)>? files))
                 return files;
-            files = new();
+            files = new List<(string Path, JsonObject Root)>();
             var options = new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
             foreach (string path in Directory.EnumerateFiles(directory, "*.json"))
             {
@@ -44,7 +44,8 @@ namespace MadiLib
                     Plugin.Logger?.LogWarning($"Skipped tech file {Path.GetFileName(path)}, it can't be read: {e.Message}");
                 }
             }
-            return read[directory] = files;
+            read[directory] = files;
+            return files;
         }
 
         /// <summary>
@@ -56,14 +57,43 @@ namespace MadiLib
         public static Dictionary<(float Spall, float Rha, float Density), (string Name, float Value)> Flagged(string directory, string key)
         {
             var flagged = new Dictionary<(float, float, float), (string, float)>();
-            foreach (var (path, root) in Read(directory))
-                if (root["properties"] is JsonObject p && p[key] is JsonValue v && v.TryGetValue(out double flag) && flag != 0
-                    && p["spallFactor"] is JsonValue s && p["rhaFactor"] is JsonValue r && p["density"] is JsonValue d)
-                    flagged[(s.GetValue<float>(), r.GetValue<float>(), d.GetValue<float>())] = (Path.GetFileNameWithoutExtension(path), (float)flag);
+            foreach ((string path, JsonObject root) in Read(directory))
+            {
+                JsonObject? properties = root["properties"] as JsonObject;
+                if (properties == null)
+                    continue;
+                JsonValue? flagValue = properties[key] as JsonValue;
+                if (flagValue == null)
+                    continue;
+                if (!flagValue.TryGetValue(out double flag))
+                    continue;
+                // Zero: the material doesn't have it
+                if (flag == 0)
+                    continue;
+                JsonValue? spall = properties["spallFactor"] as JsonValue;
+                if (spall == null)
+                    continue;
+                JsonValue? rha = properties["rhaFactor"] as JsonValue;
+                if (rha == null)
+                    continue;
+                JsonValue? density = properties["density"] as JsonValue;
+                if (density == null)
+                    continue;
+                (float, float, float) plate = (spall.GetValue<float>(), rha.GetValue<float>(), density.GetValue<float>());
+                flagged[plate] = (Path.GetFileNameWithoutExtension(path), (float)flag);
+            }
             return flagged;
         }
 
         /// <summary><paramref name="node"/> as a string, or null when it isn't one.</summary>
-        public static string? Text(JsonNode? node) => node is JsonValue value && value.TryGetValue(out string? text) ? text : null;
+        public static string? Text(JsonNode? node)
+        {
+            JsonValue? value = node as JsonValue;
+            if (value == null)
+                return null;
+            if (!value.TryGetValue(out string? text))
+                return null;
+            return text;
+        }
     }
 }

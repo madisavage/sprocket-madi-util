@@ -54,9 +54,16 @@ namespace MadiLib
         /// </summary>
         internal static void EndHeaderDrag()
         {
-            if ((DynamicGUI.HeaderBar.expandOnHover || DynamicGUI.HeaderBar.collapseOnHover)
-                && UnityEngine.InputSystem.Mouse.current is { } mouse && !mouse.leftButton.isPressed)
-                DynamicGUI.HeaderBar.expandOnHover = DynamicGUI.HeaderBar.collapseOnHover = false;
+            // No header drag armed
+            if (!DynamicGUI.HeaderBar.expandOnHover && !DynamicGUI.HeaderBar.collapseOnHover)
+                return;
+            UnityEngine.InputSystem.Mouse mouse = UnityEngine.InputSystem.Mouse.current;
+            if (mouse == null)
+                return;
+            if (mouse.leftButton.isPressed)
+                return;
+            DynamicGUI.HeaderBar.expandOnHover = false;
+            DynamicGUI.HeaderBar.collapseOnHover = false;
         }
 
         /// <summary>Draws a dropdown of <paramref name="options"/>.</summary>

@@ -88,17 +88,34 @@ namespace MadiLib
                 property.Min = range.MinValue;
                 property.Max = range.MaxValue;
             }
-            if (entry.Description.Tags?.OfType<SoftMax>().FirstOrDefault() is { } softMax)
+            SoftMax? softMax = Tag<SoftMax>(entry);
+            if (softMax != null)
             {
                 property.SoftMin = property.Min;
                 property.SoftMax = softMax.Value;
                 property.UseSoftLimits = true;
             }
-            if (entry.Description.Tags?.OfType<Step>().FirstOrDefault() is { } step)
+            Step? step = Tag<Step>(entry);
+            if (step != null)
                 property.Step = step.Value;
             else if (entry.Description.AcceptableValues is AcceptableValueRange<float> stepless)
                 property.Step = (stepless.MaxValue - stepless.MinValue) / 100f;
-            return floats[entry] = property;
+            floats[entry] = property;
+            return property;
+        }
+
+        /// <summary>The first tag of type <typeparamref name="T"/> in <paramref name="entry"/>'s description; null for none.</summary>
+        private static T? Tag<T>(ConfigEntryBase entry) where T : class
+        {
+            object[]? tags = entry.Description.Tags;
+            if (tags == null)
+                return null;
+            foreach (object tag in tags)
+            {
+                if (tag is T found)
+                    return found;
+            }
+            return null;
         }
 
         private static BoolProperty BoolFor(ConfigEntry<bool> entry)
@@ -117,7 +134,8 @@ namespace MadiLib
         /// <param name="layout">The layout the game is drawing the tab into.</param>
         internal static void Draw(MadiLibMenu page, IGUILayout layout)
         {
-            if (layout.TryCast<IGUIElementDrawer>() is not { } ui)
+            IGUIElementDrawer? ui = layout.TryCast<IGUIElementDrawer>();
+            if (ui == null)
                 return;
             List<string> subtabs = sections.Select(s => s.Subtab).Concat(Keybinds.Subtabs).Distinct().ToList();
             if (subtabs.Count == 0)
@@ -131,11 +149,22 @@ namespace MadiLib
                     Keybinds.StopCapture();
                     page.GUIRepaint = true;
                 }), index, subtabs.ToArray());
-            foreach (var (tab, header, draw) in sections)
-                if (tab == subtab && (header == null || Expanded(page, ui, subtab, header)))
+            foreach ((string tab, string? header, Action<IGUIElementDrawer> draw) in sections)
+            {
+                if (tab != subtab)
+                    continue;
+                // No header: always open. Otherwise Expanded draws the header and says whether it's open
+                bool open = true;
+                if (header != null)
+                    open = Expanded(page, ui, subtab, header);
+                if (open)
                     draw(ui);
-            if (Keybinds.Subtabs.Contains(subtab) && Expanded(page, ui, subtab, "Keybinds"))
-                Keybinds.Draw(page, ui, subtab);
+            }
+            if (Keybinds.Subtabs.Contains(subtab))
+            {
+                if (Expanded(page, ui, subtab, "Keybinds"))
+                    Keybinds.Draw(page, ui, subtab);
+            }
         }
 
         /// <summary>Draws a section header; opening it closes the subtab's other sections.</summary>

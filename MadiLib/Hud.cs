@@ -54,7 +54,11 @@ namespace MadiLib
         {
             using var _ = MadiLib.Profile.Measure("MadiLib: HUD, all panels");
             // Panels only draw boxes and labels, so the layout and input passes have nothing to do
-            if (panels.Count == 0 || Event.current.type != EventType.Repaint || PhotomodeWatch.Active)
+            if (panels.Count == 0)
+                return;
+            if (Event.current.type != EventType.Repaint)
+                return;
+            if (PhotomodeWatch.Active)
                 return;
             // Built here, not at load: GUI.skin only exists inside OnGUI
             style ??= new GUIStyle(GUI.skin.box) { fontSize = 18, alignment = TextAnchor.MiddleLeft }.Padded(10, 10, 6, 6);
@@ -63,7 +67,10 @@ namespace MadiLib
             for (int i = 0; i < panels.Count; i++)
             {
                 float height;
-                try { height = panels[i](bottom); }
+                try
+                {
+                    height = panels[i](bottom);
+                }
                 catch (Exception e)
                 {
                     Plugin.Logger.LogError($"HUD panel removed after it threw: {e}");

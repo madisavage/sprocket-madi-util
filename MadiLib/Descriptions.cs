@@ -35,7 +35,8 @@ namespace MadiLib
         /// </summary>
         public static string? With(string? text, string key, JsonNode? value)
         {
-            if (Parse(text) is not { } json)
+            JsonObject? json = Parse(text);
+            if (json == null)
                 return null;
             if (value == null)
                 json.Remove(key);
@@ -56,8 +57,11 @@ namespace MadiLib
         public static JsonObject? Parsed(Blueprint blueprint)
         {
             string text = blueprint.Description ?? "";
-            if (parsed.TryGetValue(blueprint.Pointer, out var cached) && cached.Text == text)
-                return cached.Json;
+            if (parsed.TryGetValue(blueprint.Pointer, out (string Text, JsonObject? Json) cached))
+            {
+                if (cached.Text == text)
+                    return cached.Json;
+            }
             JsonObject? json = Parse(text);
             parsed[blueprint.Pointer] = (text, json);
             return json;
@@ -69,7 +73,8 @@ namespace MadiLib
         /// <summary>Sets <paramref name="key"/> in <paramref name="blueprint"/>'s description (removed for null), other keys kept; false when it holds other text.</summary>
         public static bool Set(Blueprint blueprint, string key, JsonNode? value)
         {
-            if (With(blueprint.Description, key, value) is not { } text)
+            string? text = With(blueprint.Description, key, value);
+            if (text == null)
                 return false;
             blueprint.Description = text;
             return true;

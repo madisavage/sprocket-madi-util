@@ -46,7 +46,7 @@ namespace MadiLib
                 if (name == null)
                     return;
                 long ticks = Stopwatch.GetTimestamp() - start;
-                sections.TryGetValue(name, out var total);
+                sections.TryGetValue(name, out (long Ticks, int Calls) total);
                 sections[name] = (total.Ticks + ticks, total.Calls + 1);
             }
         }
@@ -66,8 +66,11 @@ namespace MadiLib
             if (since < Interval)
                 return;
             var report = new System.Text.StringBuilder($"Profile over {since:0.0} s, {frames / since:0} fps ({since * 1000f / frames:0.00} ms a frame):");
-            foreach (var (name, (ticks, calls)) in sections.OrderByDescending(s => s.Value.Ticks))
-                report.Append($"\n  {ticks * 1000.0 / Stopwatch.Frequency / since,8:0.000} ms/s  {ticks * 1000.0 / Stopwatch.Frequency / frames,7:0.000} ms/frame  {calls / since,8:0} calls/s  {name}");
+            foreach (KeyValuePair<string, (long Ticks, int Calls)> section in sections.OrderByDescending(s => s.Value.Ticks))
+            {
+                double ms = section.Value.Ticks * 1000.0 / Stopwatch.Frequency;
+                report.Append($"\n  {ms / since,8:0.000} ms/s  {ms / frames,7:0.000} ms/frame  {section.Value.Calls / since,8:0} calls/s  {section.Key}");
+            }
             Plugin.Logger.LogInfo(report.ToString());
             sections.Clear();
             since = 0f;

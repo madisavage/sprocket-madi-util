@@ -11,6 +11,7 @@ using Sprocket.UI;
 using TMPro;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using GameObject = UnityCoreModule::UnityEngine.GameObject;
 using MonoBehaviour = UnityCoreModule::UnityEngine.MonoBehaviour;
 using UnityAction = UnityCoreModule::UnityEngine.Events.UnityAction;
 
@@ -67,11 +68,10 @@ namespace MadiLib
             ConfigEntry<string> entry = binds[^1].Entry;
             return () =>
             {
-                if (capturing != null || Keyboard.current is not { } keys || Typing())
+                Keyboard? keys = Listening();
+                if (keys == null)
                     return false;
-                (Key key, int wheel, bool ctrl, bool shift, bool alt) = Lookup(entry.Value);
-                return (wheel != 0 ? Scrolled(wheel) : key != Key.None && keys[key].isPressed)
-                    && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
+                return Matches(keys, entry.Value, true);
             };
         }
 
@@ -89,36 +89,74 @@ namespace MadiLib
         internal static void Poll()
         {
             using var _ = MadiLib.Profile.Measure("MadiLib: keybinds");
-            if (capturing != null || Keyboard.current is not { } keys || Typing())
+            Keyboard? keys = Listening();
+            if (keys == null)
                 return;
             foreach (Bind bind in binds)
-                if (Pressed(keys, bind.Entry.Value))
+                if (Matches(keys, bind.Entry.Value, false))
                     bind.OnPressed();
+        }
+
+        /// <summary>The keyboard to read binds from; null with no keyboard, while a key is being rebound, or while the player is typing.</summary>
+        private static Keyboard? Listening()
+        {
+            if (capturing != null)
+                return null;
+            Keyboard keys = Keyboard.current;
+            if (keys == null)
+                return null;
+            if (Typing())
+                return null;
+            return keys;
         }
 
         /// <summary>Whether a text field has focus, as the game's UI text fields (TextMeshPro) do while typed in.</summary>
         internal static bool Typing()
         {
-            var selected = EventSystem.current?.currentSelectedGameObject;
-            return selected != null && selected.GetComponent<TMP_InputField>() is { } field && field.isFocused;
+            EventSystem events = EventSystem.current;
+            if (events == null)
+                return false;
+            GameObject selected = events.currentSelectedGameObject;
+            if (selected == null)
+                return false;
+            TMP_InputField field = selected.GetComponent<TMP_InputField>();
+            if (field == null)
+                return false;
+            return field.isFocused;
         }
 
         /// <summary>
-        /// Whether the key in <paramref name="text"/> was pressed this frame.
-        /// Ctrl, Shift and Alt must match exactly, so "S" doesn't also fire on Ctrl+S.
+        /// Whether the bind in <paramref name="text"/> is down (<paramref name="held"/>)
+        /// or was pressed this frame. Ctrl, Shift and Alt must match exactly, so
+        /// "S" doesn't also fire on Ctrl+S.
         /// </summary>
-        private static bool Pressed(Keyboard keys, string text)
+        private static bool Matches(Keyboard keys, string text, bool held)
         {
             (Key key, int wheel, bool ctrl, bool shift, bool alt) = Lookup(text);
-            return (wheel != 0 ? Scrolled(wheel) : key != Key.None && keys[key].wasPressedThisFrame)
-                && ctrl == keys.ctrlKey.isPressed && shift == keys.shiftKey.isPressed && alt == keys.altKey.isPressed;
+            if (ctrl != keys.ctrlKey.isPressed)
+                return false;
+            if (shift != keys.shiftKey.isPressed)
+                return false;
+            if (alt != keys.altKey.isPressed)
+                return false;
+            if (wheel != 0)
+                return Scrolled(wheel);
+            // Unbound, or a name that isn't a key
+            if (key == Key.None)
+                return false;
+            if (held)
+                return keys[key].isPressed;
+            return keys[key].wasPressedThisFrame;
         }
 
         /// <summary><paramref name="text"/> parsed, once per text.</summary>
         private static (Key Key, int Wheel, bool Ctrl, bool Shift, bool Alt) Lookup(string text)
         {
-            if (!parsed.TryGetValue(text, out var bind))
-                parsed[text] = bind = Parse(text);
+            if (!parsed.TryGetValue(text, out (Key, int, bool, bool, bool) bind))
+            {
+                bind = Parse(text);
+                parsed[text] = bind;
+            }
             return bind;
         }
 
@@ -136,19 +174,37 @@ namespace MadiLib
             bool ctrl = false, shift = false, alt = false;
             foreach (string part in text.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
             {
-                if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) ctrl = true;
-                else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase)) shift = true;
-                else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase)) alt = true;
-                else if (part.Equals("WheelUp", StringComparison.OrdinalIgnoreCase)) wheel = 1;
-                else if (part.Equals("WheelDown", StringComparison.OrdinalIgnoreCase)) wheel = -1;
-                // Enum.TryParse reads "1" as the enum's value 1, Space
-                else if (!Enum.TryParse(part.Length == 1 && char.IsDigit(part[0]) ? "Digit" + part : part, true, out key)) return default;
+                if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase))
+                    ctrl = true;
+                else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase))
+                    shift = true;
+                else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase))
+                    alt = true;
+                else if (part.Equals("WheelUp", StringComparison.OrdinalIgnoreCase))
+                    wheel = 1;
+                else if (part.Equals("WheelDown", StringComparison.OrdinalIgnoreCase))
+                    wheel = -1;
+                else
+                {
+                    // Enum.TryParse reads "1" as the enum's value 1, Space
+                    string name = part;
+                    if (part.Length == 1 && char.IsDigit(part[0]))
+                        name = "Digit" + part;
+                    if (!Enum.TryParse(name, true, out key))
+                        return default;
+                }
             }
             return (key, wheel, ctrl, shift, alt);
         }
 
         /// <summary>Whether the mouse wheel turned this frame in <paramref name="direction"/> (1 up, -1 down).</summary>
-        private static bool Scrolled(int direction) => Mouse.current is { } mouse && mouse.scroll.ReadValue().y * direction > 0f;
+        private static bool Scrolled(int direction)
+        {
+            Mouse mouse = Mouse.current;
+            if (mouse == null)
+                return false;
+            return mouse.scroll.ReadValue().y * direction > 0f;
+        }
 
         /// <summary>
         /// Called every frame while the Settings tab is shown. If a bind is being
@@ -246,7 +302,12 @@ namespace MadiLib
                 callbacks.Add(onClick);
                 var tooltip = new UITooltip(bind.Name, $"Default: {bind.Entry.DefaultValue}");
                 ui.InfoField(bind.Name, 1);
-                ui.Button(bind == capturing ? "press a key..." : bind.Entry.Value.Length == 0 ? "(none)" : bind.Entry.Value, onClick, ref tooltip);
+                string label = bind.Entry.Value;
+                if (label.Length == 0)
+                    label = "(none)";
+                if (bind == capturing)
+                    label = "press a key...";
+                ui.Button(label, onClick, ref tooltip);
             }
             ui.ColumnCount = 1;
         }
