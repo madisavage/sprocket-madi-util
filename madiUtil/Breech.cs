@@ -59,14 +59,38 @@ namespace MadiUtil
 
         private static Settings Read(JsonNode? scale, float recoil, bool backblast)
         {
-            float At(int i) => scale is JsonArray array && array.Count > i ? Number(array[i], 1f, MinScale, 1f) : 1f;
+            // Each axis's scale; 1 (the game's) where the array is missing or short
+            float At(int i)
+            {
+                JsonArray? array = scale as JsonArray;
+                if (array == null)
+                    return 1f;
+                if (array.Count <= i)
+                    return 1f;
+                return Number(array[i], 1f, MinScale, 1f);
+            }
             return new Settings(At(0), At(1), At(2), recoil, backblast);
         }
 
-        private static float Number(JsonNode? node, float fallback, float min, float max) =>
-            node is JsonValue value && value.TryGetValue(out float f) ? Math.Clamp(f, min, max) : fallback;
+        private static float Number(JsonNode? node, float fallback, float min, float max)
+        {
+            JsonValue? value = node as JsonValue;
+            if (value == null)
+                return fallback;
+            if (!value.TryGetValue(out float f))
+                return fallback;
+            return Math.Clamp(f, min, max);
+        }
 
-        private static bool Flag(JsonNode? node, bool fallback) => node is JsonValue value && value.TryGetValue(out bool b) ? b : fallback;
+        private static bool Flag(JsonNode? node, bool fallback)
+        {
+            JsonValue? value = node as JsonValue;
+            if (value == null)
+                return fallback;
+            if (!value.TryGetValue(out bool b))
+                return fallback;
+            return b;
+        }
 
         /// <summary>The <c>"breech"</c> value for <paramref name="settings"/>; null for the game's own.</summary>
         internal static JsonNode? ToJson(Settings settings) => settings == Default ? null
@@ -92,7 +116,7 @@ namespace MadiUtil
         internal static bool Apply(CannonBlueprint gun)
         {
             float multiplier = Of(gun).Recoil, recoil = gun.MuzzleRecoilCoefficient;
-            if (!muzzles.TryGetValue(gun.Pointer, out var muzzle))
+            if (!muzzles.TryGetValue(gun.Pointer, out (float Recoil, float Written) muzzle))
             {
                 if (multiplier == 1f)
                     return false;
@@ -123,7 +147,7 @@ namespace MadiUtil
             Settings settings = Of(gun);
             if (settings.X == 1f && settings.Y == 1f && settings.Z == 1f)
                 return;
-            var size = gun.breechSize;
+            UnityCoreModule::UnityEngine.Vector3 size = gun.breechSize;
             float before = gun.BreechMass;
             var scaled = new UnityCoreModule::UnityEngine.Vector3(size.x * settings.X, size.y * settings.Y, size.z * settings.Z);
             gun.breechSize = scaled;
@@ -161,17 +185,31 @@ namespace MadiUtil
         {
             try
             {
-                if (__instance.Blueprint is not { } gun || !Breech.Of(gun).Backblast || __instance.behaviour is not { } behaviour
-                    || behaviour.muzzleFlashEffectFactory is not { } flash || behaviour.transform is not { } barrel)
+                CannonBlueprint? gun = __instance.Blueprint;
+                if (gun == null)
+                    return;
+                if (!Breech.Of(gun).Backblast)
+                    return;
+                Sprocket.Vehicles.Weapons.Cannons.CannonBehaviour? behaviour = __instance.behaviour;
+                if (behaviour == null)
+                    return;
+                Sprocket.WeaponFramework.ICannonMuzzleFlashEffectFactory? flash = behaviour.muzzleFlashEffectFactory;
+                if (flash == null)
+                    return;
+                UnityCoreModule::UnityEngine.Transform? barrel = behaviour.transform;
+                if (barrel == null)
                     return;
                 // This shot's own flash if the game set it up this frame; else built here, units unchecked
-                bool copied = MuzzleFlashSetupPatch.Last is { } last && MuzzleFlashSetupPatch.Frame == UnityCoreModule::UnityEngine.Time.frameCount;
-                var info = copied ? MuzzleFlashSetupPatch.Last!.Value
-                    : new CannonMuzzleFlashEffectInfo { Calibre = gun.Caliber, BoreLength = gun.BoreLength, PropellantVolume = behaviour.PropellantVolume };
+                bool copied = MuzzleFlashSetupPatch.Last != null && MuzzleFlashSetupPatch.Frame == UnityCoreModule::UnityEngine.Time.frameCount;
+                CannonMuzzleFlashEffectInfo info;
+                if (copied)
+                    info = MuzzleFlashSetupPatch.Last!.Value;
+                else
+                    info = new CannonMuzzleFlashEffectInfo { Calibre = gun.Caliber, BoreLength = gun.BoreLength, PropellantVolume = behaviour.PropellantVolume };
                 if (!logged)
                     Plugin.Logger.LogInfo($"Backblast: {(copied ? "copies the muzzle flash" : "flash built here")}: calibre {info.Calibre}, bore {info.BoreLength}, propellant {info.PropellantVolume}");
                 logged = true;
-                var at = __instance.breechModel != null ? __instance.breechModel.LoadPosition : barrel.position;
+                UnityCoreModule::UnityEngine.Vector3 at = __instance.breechModel != null ? __instance.breechModel.LoadPosition : barrel.position;
                 flash.PlayEffect(info, barrel, at, Quaternion.LookRotation(-barrel.forward, barrel.up));
             }
             catch (Exception e)

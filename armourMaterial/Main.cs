@@ -64,17 +64,27 @@ namespace ArmourMaterial
         internal static List<Material> LoadMaterials(string directory)
         {
             var materials = new List<Material>();
-            foreach (var (path, root) in TechFiles.Read(directory))
+            foreach ((string path, JsonObject root) in TechFiles.Read(directory))
             {
                 try
                 {
-                    if (root["properties"] is not JsonObject properties || !properties.ContainsKey("rhaFactor"))
+                    JsonObject? properties = root["properties"] as JsonObject;
+                    if (properties == null)
+                        continue;
+                    // Not an armour material
+                    if (!properties.ContainsKey("rhaFactor"))
                         continue;
                     string name = Path.GetFileNameWithoutExtension(path);
                     // "RolledHomogeneousArmour" -> "Rolled Homogeneous Armour"; names with spaces are already readable.
                     if (!name.Contains(' '))
                         name = Regex.Replace(name, "(?<=[a-z])(?=[A-Z])", " ");
-                    float Get(string key, float fallback) => properties[key] is { } v ? v.GetValue<float>() : fallback;
+                    float Get(string key, float fallback)
+                    {
+                        JsonNode? value = properties[key];
+                        if (value == null)
+                            return fallback;
+                        return value.GetValue<float>();
+                    }
                     materials.Add(new Material(TechFiles.Text(root["type"]) ?? throw new KeyNotFoundException("type"), name,
                         TechFiles.Text(root["date"]) ?? "",
                         Get("rhaFactor", 1f), Get("hardness", float.NaN), Get("spallFactor", float.NaN), Get("density", 7850f), Get("costMultiplier", 1f)));
@@ -156,7 +166,7 @@ namespace ArmourMaterial
         {
             DrawingPatch.Placed = true;
             int sort = Math.Max(0, Array.FindIndex(sorts, s => s.Name == Plugin.SortBy.Value));
-            var (_, key, descending) = sorts[sort];
+            (string _, Func<Material, IComparable> key, bool descending) = sorts[sort];
             // The editor's tech is the vehicle's era; materials invented later aren't in it.
             IEnumerable<Material> invented = Plugin.Materials.Where(m => editor.GetTech(m.Id)?.GetFloat("rhaFactor", -1f) >= 0f);
             List<Material> available = (descending ? invented.OrderByDescending(key) : invented.OrderBy(key)).ThenBy(m => m.Name).ToList();
@@ -197,7 +207,13 @@ namespace ArmourMaterial
         private static StringProperty[] Readouts(StructureBlueprint blueprint) => readouts.Get(blueprint, () =>
         {
             Material? Selected() => Plugin.Materials.FirstOrDefault(m => m.Id == blueprint.armourTechID);
-            string Show(Func<Material, string> format) => Selected() is { } m ? format(m) : "-";
+            string Show(Func<Material, string> format)
+            {
+                Material? m = Selected();
+                if (m == null)
+                    return "-";
+                return format(m);
+            }
             static string Value(float v, string format) => float.IsNaN(v) ? "-" : v.ToString(format);
             return new[]
             {
@@ -213,7 +229,7 @@ namespace ArmourMaterial
         private static void Set(PlateStructureEditor editor, StructureBlueprint blueprint, string id)
         {
             // The frame records the blueprint for undo; it's an Il2Cpp IDisposable, so no using.
-            var frame = editor.NewBlueprintEditFrame("Armour material", blueprint, null, editor.GetNewOperationGroupID(), VehicleOpExecutionMode.Synchronous);
+            Il2CppSystem.IDisposable frame = editor.NewBlueprintEditFrame("Armour material", blueprint, null, editor.GetNewOperationGroupID(), VehicleOpExecutionMode.Synchronous);
             try
             {
                 blueprint.armourTechID = id;

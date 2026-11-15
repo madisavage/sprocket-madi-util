@@ -306,8 +306,13 @@ namespace Rounds
         }
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as JSON text, and its type; null if there's none.</summary>
-        internal static (string Json, string Type)? Raw(CannonBlueprint owner, string id) =>
-            RoundsIn(Parsed(owner))[id] is JsonObject round ? (round.ToJsonString(), (string?)round["type"] ?? "") : null;
+        internal static (string Json, string Type)? Raw(CannonBlueprint owner, string id)
+        {
+            JsonObject? round = RoundsIn(Parsed(owner))[id] as JsonObject;
+            if (round == null)
+                return null;
+            return (round.ToJsonString(), (string?)round["type"] ?? "");
+        }
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as a <typeparamref name="T"/>, if it is of <paramref name="type"/>; otherwise null.</summary>
         public static T? Get<T>(CannonBlueprint? owner, string? id, string type) where T : class

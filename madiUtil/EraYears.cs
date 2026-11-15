@@ -45,10 +45,14 @@ namespace MadiUtil
         internal static DateOnly LatestTech(string directory)
         {
             DateOnly latest = DateOnly.MinValue;
-            foreach (var (_, root) in MadiLib.TechFiles.Read(directory))
-                if (DateOnly.TryParseExact(MadiLib.TechFiles.Text(root["date"]), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly date)
-                    && date > latest)
+            foreach ((string _, System.Text.Json.Nodes.JsonObject root) in MadiLib.TechFiles.Read(directory))
+            {
+                string? text = MadiLib.TechFiles.Text(root["date"]);
+                if (!DateOnly.TryParseExact(text, "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly date))
+                    continue;
+                if (date > latest)
                     latest = date;
+            }
             return latest == DateOnly.MinValue ? DateOnly.MaxValue : latest;
         }
 
@@ -85,7 +89,7 @@ namespace MadiUtil
         {
             rows.Clear();
             selector = null;
-            var shown = plugin.displayedOptions;
+            Il2CppSystem.Collections.Generic.List<string>? shown = plugin.displayedOptions;
             DropDown? dropdown = plugin.dropdown;
             IVehicleEditorSourceConfigurations? loader = plugin.configLoader;
             if (shown == null || dropdown == null || loader == null)
@@ -142,7 +146,13 @@ namespace MadiUtil
         private static bool Active(out EditorConfigurationSelectorPlugin plugin)
         {
             plugin = selector!;
-            return selector?.dropdown is { } dropdown && selector.configLoader != null && dropdown.OptionCount == rows.Count;
+            DropDown? dropdown = selector?.dropdown;
+            if (dropdown == null)
+                return false;
+            if (selector!.configLoader == null)
+                return false;
+            // The game put its own options back
+            return dropdown.OptionCount == rows.Count;
         }
 
         /// <summary>
@@ -152,7 +162,12 @@ namespace MadiUtil
         /// <returns>False when the pick is handled here and the game's code must not run.</returns>
         internal static bool Pick(EditorConfigurationSelectorPlugin plugin, ref int index)
         {
-            if (!Active(out EditorConfigurationSelectorPlugin active) || active.Pointer != plugin.Pointer || index < 0 || index >= rows.Count)
+            if (!Active(out EditorConfigurationSelectorPlugin active))
+                return true;
+            // Another selector's dropdown
+            if (active.Pointer != plugin.Pointer)
+                return true;
+            if (index < 0 || index >= rows.Count)
                 return true;
             IVehicleEditorSourceConfigurations loader = plugin.configLoader;
             DateOnly date = rows[index];

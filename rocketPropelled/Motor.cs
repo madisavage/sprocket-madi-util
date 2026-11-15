@@ -70,7 +70,16 @@ namespace RocketPropelled
         internal float[] Checkpoints => new[] { BurnOut, 1f, 2f, 3f };
 
         /// <summary>Whether the motor pushes at all.</summary>
-        internal bool Burns => Thrust > 0f && BurnTime > 0f || SustainThrust > 0f && SustainTime > 0f;
+        internal bool Burns
+        {
+            get
+            {
+                // A boost phase, else a sustain phase
+                if (Thrust > 0f && BurnTime > 0f)
+                    return true;
+                return SustainThrust > 0f && SustainTime > 0f;
+            }
+        }
 
         /// <summary>Motor mass at launch, kg.</summary>
         internal float Mass => Propellant + SustainPropellant + Case;

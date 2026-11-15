@@ -53,7 +53,7 @@ namespace Rounds
         /// </summary>
         public static float Ahead(PenetrationSimulation simulation, int index)
         {
-            var (points, triangles) = Armour(simulation);
+            (N[] points, int[] triangles) = Armour(simulation);
             return ArmourMesh.Distance(points, triangles, Num(FragmentArray.Spawn(simulation.Pointer, index)), Num(FragmentArray.Direction(simulation.Pointer, index)));
         }
 

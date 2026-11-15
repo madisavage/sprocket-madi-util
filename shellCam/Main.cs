@@ -163,7 +163,10 @@ namespace ShellCam
         /// so an ID used again in a later battle doesn't count.
         /// </summary>
         internal static bool Mine(List<(float Mass, float Diameter, int Projectile, float Time)> shots, float mass, float diameter, int projectile, float now) =>
-            shots.Exists(s => s.Projectile == projectile && s.Mass == mass && s.Diameter == diameter && now - s.Time <= Window);
+            shots.Exists(s => s.Projectile == projectile
+                && s.Mass == mass
+                && s.Diameter == diameter
+                && now - s.Time <= Window);
 
         internal static void Simulated(PenetratorInfo penetrator, IPenetrationSimulation? simulation)
         {
@@ -177,7 +180,11 @@ namespace ShellCam
                 return;
             try
             {
-                if (simulation.TryCast<PenetrationSimulation>() is not { } sim || Record(sim) is not { } hit)
+                PenetrationSimulation? sim = simulation.TryCast<PenetrationSimulation>();
+                if (sim == null)
+                    return;
+                Hit? hit = Record(sim);
+                if (hit == null)
                     return;
                 hit.Pending = sim.Pointer;
                 Recent.Insert(0, hit);
@@ -199,13 +206,15 @@ namespace ShellCam
         internal static void Applied(IntPtr simulation)
         {
             EachPart(simulation, part => part.After = part.Health);
-            if (Recent.Find(h => h.Pending == simulation) is { } hit)
+            Hit? hit = Recent.Find(h => h.Pending == simulation);
+            if (hit != null)
                 hit.Pending = IntPtr.Zero;
         }
 
         private static void EachPart(IntPtr simulation, Action<Part> action)
         {
-            if (Recent.Find(h => h.Pending == simulation) is not { } hit)
+            Hit? hit = Recent.Find(h => h.Pending == simulation);
+            if (hit == null)
                 return;
             try
             {
@@ -240,7 +249,7 @@ namespace ShellCam
             int dropped = 0;
             for (int i = 0; i < count; i++)
             {
-                var (spawn, direction, travel, speed, _, flags) = raw[i];
+                (Vector3 spawn, Vector3 direction, float travel, float speed, short _, FragmentFlag flags) = raw[i];
                 bool shell = (flags & FragmentFlag.OriginalPenetrator) != 0;
                 bool bounced = (flags & (FragmentFlag.Deflected | FragmentFlag.GougeDeflect)) != 0;
                 if (shell)
@@ -250,7 +259,11 @@ namespace ShellCam
                 }
                 Vector3 end = spawn + direction * travel;
                 // A bad fragment (NaN or infinite) would poison the framing and every point projected with it
-                if (!Vectors.Finite(spawn) || !Vectors.Finite(end) || !float.IsFinite(starts[i] + durations[i]) || !float.IsFinite(speed))
+                bool finite = Vectors.Finite(spawn)
+                    && Vectors.Finite(end)
+                    && float.IsFinite(starts[i] + durations[i])
+                    && float.IsFinite(speed);
+                if (!finite)
                 {
                     dropped++;
                     continue;
@@ -280,7 +293,14 @@ namespace ShellCam
                 Plugin.Logger.LogWarning($"Left {dropped} non-finite fragments out of a hit's replay");
             hit.Frame(Replay.Approach);
             int spall = hit.Lines.FindAll(l => !l.Shell).Count;
-            hit.Outcome = (penetrated ? "penetrated" : deflected ? "ricochet" : "stopped") + (spall > 0 ? $", {spall} fragments" : "");
+            string outcome = "stopped";
+            if (penetrated)
+                outcome = "penetrated";
+            else if (deflected)
+                outcome = "ricochet";
+            if (spall > 0)
+                outcome += $", {spall} fragments";
+            hit.Outcome = outcome;
             return hit;
         }
     }
@@ -307,27 +327,35 @@ namespace ShellCam
         {
             try
             {
-                var objects = sim.objects;
-                var register = sim.damageApplier?.TryCast<VehicleHealthRegister>();
-                var lookup = register?.register?.lookup;
+                Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<ObjectInfo>? objects = sim.objects;
+                VehicleHealthRegister? register = sim.damageApplier?.TryCast<VehicleHealthRegister>();
+                Il2CppSystem.Collections.Generic.Dictionary<int, HealthPool>? lookup = register?.register?.lookup;
                 if (objects == null || lookup == null)
                     return;
                 var heads = new Dictionary<IntPtr, HealthPool>();
                 IntPtr HeadOf(int index)
                 {
-                    if ((uint)index >= objects.Length || !lookup.TryGetValue(objects[index].ID, out HealthPool pool) || pool == null)
+                    // Past the end, or a negative index
+                    if ((uint)index >= objects.Length)
+                        return IntPtr.Zero;
+                    if (!lookup.TryGetValue(objects[index].ID, out HealthPool pool))
+                        return IntPtr.Zero;
+                    if (pool == null)
                         return IntPtr.Zero;
                     heads[pool.Pointer] = pool;
                     return pool.Pointer;
                 }
                 (hit.Owners, List<IntPtr> parts) = Assign(triangleObjects, HeadOf);
-                var names = Names(register!);
+                Dictionary<IntPtr, string> names = Names(register!);
                 foreach (IntPtr head in parts)
                 {
                     var chain = new List<HealthPool>();
                     for (HealthPool? pool = heads[head]; pool != null && chain.Count < MaxChain; pool = pool.next)
                         chain.Add(pool);
-                    string name = chain.Find(p => names.ContainsKey(p.Pointer)) is { } named ? names[named.Pointer] : "Part";
+                    string name = "Part";
+                    HealthPool? named = chain.Find(p => names.ContainsKey(p.Pointer));
+                    if (named != null)
+                        name = names[named.Pointer];
                     hit.Parts.Add(new Part(chain.ToArray(), name));
                 }
             }
@@ -375,10 +403,10 @@ namespace ShellCam
         private static Dictionary<IntPtr, string> Names(VehicleHealthRegister register)
         {
             var names = new Dictionary<IntPtr, string>();
-            var entries = register.entries;
+            Il2CppSystem.Collections.Generic.List<Sprocket.Vehicles.VehicleComponentHealth>? entries = register.entries;
             for (int i = 0; entries != null && i < entries.Count; i++)
             {
-                var entry = entries[i];
+                Sprocket.Vehicles.VehicleComponentHealth? entry = entries[i];
                 if (entry?.HealthPool != null && entry.Owner != null)
                     names[entry.HealthPool.Pointer] = Label(entry.Owner.GetIl2CppType().Name);
             }
@@ -419,13 +447,13 @@ namespace ShellCam
             float High(float[] v) => v[(int)MathF.Ceiling((1f - Trim) * (v.Length - 1))];
             float[] Sorted(Func<Vector3, float> axis)
             {
-                var v = points.ConvertAll(p => axis(p)).ToArray();
+                float[] v = points.ConvertAll(p => axis(p)).ToArray();
                 Array.Sort(v);
                 return v;
             }
             float[] x = Sorted(p => p.X), y = Sorted(p => p.Y), z = Sorted(p => p.Z);
-            var min = Vector3.Min(new Vector3(Low(x), Low(y), Low(z)), must);
-            var max = Vector3.Max(new Vector3(High(x), High(y), High(z)), must);
+            Vector3 min = Vector3.Min(new Vector3(Low(x), Low(y), Low(z)), must);
+            Vector3 max = Vector3.Max(new Vector3(High(x), High(y), High(z)), must);
             Vector3 centre = (min + max) / 2f;
             float radius = Math.Clamp((max - min).Length() / 2f, MinRadius, MaxRadius);
             // Capped, the sphere is moved to keep the entry in view

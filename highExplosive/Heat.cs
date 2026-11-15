@@ -82,16 +82,17 @@ namespace HighExplosive
                 "Times the penetration a HEAT jet loses to NERA. A NERA element is a plate whose material file has e.g. \"nera\": 150 in its properties (the most it takes, in mm), with an optional flyer plate touching its back. "
                 + "That loss goes as sin² of the jet's angle to the plate (none head on, 75% at 60 degrees), its thickness over 10 mm and the room behind it over 30 mm, each capped at 1. 0 turns NERA off.",
                 new AcceptableValueRange<float>(0f, 5f), new Step(0.1f)));
-            var introduced = MadiLib.Introduced.Bind(config, "HEAT", "HEAT rounds", 1942f);
+            ConfigEntry<float> introduced = MadiLib.Introduced.Bind(config, "HEAT", "HEAT rounds", 1942f);
             Loadout.Introduce(HeatRound.Type, () => introduced.Value);
             SettingsTab.AddSection("Rounds", "HEAT", introduced, PeakPenetration, StandoffDrag, StandoffMass, JetDiameter, JetMass, FirstSpall, AirLoss, BreakupFragments, BreakupMass, BreakupCone, NeraStrength, LogHits);
             Impacts.FragmentSimulating += JetBudget.Simulating;
             Impacts.FragmentSimulated += JetBudget.Simulated;
             Impacts.HitSimulated += JetLog.Simulated;
-            using (var icon = Plugin.Icon(HeatRound.Type))
+            using (System.IO.Stream? icon = Plugin.Icon(HeatRound.Type))
                 Loadout.Register(HeatRound.Type, "HEAT", HeatEditor.Draw, (game, cannon, id, functions) =>
                 {
-                    if (cannon.Blueprint is not { } owner)
+                    CannonBlueprint? owner = cannon.Blueprint;
+                    if (owner == null)
                         return null;
                     HeatRound round = Round(owner, id);
                     RoundShape shape = Plugin.Shell(game, functions, round.Mass);
@@ -169,9 +170,10 @@ namespace HighExplosive
         /// <summary>Gives an older round the design closest to its saved penetration.</summary>
         internal void Upgrade()
         {
-            if (Penetration is not { } saved)
+            // Already a design, not an old saved penetration
+            if (Penetration == null)
                 return;
-            (Standoff, Cone) = ShapedCharge.Fit(saved, Heat.PeakPenetration.Value);
+            (Standoff, Cone) = ShapedCharge.Fit(Penetration.Value, Heat.PeakPenetration.Value);
             Penetration = null;
         }
     }
@@ -181,7 +183,8 @@ namespace HighExplosive
     {
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
-            if (cannon.Blueprint is not { } gun)
+            CannonBlueprint? gun = cannon.Blueprint;
+            if (gun == null)
                 return;
             RoundFields.Draw(drawer, RoundFields.For(gun, id, HeatRound.Type, () =>
             {

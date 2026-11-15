@@ -34,19 +34,39 @@ namespace MadiUtil
             JsonObject? file;
             try { file = JsonNode.Parse(json) as JsonObject; }
             catch (Exception) { return null; } // e.g. NaN, which System.Text.Json rejects: leave it to the game
-            if (file?["objects"] is not JsonArray objects)
+            // Not a JSON object: not a vehicle file
+            if (file == null)
+                return null;
+            JsonArray? objects = file["objects"] as JsonArray;
+            if (objects == null)
                 return null;
 
-            static int Int(JsonNode? node, string key) => node?[key] is JsonValue v && v.TryGetValue(out int i) ? i : -1;
+            // node's whole number key; -1 when it's missing
+            static int Int(JsonNode? node, string key)
+            {
+                JsonValue? value = node?[key] as JsonValue;
+                if (value == null)
+                    return -1;
+                if (!value.TryGetValue(out int i))
+                    return -1;
+                return i;
+            }
             var dropped = new HashSet<int>();
             foreach (JsonNode? o in objects)
-                if (o?["guid"] is JsonValue g && g.TryGetValue(out string? guid) && !known(guid))
-                {
-                    if (Int(o, "pvuid") < 0)
-                        return null;
-                    dropped.Add(Int(o, "vuid"));
-                    removed.Add(guid);
-                }
+            {
+                JsonValue? g = o?["guid"] as JsonValue;
+                if (g == null)
+                    continue;
+                if (!g.TryGetValue(out string? guid))
+                    continue;
+                if (known(guid))
+                    continue;
+                // The root part itself is unknown
+                if (Int(o, "pvuid") < 0)
+                    return null;
+                dropped.Add(Int(o, "vuid"));
+                removed.Add(guid);
+            }
             if (dropped.Count == 0)
                 return null;
             // Children of dropped parts go too; parents may come after their children, so repeat until nothing new
@@ -60,8 +80,14 @@ namespace MadiUtil
             foreach (JsonNode? o in objects.Where(o => dropped.Contains(Int(o, "vuid"))).ToList())
                 objects.Remove(o);
             foreach (JsonNode? o in objects)
-                if (o?["transform"] is JsonObject t && dropped.Contains(Int(t, "mirrorVuid")))
+            {
+                JsonObject? t = o?["transform"] as JsonObject;
+                if (t == null)
+                    continue;
+                // Mirrored by a dropped part
+                if (dropped.Contains(Int(t, "mirrorVuid")))
                     t["mirrorVuid"] = -1;
+            }
             return file.ToJsonString();
         }
     }
@@ -76,7 +102,10 @@ namespace MadiUtil
             if (parts == null)
                 parts = Object.FindObjectOfType<PartAssetDatabaseLoader>();
             // No database found: treat every part as known, so the game behaves as stock
-            return parts?.partDatabase?.partDefinitionLookup is not { } lookup || lookup.ContainsKey(guid);
+            Il2CppSystem.Collections.Generic.Dictionary<string, Sprocket.PartImporting.PartDefinition>? lookup = parts?.partDatabase?.partDefinitionLookup;
+            if (lookup == null)
+                return true;
+            return lookup.ContainsKey(guid);
         }
 
         private static string? Stripped(string json)
@@ -91,7 +120,8 @@ namespace MadiUtil
         [HarmonyPrefix, HarmonyPatch(typeof(VehicleBlueprintSerializer), nameof(VehicleBlueprintSerializer.DeserializeJSON))]
         private static void Deserialize(ref string json)
         {
-            if (Stripped(json) is { } stripped)
+            string? stripped = Stripped(json);
+            if (stripped != null)
                 json = stripped;
         }
 

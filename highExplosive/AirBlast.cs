@@ -93,7 +93,10 @@ namespace HighExplosive
             radius = Radius.Value * scale;
             first = end = -1;
             cut.Clear();
-            active = !broken && Rays.Value >= 1f && penetration > 0f && radius > 0f;
+            active = !broken
+                && Rays.Value >= 1f
+                && penetration > 0f
+                && radius > 0f;
         }
 
         /// <summary>From <see cref="Impacts.FragmentSimulating"/>.</summary>
@@ -118,7 +121,11 @@ namespace HighExplosive
         /// <summary>From <see cref="Impacts.FragmentSimulated"/>.</summary>
         private static void Simulated(PenetrationSimulation simulation, short index)
         {
-            if (!active || simulation == null || first >= 0 && (index < first || index >= end))
+            if (!active)
+                return;
+            if (simulation == null)
+                return;
+            if (first >= 0 && (index < first || index >= end))
                 return;
             try
             {

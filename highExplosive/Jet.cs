@@ -175,7 +175,13 @@ namespace HighExplosive
                 IntPtr simulation = __0.Pointer;
                 FragmentInfo gap = Fragments.Get(simulation, __1);
                 // The first gap is the shell's flight to the vehicle
-                if (!gap.IsJet || gap.Parent < 0 || (gap.Flags & PenetrationFragmentFlag.InMaterial) != 0 || Arriving(__0, __1, gap) > 0f)
+                if (!gap.IsJet)
+                    return;
+                if (gap.Parent < 0)
+                    return;
+                if ((gap.Flags & PenetrationFragmentFlag.InMaterial) != 0)
+                    return;
+                if (Arriving(__0, __1, gap) > 0f)
                     return;
                 float budget = gap.Penetration(k);
                 // NERA bulges in at the start of the gap; the air takes the rest
@@ -190,9 +196,16 @@ namespace HighExplosive
                 // Its parent is the plate the jet left, not stopped, so the fragments aren't
                 bool made = count > 0 && Impacts.Burst(simulation, point, direction, gap.Mass * Heat.BreakupMass.Value, count, gap.Speed, Heat.BreakupCone.Value, gap.Parent, __1);
                 if (Heat.LogHits.Value)
-                    Heat.Log.LogInfo($"HEAT gap #{__1}: {budget:0} mm used up {along * 1000f:0} mm in, of {gap.Travel * 1000f:0} mm; "
-                        + (made ? $"broke up into #{first} to #{__0.FragmentCount - 1}, {gap.Mass * Heat.BreakupMass.Value * 1000f / count:0.#} g each at {gap.Speed:0} m/s"
-                            : count > 0 ? "couldn't break up: no plate spall to copy, or the gap isn't made as the game makes one" : "stopped"));
+                {
+                    string outcome;
+                    if (made)
+                        outcome = $"broke up into #{first} to #{__0.FragmentCount - 1}, {gap.Mass * Heat.BreakupMass.Value * 1000f / count:0.#} g each at {gap.Speed:0} m/s";
+                    else if (count > 0)
+                        outcome = "couldn't break up: no plate spall to copy, or the gap isn't made as the game makes one";
+                    else
+                        outcome = "stopped";
+                    Heat.Log.LogInfo($"HEAT gap #{__1}: {budget:0} mm used up {along * 1000f:0} mm in, of {gap.Travel * 1000f:0} mm; " + outcome);
+                }
             }
             catch (Exception e)
             {
@@ -240,8 +253,13 @@ namespace HighExplosive
                         spall++;
                         continue;
                     }
-                    if (f.Parent >= 0 && Fragments.Get(simulation.Pointer, f.Parent) is { IsJet: false } p)
-                        log.Append($"\n  #{f.Parent} (not jet; parent {p.Parent}, material {p.Material}): {p.Flags}, travelled {p.Travel * 1000f:0} mm, {Step(p, k)}");
+                    if (f.Parent >= 0)
+                    {
+                        // A parent that isn't jet is logged too
+                        FragmentInfo p = Fragments.Get(simulation.Pointer, f.Parent);
+                        if (!p.IsJet)
+                            log.Append($"\n  #{f.Parent} (not jet; parent {p.Parent}, material {p.Material}): {p.Flags}, travelled {p.Travel * 1000f:0} mm, {Step(p, k)}");
+                    }
                     log.Append($"\n  #{i} (parent {f.Parent}, material {f.Material}): {f.Flags}, travelled {f.Travel * 1000f:0} mm, {Step(f, k)}");
                 }
                 FragmentInfo final = Fragments.Final(simulation.Pointer);

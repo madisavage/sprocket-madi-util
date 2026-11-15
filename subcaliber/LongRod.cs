@@ -112,7 +112,7 @@ namespace Subcaliber
         /// <summary><see cref="LengthFactor"/> at <paramref name="calibers"/>.</summary>
         internal static float Factor(float calibers)
         {
-            var points = LengthFactor;
+            (float Calibers, float Factor)[] points = LengthFactor;
             if (calibers <= points[0].Calibers)
                 return points[0].Factor;
             for (int i = 1; i < points.Length; i++)

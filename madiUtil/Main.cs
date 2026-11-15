@@ -48,7 +48,8 @@ namespace MadiUtil
             (Func<bool>)(() => EditedSettings()?.UnlockScenarioEras ?? false),
             (Action<bool>)(value =>
             {
-                if (EditedSettings() is { } general)
+                Sprocket.GeneralSettings? general = EditedSettings();
+                if (general != null)
                     general.UnlockScenarioEras = value;
             }),
             "Lets scenarios use vehicles from any era.");
@@ -86,7 +87,7 @@ namespace MadiUtil
         private static void Postfix(CrewSeatEditor __instance, IGUILayout __0)
         {
             CrewSeatBlueprint? blueprint = __instance.crewBlueprint;
-            var slot = __instance.Component?.blueprintSlot;
+            BlueprintSlot<CrewSeatBlueprint>? slot = __instance.Component?.blueprintSlot;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
             if (blueprint == null || slot == null || drawer == null)
                 return;

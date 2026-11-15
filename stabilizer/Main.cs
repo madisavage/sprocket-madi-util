@@ -81,15 +81,34 @@ namespace Stabilizer
                 return 0f;
             const float icon = 40f, pad = 4f, caption = 14f;
             var shown = new List<(string Resource, string Caption, UnityCoreModule::UnityEngine.Color Color)>();
-            foreach (var (part, name, speed, limit, seen, destroyed) in Drives.Status.Values)
+            foreach ((Transform part, string name, float speed, float limit, float seen, bool destroyed) in Drives.Status.Values)
             {
-                if (now - seen >= 1f || part == null || !PlayerVehicle.Contains(part))
+                // Not run in the last second
+                if (now - seen >= 1f)
                     continue;
-                var color = destroyed ? HudDraw.Blocked : !PlayerEnabled ? HudDraw.Off : limit > 0f && speed > limit ? HudDraw.Next : HudDraw.Ok;
-                string label = destroyed ? "destroyed" : limit > 0f ? $"{limit:0} km/h" : "";
-                if (name is "traverse" or "gun azimuth" or "gun")
-                    shown.Add((name == "traverse" ? "traverse.png" : "azimuth.png", label, color));
-                if (name is "elevation" or "gun")
+                if (part == null)
+                    continue;
+                if (!PlayerVehicle.Contains(part))
+                    continue;
+                UnityCoreModule::UnityEngine.Color color;
+                if (destroyed)
+                    color = HudDraw.Blocked;
+                else if (!PlayerEnabled)
+                    color = HudDraw.Off;
+                else if (limit > 0f && speed > limit)
+                    color = HudDraw.Next;
+                else
+                    color = HudDraw.Ok;
+                string label = "";
+                if (destroyed)
+                    label = "destroyed";
+                else if (limit > 0f)
+                    label = $"{limit:0} km/h";
+                if (name == "traverse")
+                    shown.Add(("traverse.png", label, color));
+                if (name == "gun azimuth" || name == "gun")
+                    shown.Add(("azimuth.png", label, color));
+                if (name == "elevation" || name == "gun")
                     shown.Add(("elevation.png", label, color));
             }
             if (shown.Count == 0)
@@ -98,9 +117,10 @@ namespace Stabilizer
             GUI.Box(new Rect(left, bottom - height, pad + shown.Count * (icon + pad), height), "");
             for (int i = 0; i < shown.Count; i++)
             {
-                var (resource, text, color) = shown[i];
+                (string resource, string text, UnityCoreModule::UnityEngine.Color color) = shown[i];
                 var cell = new Rect(left + pad + i * (icon + pad), bottom - height + pad, icon, icon);
-                if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } image)
+                UnityCoreModule::UnityEngine.Texture2D? image = HudDraw.Icon(typeof(Plugin).Assembly, resource);
+                if (image != null)
                     HudDraw.Image(cell, image, color);
                 if (text.Length > 0)
                     HudDraw.Label(new Rect(cell.x - pad, cell.yMax, icon + 2 * pad, caption), text, 10, color);
@@ -124,8 +144,18 @@ namespace Stabilizer
         private static void SetLimit(Blueprint blueprint, float? limit) => blueprint.Name = WithLimit(blueprint.Name ?? "", limit);
 
         /// <summary><paramref name="name"/> with its tag replaced by one for <paramref name="limit"/>, or removed for null.</summary>
-        internal static string WithLimit(string name, float? limit) =>
-            NameTags.With(name, "stab", limit is not { } value ? null : value > 0f ? $"[stab {NameTags.Format(value)}]" : "[stab]");
+        internal static string WithLimit(string name, float? limit)
+        {
+            string? newTag;
+            if (limit == null)
+                newTag = null;
+            else if (limit.Value > 0f)
+                newTag = $"[stab {NameTags.Format(limit.Value)}]";
+            // No speed limit
+            else
+                newTag = "[stab]";
+            return NameTags.With(name, "stab", newTag);
+        }
 
         /// <summary>
         /// Draws a "Stabilizer" checkbox for <paramref name="blueprint"/> and,
@@ -332,9 +362,11 @@ namespace Stabilizer
         internal static void Prune(float now)
         {
             dead.Clear();
-            foreach (var (pointer, (part, _, _, _, seen, _)) in Status)
-                if (part == null || now - seen > 10f)
-                    dead.Add(pointer);
+            foreach (KeyValuePair<IntPtr, (Transform Part, string Name, float Speed, float Limit, float Time, bool Destroyed)> entry in Status)
+            {
+                if (entry.Value.Part == null || now - entry.Value.Time > 10f)
+                    dead.Add(entry.Key);
+            }
             foreach (IntPtr pointer in dead)
             {
                 // Kept for a live drive that's only idle, or the game paused: only its run sets it again
@@ -359,9 +391,9 @@ namespace Stabilizer
         {
             if (behaviour == null)
                 return;
-            if (limit is { } value)
+            if (limit != null)
             {
-                Stabilized[behaviour.Pointer] = value;
+                Stabilized[behaviour.Pointer] = limit.Value;
                 parts[behaviour.Pointer] = part;
             }
             else
@@ -382,14 +414,14 @@ namespace Stabilizer
         [HarmonyPostfix, HarmonyPatch(typeof(TraverseMotorEditor), nameof(TraverseMotorEditor.OnGUI))]
         private static void TraverseEditor(TraverseMotorEditor __instance, IGUILayout __0)
         {
-            var slot = __instance.Component?.TraverseBlueprintSlot;
+            Sprocket.Blueprints.BlueprintSlot<Sprocket.Motors.TraverseMotorBlueprint>? slot = __instance.Component?.TraverseBlueprintSlot;
             Plugin.Draw(__0, slot?.Blueprint, () => slot?.MarkModified(), __instance.RequestRedraw);
         }
 
         [HarmonyPostfix, HarmonyPatch(typeof(LayingDriveEditor), nameof(LayingDriveEditor.OnGUI))]
         private static void LayingEditor(LayingDriveEditor __instance, IGUILayout __0)
         {
-            var slot = __instance.Component?.BlueprintSlot;
+            Sprocket.Blueprints.BlueprintSlot<LayingDriveBlueprint>? slot = __instance.Component?.BlueprintSlot;
             Plugin.Draw(__0, slot?.Blueprint, () => slot?.MarkModified(), __instance.RequestRedraw);
         }
     }
@@ -433,7 +465,11 @@ namespace Stabilizer
             if (trunnions?.parent == null || !Drives.Stabilized.TryGetValue(__instance.Pointer, out float limit))
                 return;
             float speed = 0f;
-            string name = __instance.AzimuthLocked ? "elevation" : __instance.ElevationLocked ? "gun azimuth" : "gun";
+            string name = "gun";
+            if (__instance.AzimuthLocked)
+                name = "elevation";
+            else if (__instance.ElevationLocked)
+                name = "gun azimuth";
             bool destroyed = Drives.Destroyed(__instance);
             if (destroyed || !Plugin.Enabled(trunnions))
             {
@@ -472,12 +508,26 @@ namespace Stabilizer
             Transform? gun = __instance.transform;
             float now = Time.realtimeSinceStartup;
             // A copy: running a turret updates its entry
-            foreach (var (pointer, (turret, seen)) in new List<KeyValuePair<IntPtr, (TurretBehaviour, float)>>(Drives.Turrets))
+            foreach ((IntPtr pointer, (TurretBehaviour turret, float seen)) in new List<KeyValuePair<IntPtr, (TurretBehaviour, float)>>(Drives.Turrets))
+            {
                 if (now - seen > 10f)
+                {
                     Drives.Turrets.Remove(pointer);
-                else if (gun != null && now - seen < 1f && Drives.Stabilized.ContainsKey(pointer)
-                    && turret.transform != null && gun.IsChildOf(turret.transform))
+                    continue;
+                }
+                if (gun == null)
+                    continue;
+                // Not run in the last second
+                if (now - seen >= 1f)
+                    continue;
+                if (!Drives.Stabilized.ContainsKey(pointer))
+                    continue;
+                if (turret.transform == null)
+                    continue;
+                // The gun sits on this turret
+                if (gun.IsChildOf(turret.transform))
                     TurretMovePatch.Run(turret);
+            }
             Run(horizontal);
             if (vertical?.Pointer != horizontal?.Pointer)
                 Run(vertical);

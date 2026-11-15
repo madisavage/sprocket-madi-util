@@ -122,7 +122,8 @@ namespace ShellCam
             var area = new Rect(panel.x + Pad, panel.y + Pad + CaptionHeight, size - 2 * Pad, size - 2 * Pad - CaptionHeight);
             int wanted = (int)Mathf.Min(area.width, area.height);
             View view = Look(hit, t, wanted);
-            if (Texture(wanted) is not { } image)
+            Texture2D? image = Texture(wanted);
+            if (image == null)
                 return;
             if (now - drawn >= 1f / Rate)
             {
@@ -177,11 +178,11 @@ namespace ShellCam
         {
             using var _ = MadiLib.Profile.Measure("shellCam: render");
             Array.Clear(cover);
-            var points = hit.Points;
+            Vector3[] points = hit.Points;
             var screen = new Vector2[points.Length];
             for (int i = 0; i < points.Length; i++)
                 screen[i] = view.Project(points[i]);
-            var tris = hit.Triangles;
+            int[] tris = hit.Triangles;
             for (int i = 0; i + 2 < tris.Length; i += 3)
                 Raster.Triangle(cover, side, screen[tris[i]], screen[tris[i + 1]], screen[tris[i + 2]]);
             for (int i = 0; i < pixels.Length; i++)
@@ -200,13 +201,22 @@ namespace ShellCam
                     if (shown < line.Start)
                         continue;
                     float grown = line.Duration > 0f ? Math.Clamp((shown - line.Start) / line.Duration, 0f, 1f) : 1f;
-                    Color color = line.Shell ? (line.Deflected ? ricochet : shell)
-                        : spall with { a = 0.35f + 0.65f * (hit.MaxSpeed > 0f ? Math.Clamp(line.Speed / hit.MaxSpeed, 0f, 1f) : 1f) };
+                    Color color;
+                    if (line.Shell)
+                        color = line.Deflected ? ricochet : shell;
+                    else
+                    {
+                        // Spall is brighter the faster it flies
+                        float brightness = 1f;
+                        if (hit.MaxSpeed > 0f)
+                            brightness = Math.Clamp(line.Speed / hit.MaxSpeed, 0f, 1f);
+                        color = spall with { a = 0.35f + 0.65f * brightness };
+                    }
                     Segment(view, line.From, Vector3.Lerp(line.From, line.To, grown), color, line.Shell ? ShellWidth : SpallWidth);
                 }
             }
 
-            var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+            GCHandle handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
             try
             {
                 image.LoadRawTextureData(handle.AddrOfPinnedObject(), pixels.Length * 4);
@@ -228,9 +238,14 @@ namespace ShellCam
             for (int k = 0; k < count; k++)
             {
                 Part part = hit.Parts[k];
-                if (part.After is not { } now || now >= 0.999f && part.Before - now <= 0.001f)
+                // Its health after the hit isn't known yet
+                if (part.After == null)
                     continue;
-                var (r, g, b) = HealthColour(now);
+                float now = part.After.Value;
+                // Unhurt, by this hit or before
+                if (now >= 0.999f && part.Before - now <= 0.001f)
+                    continue;
+                (byte r, byte g, byte b) = HealthColour(now);
                 colours[k] = (r, g, b, part.Before - now > 0.001f ? 0.75f : 0.3f);
                 any = true;
             }
@@ -243,8 +258,14 @@ namespace ShellCam
                     Raster.Triangle(mark, side, screen[hit.Triangles[i]], screen[hit.Triangles[i + 1]], screen[hit.Triangles[i + 2]], (byte)(k + 1));
             }
             for (int i = 0; i < pixels.Length; i++)
-                if (mark[i] != 0 && colours[mark[i] - 1] is var (r, g, b, a) && a > 0f)
+            {
+                // No damaged part drawn here
+                if (mark[i] == 0)
+                    continue;
+                (byte r, byte g, byte b, float a) = colours[mark[i] - 1];
+                if (a > 0f)
                     pixels[i] = Mix(pixels[i], r, g, b, a);
+            }
         }
 
         /// <summary>Yellow at full health through orange to red at none.</summary>
@@ -256,13 +277,19 @@ namespace ShellCam
         {
             var hurt = new System.Collections.Generic.List<(string Name, float Before, float Now)>();
             foreach (Part part in hit.Parts)
-                if (part.After is { } now && part.Before - now > 0.001f)
+            {
+                if (part.After == null)
+                    continue;
+                float now = part.After.Value;
+                // Hurt by this hit
+                if (part.Before - now > 0.001f)
                     hurt.Add((part.Name, part.Before, now));
+            }
             hurt.Sort((x, y) => x.Now.CompareTo(y.Now));
             for (int i = 0; i < Math.Min(hurt.Count, 8); i++)
             {
-                var (name, before, now) = hurt[i];
-                var (r, g, b) = HealthColour(now);
+                (string name, float before, float now) = hurt[i];
+                (byte r, byte g, byte b) = HealthColour(now);
                 string text = now <= 0f ? $"{name}: destroyed" : $"{name}: {before:P0} to {now:P0}";
                 HudDraw.Label(new Rect(picture.x + 6f, picture.y + 6f + 16f * i, picture.width - 12f, 16f), text, 12, new Color(r / 255f, g / 255f, b / 255f), TextAnchor.MiddleLeft);
             }

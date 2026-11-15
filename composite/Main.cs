@@ -147,7 +147,7 @@ namespace Composite
             if (axis > 0)
             {
                 var world = new UnityCoreModule::UnityEngine.Vector3(axis == 1 ? 1f : 0f, axis == 2 ? 1f : 0f, axis == 3 ? 1f : 0f);
-                var local = meshEditor.context.WorldToMesh.MultiplyVector(world);
+                UnityCoreModule::UnityEngine.Vector3 local = meshEditor.context.WorldToMesh.MultiplyVector(world);
                 var mapped = new Vector3(local.x, local.y, local.z);
                 if (!Usable(mapped))
                 {
@@ -202,7 +202,10 @@ namespace Composite
             VehicleObject compartment = editor.Component.vehicleObject;
             InstantiateObject made = ops.Instantiate(AddonGuid, group);
             Plugin.Logger.LogInfo($"Add-on instantiated: state {made.state}, {made.instances?.Length ?? 0} instance(s).");
-            if (made.instances == null || made.instances.Length == 0 || made.instances[0]?.Object is not { } addon)
+            if (made.instances == null || made.instances.Length == 0)
+                throw new InvalidOperationException($"the game made no add-on (state {made.state})");
+            VehicleObject? addon = made.instances[0]?.Object;
+            if (addon == null)
                 throw new InvalidOperationException($"the game made no add-on (state {made.state})");
 
             ops.SetParent(compartment.GetReference(), new Il2CppReferenceArray<ISoftVehicleObject>(new[] { addon.GetReference() }), group);
@@ -232,10 +235,10 @@ namespace Composite
         /// </summary>
         internal static MeshBlueprint Pick(MeshBlueprint mesh, IEnumerable<int> indices)
         {
-            var faces = indices.Select(f => mesh.serializedFaces[f]).ToList();
+            List<MeshBlueprint.SerializedFace> faces = indices.Select(f => mesh.serializedFaces[f]).ToList();
             var vertices = new Dictionary<int, int>();
             var positions = new List<float>();
-            foreach (var face in faces)
+            foreach (MeshBlueprint.SerializedFace face in faces)
                 foreach (int v in face.vertices)
                     if (!vertices.ContainsKey(v))
                     {
@@ -243,8 +246,16 @@ namespace Composite
                         positions.AddRange(new[] { mesh.vertexPositions[3 * v], mesh.vertexPositions[3 * v + 1], mesh.vertexPositions[3 * v + 2] });
                     }
             // Edge 0 reads as "no thicken edge", so edges no corner thickens along go first.
-            var thickening = faces.SelectMany(f => f.thickenEdgeIndicies).Where(e => e != NoEdge).Select(e => (int)e).ToHashSet();
-            var kept = Enumerable.Range(0, mesh.serializedEdges.Length / 2)
+            HashSet<int> thickening = new HashSet<int>();
+            foreach (MeshBlueprint.SerializedFace face in faces)
+            {
+                foreach (ushort e in face.thickenEdgeIndicies)
+                {
+                    if (e != NoEdge)
+                        thickening.Add(e);
+                }
+            }
+            List<int> kept = Enumerable.Range(0, mesh.serializedEdges.Length / 2)
                 .Where(e => vertices.ContainsKey(mesh.serializedEdges[2 * e]) && vertices.ContainsKey(mesh.serializedEdges[2 * e + 1]))
                 .OrderBy(e => thickening.Contains(e))
                 .ToList();
@@ -263,7 +274,7 @@ namespace Composite
             var faceArray = new Il2CppReferenceArray<MeshBlueprint.SerializedFace>(faces.Count);
             for (int i = 0; i < faces.Count; i++)
             {
-                var copy = Copy(faces[i], v => vertices[v], e => e == NoEdge ? NoEdge : edgeMap[e], faces[i].thicknesses[0], keepEdges: false);
+                MeshBlueprint.SerializedFace copy = Copy(faces[i], v => vertices[v], e => e == NoEdge ? NoEdge : edgeMap[e], faces[i].thicknesses[0], keepEdges: false);
                 copy.thicknesses = faces[i].thicknesses.ToArray();
                 faceArray[i] = copy;
             }
@@ -309,25 +320,32 @@ namespace Composite
         /// <exception cref="InvalidOperationException">The normals cancel out (or none are usable).</exception>
         internal static Vector3 Direction(IReadOnlyList<Vector3> normals, Vector3? axis, float along = 1f)
         {
-            var usable = normals.Where(Usable).ToList();
+            List<Vector3> usable = normals.Where(Usable).ToList();
             Vector3 sum = usable.Aggregate(Vector3.Zero, (a, b) => a + b);
             if (!(sum.Length() >= 1e-4f))
                 throw new InvalidOperationException("Selected faces point opposite ways at a shared corner; select one side.");
             Vector3 mean = Vector3.Normalize(sum);
-            if (axis is { } a)
+            if (axis != null)
+            {
+                Vector3 a = axis.Value;
                 return a * MathF.Sign(Vector3.Dot(a, mean)) / along;
+            }
             // just a random cap maximum here, no rime or reason and this is evil
             return mean / MathF.Max(usable.Min(n => Vector3.Dot(mean, n)), 0.25f);
         }
 
-        private static bool Usable(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z) && v.LengthSquared() > 1e-12f;
+        private static bool Usable(Vector3 v) =>
+            float.IsFinite(v.X)
+            && float.IsFinite(v.Y)
+            && float.IsFinite(v.Z)
+            && v.LengthSquared() > 1e-12f;
 
         internal static MeshBlueprint Stacked(MeshBlueprint source, IReadOnlyDictionary<int, Vector3> faces, int layers, float thickness, float gap, bool inward, Vector3? axis, float? start = null)
         {
-            var positions = source.vertexPositions.ToList();
-            var edges = source.serializedEdges.ToList();
-            var edgeFlags = source.serializedEdgeFlags.ToList();
-            var serialized = source.serializedFaces.ToList();
+            List<float> positions = source.vertexPositions.ToList();
+            List<int> edges = source.serializedEdges.ToList();
+            List<MeshBlueprint.SerializedEdgeFlags> edgeFlags = source.serializedEdgeFlags.ToList();
+            List<MeshBlueprint.SerializedFace> serialized = source.serializedFaces.ToList();
             ushort mm = (ushort)MathF.Round(thickness);
 
             var edgeIndex = new Dictionary<(int, int), int>();
@@ -336,25 +354,42 @@ namespace Composite
 
             // Vertex, offset direction per metre of plate spacing
             var normals = new Dictionary<int, List<Vector3>>();
-            foreach (var (f, normal) in faces)
+            foreach ((int f, Vector3 normal) in faces)
                 foreach (int v in serialized[f].vertices)
                 {
-                    if (!normals.TryGetValue(v, out var list))
-                        normals[v] = list = new();
+                    if (!normals.TryGetValue(v, out List<Vector3>? list))
+                    {
+                        list = new List<Vector3>();
+                        normals[v] = list;
+                    }
                     list.Add(normal);
                 }
-            float along = axis is { } a0 ? faces.Values.Average(n => MathF.Abs(Vector3.Dot(a0, n))) : 1f;
+            // With an axis, the faces' mean |axis · normal|
+            float along = 1f;
+            if (axis != null)
+            {
+                Vector3 a0 = axis.Value;
+                along = faces.Values.Average(n => MathF.Abs(Vector3.Dot(a0, n)));
+            }
             if (along < 0.05f)
                 throw new InvalidOperationException("That axis runs along the selected faces; pick another.");
-            var directions = normals.ToDictionary(p => p.Key, p => Direction(p.Value, axis, along));
+            Dictionary<int, Vector3> directions = normals.ToDictionary(p => p.Key, p => Direction(p.Value, axis, along));
 
-            var result = serialized.Select((face, f) => faces.ContainsKey(f) ? Copy(face, v => v, _ => NoEdge, mm, keepEdges: true) : face).ToList();
+            // The selected faces take the new thickness; the rest stay as they are
+            List<MeshBlueprint.SerializedFace> result = new List<MeshBlueprint.SerializedFace>();
+            for (int f = 0; f < serialized.Count; f++)
+            {
+                if (faces.ContainsKey(f))
+                    result.Add(Copy(serialized[f], v => v, _ => NoEdge, mm, keepEdges: true));
+                else
+                    result.Add(serialized[f]);
+            }
             float sign = inward ? -1f : 1f;
             float pitch = thickness + gap, first = start ?? pitch;
             for (int layer = 1; layer < layers; layer++)
             {
                 var vertexMap = new Dictionary<int, int>();
-                foreach (var (v, direction) in directions)
+                foreach ((int v, Vector3 direction) in directions)
                 {
                     vertexMap[v] = positions.Count / 3;
                     Vector3 p = new Vector3(positions[3 * v], positions[3 * v + 1], positions[3 * v + 2]) + direction * sign * (first + pitch * (layer - 1)) / 1000f;

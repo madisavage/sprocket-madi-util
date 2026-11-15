@@ -68,13 +68,18 @@ namespace HighExplosive
             Logger = Log;
             AirBlast.Load(Config);
             SettingsTab.AddSection("Rounds", "High explosive blast", AirBlast.Rays, AirBlast.Penetration, AirBlast.Radius, AirBlast.Mass, AirBlast.Cone);
-            var hesh = MadiLib.Introduced.Bind(Config, "HESH", "HESH rounds", 1945f);
+            ConfigEntry<float> hesh = MadiLib.Introduced.Bind(Config, "HESH", "HESH rounds", 1945f);
             Loadout.Introduce(HeKind.Hesh.Type, () => hesh.Value);
             SettingsTab.AddSection("Rounds", "HESH", hesh, HeshPenetration, HeshNormalization, AirBlast.HeshPenetration);
             foreach (HeKind kind in new[] { HeKind.He, HeKind.Hesh })
-                using (var icon = Icon(kind.Type))
+                using (System.IO.Stream? icon = Icon(kind.Type))
                     Loadout.Register(kind.Type, kind.Label, (drawer, cannon, id, changed) => Editor.Draw(drawer, cannon, id, changed, kind), (game, cannon, id, functions) =>
-                        cannon.Blueprint is { } owner ? Shell(game, functions, Round(owner, id, kind).Mass) : null,
+                        {
+                            CannonBlueprint? owner = cannon.Blueprint;
+                            if (owner == null)
+                                return null;
+                            return Shell(game, functions, Round(owner, id, kind).Mass);
+                        },
                         (ref PenetratorInfo penetrator, CannonBlueprint owner, string id) => Hit(ref penetrator, owner, id, kind), icon,
                         penetration: (owner, id, _) => kind.Penetration * MathF.Cbrt(ShellProperties.GetProjectileMass(owner.Caliber) * Round(owner, id, kind).Mass));
             Heat.Load(Config, Log);
@@ -180,7 +185,8 @@ namespace HighExplosive
     {
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed, HeKind kind)
         {
-            if (cannon.Blueprint is not { } gun)
+            CannonBlueprint? gun = cannon.Blueprint;
+            if (gun == null)
                 return;
             RoundFields.Draw(drawer, RoundFields.For(gun, id, kind.Type, () =>
             {

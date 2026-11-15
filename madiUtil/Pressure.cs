@@ -37,12 +37,22 @@ namespace MadiUtil
         internal static List<(DateOnly Date, uint Pressure)> Read(string directory)
         {
             var eras = new List<(DateOnly, uint)>();
-            foreach (var (_, root) in TechFiles.Read(directory))
-                if (TechFiles.Text(root["type"]) == "cannon"
-                    && DateOnly.TryParseExact(TechFiles.Text(root["date"]), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly day)
-                    && root["properties"] is JsonObject properties
-                    && properties["operatingPressure"] is JsonValue pressure && pressure.TryGetValue(out uint value))
-                    eras.Add((day, value));
+            foreach ((string _, JsonObject root) in TechFiles.Read(directory))
+            {
+                if (TechFiles.Text(root["type"]) != "cannon")
+                    continue;
+                if (!DateOnly.TryParseExact(TechFiles.Text(root["date"]), "yyyy.MM.dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly day))
+                    continue;
+                JsonObject? properties = root["properties"] as JsonObject;
+                if (properties == null)
+                    continue;
+                JsonValue? pressure = properties["operatingPressure"] as JsonValue;
+                if (pressure == null)
+                    continue;
+                if (!pressure.TryGetValue(out uint value))
+                    continue;
+                eras.Add((day, value));
+            }
             return eras.OrderBy(e => e.Item1).ToList();
         }
 
@@ -52,7 +62,15 @@ namespace MadiUtil
         /// <summary>The <c>"pressure"</c> in a description; null without one or when it isn't JSON.</summary>
         internal static uint? Parse(string text) => Of(Descriptions.Parse(text));
 
-        private static uint? Of(JsonObject? json) => json?["pressure"] is JsonValue value && value.TryGetValue(out uint pressure) ? pressure : null;
+        private static uint? Of(JsonObject? json)
+        {
+            JsonValue? value = json?["pressure"] as JsonValue;
+            if (value == null)
+                return null;
+            if (!value.TryGetValue(out uint pressure))
+                return null;
+            return pressure;
+        }
 
         /// <summary>
         /// <paramref name="text"/> with its <c>"pressure"</c> set to <paramref name="pressure"/>, other keys kept;
@@ -73,9 +91,13 @@ namespace MadiUtil
         /// <summary>Puts <paramref name="gun"/>'s picked pressure back if the game changed it; true if it did.</summary>
         internal static bool Restore(CannonBlueprint gun)
         {
-            if (Stored(gun) is not uint pressure || gun.OperatingPressure == pressure)
+            uint? pressure = Stored(gun);
+            // The era's pressure: nothing to put back
+            if (pressure == null)
                 return false;
-            gun.OperatingPressure = pressure;
+            if (gun.OperatingPressure == pressure.Value)
+                return false;
+            gun.OperatingPressure = pressure.Value;
             gun.physicalPropertiesDirty = true;
             return true;
         }
@@ -86,7 +108,7 @@ namespace MadiUtil
             if (eras.Count == 0)
                 return null;
             uint pressure = eras[0].Pressure;
-            foreach (var era in eras)
+            foreach ((DateOnly Date, uint Pressure) era in eras)
                 if (era.Date <= date)
                     pressure = era.Pressure;
             return pressure;
@@ -104,14 +126,23 @@ namespace MadiUtil
         // Before the game's fields, so the section sits at the top of the panel
         private static void Prefix(CannonEditor __instance, IGUILayout __0)
         {
-            var cannon = __instance.Component;
-            var blueprint = cannon?.Blueprint;
-            var slot = cannon?.blueprintSlot;
+            Cannon? cannon = __instance.Component;
+            CannonBlueprint? blueprint = cannon?.Blueprint;
+            Sprocket.Blueprints.BlueprintSlot<CannonBlueprint>? slot = cannon?.blueprintSlot;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (blueprint == null || slot == null || drawer == null || EraYears.Designer == null)
+            if (blueprint == null)
                 return;
-            if (Pressure.Of(Pressure.Eras, EraYears.ToDate(EraYears.Designer.TechnologyDate)) is not uint era)
+            if (slot == null)
                 return;
+            if (drawer == null)
+                return;
+            if (EraYears.Designer == null)
+                return;
+            uint? eraPressure = Pressure.Of(Pressure.Eras, EraYears.ToDate(EraYears.Designer.TechnologyDate));
+            // No cannon tech files read
+            if (eraPressure == null)
+                return;
+            uint era = eraPressure.Value;
             if (Pressure.Restore(blueprint) | Breech.Apply(blueprint))
                 slot.MarkModified();
             if (!EditorGui.Section(drawer, "madiUtil.gun", "Gun settings", __instance.RequestRedraw, open: true))
@@ -124,7 +155,7 @@ namespace MadiUtil
             FloatProperty Field(string name, Func<Breech.Settings, float> get, Func<Breech.Settings, float, Breech.Settings> set, float min, float step, string tooltip) =>
                 new(name, (Func<float>)(() => get(Breech.Of(blueprint))), (Action<float>)(v => Change(s => set(s, v))), tooltip)
                 { Min = min, Max = 1f, Step = step };
-            var fields = breechFields.Get(blueprint, () => new[]
+            FloatProperty[] fields = breechFields.Get(blueprint, () => new[]
             {
                 Field("Breech width", s => s.X, (s, v) => s with { X = v }, Breech.MinScale, 0.01f, "Breech width as a share of the game's; its mass shrinks with it. Very thin (a few mm) stops the gun elevating."),
                 Field("Breech height", s => s.Y, (s, v) => s with { Y = v }, Breech.MinScale, 0.01f, "Breech height as a share of the game's; its mass shrinks with it. Very thin (a few mm) stops the gun elevating."),

@@ -59,12 +59,16 @@ namespace HighExplosive
                 new AcceptableValueRange<float>(0f, 10f), new Step(0.25f)));
             LogBursts = config.Bind("APHE", "Log bursts", false,
                 "Logs each APHE shell's path to its burst, the burst, and what each fragment made after it did: its flags, material, distance and speed.");
-            var introduced = MadiLib.Introduced.Bind(config, "APHE", "APHE rounds", 1914f);
+            ConfigEntry<float> introduced = MadiLib.Introduced.Bind(config, "APHE", "APHE rounds", 1914f);
             Loadout.Introduce(ApheRound.Type, () => introduced.Value);
             SettingsTab.AddSection("Rounds", "APHE", introduced, Fragmentation, MaxFragments, Spread, Gurney, FragmentMass, PenetrationLoss, LogBursts);
-            using (var icon = Plugin.Icon(ApheRound.Type))
+            using (System.IO.Stream? icon = Plugin.Icon(ApheRound.Type))
                 Loadout.Register(ApheRound.Type, "APHE", ApheEditor.Draw, (game, cannon, id, functions) =>
-                    cannon.Blueprint is { } owner ? Plugin.Shell(game, functions, 1f, explode: false) : null, Hit, icon, penetration: (owner, id, speed) =>
+                    {
+                        if (cannon.Blueprint == null)
+                            return null;
+                        return Plugin.Shell(game, functions, 1f, explode: false);
+                    }, Hit, icon, penetration: (owner, id, speed) =>
                     {
                         float kg = ShellProperties.GetProjectileMass(owner.Caliber);
                         return Impacts.DeMarre(owner.Caliber, kg, speed, owner.PenetratorConstant) * Penetration(Share(Round(owner, id).Filler, kg));
@@ -186,14 +190,24 @@ namespace HighExplosive
         /// <summary>From <see cref="Impacts.FragmentSimulating"/>.</summary>
         internal static void Simulating(PenetrationSimulation __0, short __1)
         {
-            if (!active || cut.Count == 0 && !(atExit && armed) || __0 == null)
+            if (!active)
+                return;
+            if (__0 == null)
+                return;
+            // Nothing to stop: no fragment cut, and not armed at the exit
+            if (cut.Count == 0 && !(atExit && armed))
                 return;
             try
             {
                 FragmentInfo fragment = Fragments.Get(__0.Pointer, __1);
                 // An HE hit past its first plate with no gap to stop in: a plate touching it, or a ricochet out of the face
-                bool nextPlate = atExit && armed && fragment.IsJet && fragment.Material >= 0;
-                if (nextPlate || fragment.Parent >= 0 && cut.Contains(fragment.Parent))
+                bool nextPlate = atExit
+                    && armed
+                    && fragment.IsJet
+                    && fragment.Material >= 0;
+                // Made by a fragment already cut
+                bool cutParent = fragment.Parent >= 0 && cut.Contains(fragment.Parent);
+                if (nextPlate || cutParent)
                 {
                     FragmentArray.SetSpeed(__0.Pointer, __1, 0f);
                     // It copied its parent's length, which stays if it never flies
@@ -312,7 +326,7 @@ namespace HighExplosive
             CannonBlueprint? gun = cannon.Blueprint;
             if (gun == null)
                 return;
-            var set = RoundFields.For(gun, id, ApheRound.Type, () =>
+            (FloatProperty[] Fields, StringProperty[] Readouts) set = RoundFields.For(gun, id, ApheRound.Type, () =>
             {
                 ApheRound R() => Aphe.Round(gun, id);
                 float Kg() => ShellProperties.GetProjectileMass(gun.Caliber);

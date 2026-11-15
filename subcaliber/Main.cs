@@ -105,10 +105,10 @@ namespace Subcaliber
                 Log.LogError($"Couldn't read {path}, penetrators are steel: {e.Message}");
             }
 
-            using (var apds = typeof(Plugin).Assembly.GetManifestResourceStream("apds.png"))
+            using (Stream? apds = typeof(Plugin).Assembly.GetManifestResourceStream("apds.png"))
                 Loadout.AddIcon("sabot.apds", apds!);
             // The type's own icon is a long rod's; shorter penetrators get APDS's
-            using (var icon = typeof(Plugin).Assembly.GetManifestResourceStream("sabot.png"))
+            using (Stream? icon = typeof(Plugin).Assembly.GetManifestResourceStream("sabot.png"))
                 Loadout.Register(SabotRound.Type, "Sabot", SabotEditor.Draw, Shape, LongRod.Hit, icon,
                     (owner, id) => Round(owner, id).Length < LongRod.MinCalibers ? "sabot.apds" : null, SabotEditor.Penetration);
             Impacts.Simulated += ArmourView.Simulate;
@@ -123,10 +123,11 @@ namespace Subcaliber
         /// </summary>
         private static RoundShape? Shape(ProjectileDefinition game, Cannon cannon, string id, List<ProjectileFunctionDefinition> functions)
         {
-            if (cannon.Blueprint is not { } owner)
+            CannonBlueprint? owner = cannon.Blueprint;
+            if (owner == null)
                 return null;
             Penetrator p = Penetrator(Round(owner, id), game.Diameter * 1000f);
-            var dragCurve = ProjectileDefinition.ShellDragCoefficientCurve;
+            UnityCoreModule::UnityEngine.AnimationCurve dragCurve = ProjectileDefinition.ShellDragCoefficientCurve;
             return new RoundShape
             {
                 Mass = game.Mass * p.Mass,
@@ -191,7 +192,7 @@ namespace Subcaliber
             CannonBlueprint? gun = cannon.Blueprint;
             if (gun == null)
                 return;
-            var set = RoundFields.For(gun, id, SabotRound.Type, () =>
+            (FloatProperty[] Fields, StringProperty[] Readouts) set = RoundFields.For(gun, id, SabotRound.Type, () =>
             {
                 StringProperty[] readouts =
                 {
@@ -248,9 +249,12 @@ namespace Subcaliber
         /// </summary>
         internal static void MaterialDropdown(IGUIElementDrawer drawer, string selected, Action<string> onSelect, bool limited = false)
         {
-            List<string> names = Plugin.Materials.Keys
-                .Where(n => !limited || n == selected || !Plugin.Uranium(n) || Introduced.Allowed(Plugin.UraniumYear.Value))
-                .ToList();
+            List<string> names = new List<string>();
+            foreach (string name in Plugin.Materials.Keys)
+            {
+                if (Offered(name, selected, limited))
+                    names.Add(name);
+            }
             EditorGui.Dropdown(
                 drawer,
                 "Material",
@@ -260,13 +264,29 @@ namespace Subcaliber
                 $"Densities are in {Path.Combine(Paths.ConfigPath, "madi.subcaliber.materials.json")}; edit it and restart to add materials.");
         }
 
+        /// <summary>Whether <paramref name="name"/> is in the material dropdown: depleted uranium only from its year, unless already chosen.</summary>
+        private static bool Offered(string name, string selected, bool limited)
+        {
+            if (!limited)
+                return true;
+            if (name == selected)
+                return true;
+            if (!Plugin.Uranium(name))
+                return true;
+            return Introduced.Allowed(Plugin.UraniumYear.Value);
+        }
+
         private const string ReadoutDescription = "Penetration is at the muzzle: the game's for a full-bore round, else the Lanz-Odermatt long-rod equation, raised for stubby (APDS-like) penetrators. Mass is per round; the sabot is discarded at the muzzle.";
 
         /// <summary>Which penetration model the round's <b>Penetration</b> readout comes from.</summary>
         private static string Regime(CannonBlueprint gun, string id)
         {
             Penetrator p = Penetrator(gun, id);
-            return p.Ratio >= 1f ? "full-bore" : p.Calibers < LongRod.MinCalibers ? "APDS" : "long rod";
+            if (p.Ratio >= 1f)
+                return "full-bore";
+            if (p.Calibers < LongRod.MinCalibers)
+                return "APDS";
+            return "long rod";
         }
 
         private static Penetrator Penetrator(CannonBlueprint gun, string id) => Plugin.Penetrator(Plugin.Round(gun, id), gun.Caliber);

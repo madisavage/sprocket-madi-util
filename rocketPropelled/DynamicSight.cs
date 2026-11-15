@@ -36,11 +36,21 @@ namespace RocketPropelled
 
         internal static void Patch(Harmony harmony)
         {
-            var load = AccessTools.Method("SprocketDynamicSight.Game.AmmoCatalog:Load");
-            var simulate = AccessTools.Method("SprocketDynamicSight.Core.Trajectory:Simulate");
-            var decel = AccessTools.Method("SprocketDynamicSight.Core.DragTable:Decel");
-            var predict = AccessTools.Method("SprocketDynamicSight.Game.AmmoCatalog:TryPredictVelocity");
-            if (load == null || simulate == null || decel == null || predict == null)
+            System.Reflection.MethodInfo? load = AccessTools.Method("SprocketDynamicSight.Game.AmmoCatalog:Load");
+            System.Reflection.MethodInfo? simulate = AccessTools.Method("SprocketDynamicSight.Core.Trajectory:Simulate");
+            System.Reflection.MethodInfo? decel = AccessTools.Method("SprocketDynamicSight.Core.DragTable:Decel");
+            System.Reflection.MethodInfo? predict = AccessTools.Method("SprocketDynamicSight.Game.AmmoCatalog:TryPredictVelocity");
+            // One of them was renamed or removed
+            bool changed = false;
+            if (load == null)
+                changed = true;
+            if (simulate == null)
+                changed = true;
+            if (decel == null)
+                changed = true;
+            if (predict == null)
+                changed = true;
+            if (changed)
             {
                 Plugin.Logger.LogWarning("Dynamic Gun Sight has changed; its range ladder flies rockets without their motor.");
                 return;
@@ -55,9 +65,22 @@ namespace RocketPropelled
         /// <summary><c>RoundInfo Load(int typeId)</c>: ties a rocket's drag table to its motor.</summary>
         private static void LoadPostfix(int typeId, object? __result)
         {
-            if (__result == null || Traverse.Create(__result).Field("Drag").GetValue() is not { } drag
-                || Loadout.RoundOfProjectile(typeId) is not { } round || Plugin.BurnOf(round.Owner, round.Id) is not { Burns: true } burn)
+            if (__result == null)
                 return;
+            object? drag = Traverse.Create(__result).Field("Drag").GetValue();
+            if (drag == null)
+                return;
+            (Sprocket.Vehicles.Cannons.CannonBlueprint Owner, string Id, float Mass)? found = Loadout.RoundOfProjectile(typeId);
+            // Not one of our rounds
+            if (found == null)
+                return;
+            (Sprocket.Vehicles.Cannons.CannonBlueprint Owner, string Id, float Mass) round = found.Value;
+            Burn? motor = Plugin.BurnOf(round.Owner, round.Id);
+            if (motor == null)
+                return;
+            if (!motor.Value.Burns)
+                return;
+            Burn burn = motor.Value;
             rockets.AddOrUpdate(drag, Tuple.Create(burn, round.Mass + burn.Case, Plugin.LaunchSpeeds.GetValueOrDefault((round.Owner.Pointer, round.Id))));
         }
 
@@ -69,15 +92,27 @@ namespace RocketPropelled
         /// </summary>
         private static void PredictPostfix(object info)
         {
-            var round = Traverse.Create(info);
-            if (round.Field("Drag").GetValue() is { } drag && rockets.TryGetValue(drag, out var rocket) && rocket.Item3 > 0f
-                && round.Field<float>("PredictedVelocity").Value <= 0f)
-                round.Field<float>("PredictedVelocity").Value = rocket.Item3;
+            Traverse round = Traverse.Create(info);
+            object? drag = round.Field("Drag").GetValue();
+            if (drag == null)
+                return;
+            // Not a rocket's drag table
+            if (!rockets.TryGetValue(drag, out Tuple<Burn, float, float>? rocket))
+                return;
+            float launch = rocket.Item3;
+            if (launch <= 0f)
+                return;
+            // The sight already has a prediction of its own
+            if (round.Field<float>("PredictedVelocity").Value > 0f)
+                return;
+            round.Field<float>("PredictedVelocity").Value = launch;
         }
 
         private static void SimulatePrefix(object drag, double dt)
         {
-            active = rockets.TryGetValue(drag, out var rocket) ? rocket : null;
+            active = null;
+            if (rockets.TryGetValue(drag, out Tuple<Burn, float, float>? rocket))
+                active = rocket;
             activeDrag = drag;
             step = dt;
             steps = 0;
@@ -85,33 +120,45 @@ namespace RocketPropelled
 
         private static Exception? SimulateFinalizer(Exception? __exception, object __instance)
         {
-            // At most once per drag table and launch speed: the sight simulates every frame
-            if (active != null && Plugin.LogFlights.Value && __exception == null && logged.Add((activeDrag!, (int)launchSpeed)))
-                LogPrediction(__instance, active.Item1);
+            if (ShouldLog(__exception))
+                LogPrediction(__instance, active!.Item1);
             active = null;
             return __exception;
+        }
+
+        /// <summary>Whether the simulation that just ran is a rocket's to log.</summary>
+        private static bool ShouldLog(Exception? exception)
+        {
+            if (active == null)
+                return false;
+            if (!Plugin.LogFlights.Value)
+                return false;
+            if (exception != null)
+                return false;
+            // At most once per drag table and launch speed: the sight simulates every frame
+            return logged.Add((activeDrag!, (int)launchSpeed));
         }
 
         /// <summary>Logs the simulated path at <see cref="Burn.Checkpoints"/>, as <see cref="Flight"/> logs the real one.</summary>
         private static void LogPrediction(object trajectory, Burn burn)
         {
-            var t = Traverse.Create(trajectory);
+            Traverse t = Traverse.Create(trajectory);
             int count = t.Field<int>("Count").Value;
             double[] times = t.Field<double[]>("T").Value;
             Array points = t.Field<Array>("P").Value;
             (double X, double Y, double Z) At(int i)
             {
-                var p = Traverse.Create(points.GetValue(i));
+                Traverse p = Traverse.Create(points.GetValue(i));
                 return (p.Field<double>("x").Value, p.Field<double>("y").Value, p.Field<double>("z").Value);
             }
-            var start = At(0);
+            (double X, double Y, double Z) start = At(0);
             Plugin.Logger.LogInfo($"Sight prediction: {launchSpeed:0} m/s at launch, step {step:0.0000} s");
             foreach (float checkpoint in burn.Checkpoints)
                 for (int i = 1; i < count; i++)
                     if (times[i] >= checkpoint)
                     {
-                        var (x, y, z) = At(i);
-                        var (px, py, pz) = At(i - 1);
+                        (double x, double y, double z) = At(i);
+                        (double px, double py, double pz) = At(i - 1);
                         double dt = times[i] - times[i - 1];
                         double speed = Math.Sqrt((x - px) * (x - px) + (y - py) * (y - py) + (z - pz) * (z - pz)) / dt;
                         Plugin.Logger.LogInfo($"Sight prediction at {times[i]:0.000} s: range {Math.Sqrt((x - start.X) * (x - start.X) + (z - start.Z) * (z - start.Z)):0.0} m, height {y - start.Y:0.00} m, {speed:0} m/s");

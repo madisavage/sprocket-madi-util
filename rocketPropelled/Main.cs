@@ -63,7 +63,7 @@ namespace RocketPropelled
                 new AcceptableValueRange<float>(0f, 3f), new SoftMax(1f), new Step(0.05f)));
             LogFlights = Config.Bind("Debug", "Log flights", false,
                 "Logs each rocket's speed at launch and burnout, and Dynamic Gun Sight's prediction of them, to compare the two.");
-            foreach (var entry in new[] { Exhaust, PropellantDensity, CaseMass })
+            foreach (ConfigEntry<float> entry in new[] { Exhaust, PropellantDensity, CaseMass })
                 entry.SettingChanged += (_, _) => Loadout.Invalidate();
             SettingsTab.AddSection("Rounds", "Rocket", Exhaust, PropellantDensity, CaseMass);
             Loadout.Modify(Modify);
@@ -78,7 +78,10 @@ namespace RocketPropelled
         /// <summary>The motor of round <paramref name="id"/> in <paramref name="gun"/>, built for the gun; null for none.</summary>
         internal static Burn? BurnOf(CannonBlueprint? gun, string id)
         {
-            if (gun == null || Loadout.Get<RocketRound>(gun, id)?.Motor is not { } motor)
+            if (gun == null)
+                return null;
+            Motor? motor = Loadout.Get<RocketRound>(gun, id)?.Motor;
+            if (motor == null)
                 return null;
             Burn burn = motor.Build(gun.Caliber, PropellantDensity.Value, CaseMass.Value, Exhaust.Value);
             return Payload == null ? burn : burn with { Case = burn.Case + Payload(gun, id) };
@@ -87,8 +90,10 @@ namespace RocketPropelled
         /// <summary>Round <paramref name="id"/>'s motor push in <paramref name="gun"/>, m/s² at each second after launch, with a full-bore shell as warhead; null without a motor.</summary>
         public static Func<float, float>? Thrust(CannonBlueprint gun, string id)
         {
-            if (BurnOf(gun, id) is not { } burn)
+            Burn? found = BurnOf(gun, id);
+            if (found == null)
                 return null;
+            Burn burn = found.Value;
             float dry = ShellProperties.GetProjectileMass(gun.Caliber) + burn.Case;
             return age => burn.Acceleration(age, dry);
         }
@@ -102,8 +107,10 @@ namespace RocketPropelled
         /// </summary>
         public static (float Launch, float Burnout)? Speeds(CannonBlueprint gun, string id)
         {
-            if (BurnOf(gun, id) is not { } burn)
+            Burn? found = BurnOf(gun, id);
+            if (found == null)
                 return null;
+            Burn burn = found.Value;
             // shortcut: assumes a full-bore shell's mass, not the round type's; pass each type's mass through rounds if they mislead
             float shell = ShellProperties.GetProjectileMass(gun.Caliber);
             float launch = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, 1f + burn.Mass / shell, Charge(gun, id));
@@ -144,8 +151,13 @@ namespace RocketPropelled
         /// </summary>
         private static bool Modify(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions)
         {
-            if (cannon.Blueprint is not { } gun || BurnOf(gun, id) is not { } burn)
+            CannonBlueprint? gun = cannon.Blueprint;
+            if (gun == null)
                 return false;
+            Burn? found = BurnOf(gun, id);
+            if (found == null)
+                return false;
+            Burn burn = found.Value;
             // Launch length is mass as a full-bore projectile's length
             shape.LaunchLength += game.Length * burn.Mass / game.Mass;
             float ratio = Loadout.VelocityRatio(gun, shape.LaunchLength / game.Length, Charge(gun, id));
@@ -199,8 +211,18 @@ namespace RocketPropelled
             internal Step? Steer;
 
             /// <summary>Seconds after launch it stops being followed.</summary>
-            internal float Until => Steer != null ? MaxSteer
-                : Plugin.LogFlights.Value ? Math.Max(Motor.BurnOut, Motor.Checkpoints[^1]) : Motor.BurnOut;
+            internal float Until
+            {
+                get
+                {
+                    if (Steer != null)
+                        return MaxSteer;
+                    // Followed past burnout to its last logged checkpoint
+                    if (Plugin.LogFlights.Value)
+                        return Math.Max(Motor.BurnOut, Motor.Checkpoints[^1]);
+                    return Motor.BurnOut;
+                }
+            }
         }
 
         private static readonly List<Rocket> burns = new();
@@ -240,8 +262,9 @@ namespace RocketPropelled
         internal static void Launch(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id, Cannon gun)
         {
             // The definition's mass is the warhead's, which its hits go by; the case flies too
-            if (Plugin.BurnOf(owner, id) is { Burns: true } motor)
-                burns.Add(new Rocket(register, projectile, Time.time, motor, definition.Mass + motor.Case));
+            Burn? motor = Plugin.BurnOf(owner, id);
+            if (motor != null && motor.Value.Burns)
+                burns.Add(new Rocket(register, projectile, Time.time, motor.Value, definition.Mass + motor.Value.Case));
         }
 
         private static unsafe void Postfix(ProjectileRegister __instance)
