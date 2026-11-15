@@ -94,13 +94,13 @@ namespace Hydropneumatic
         internal static float TrackPitch(IReadOnlyList<(float X, float Compression)> wheels)
         {
             float meanX = 0f, meanC = 0f;
-            foreach (var (x, c) in wheels)
+            foreach ((float x, float c) in wheels)
             {
                 meanX += x / wheels.Count;
                 meanC += c / wheels.Count;
             }
             float covariance = 0f, variance = 0f;
-            foreach (var (x, c) in wheels)
+            foreach ((float x, float c) in wheels)
             {
                 covariance += (x - meanX) * (c - meanC);
                 variance += (x - meanX) * (x - meanX);

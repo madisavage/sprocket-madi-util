@@ -184,13 +184,16 @@ namespace Hydropneumatic
                 layHold = 0f;
                 gun = null;
                 foreach (Cannon cannon in hull.GetComponentsInChildren<Cannon>())
-                    if (Settings(cannon.Blueprint?.Name) is var (rate, force))
-                    {
-                        gun = cannon;
-                        layRate = rate;
-                        layGrip = force / 100f;
-                        break;
-                    }
+                {
+                    (float Rate, float Force)? settings = Settings(cannon.Blueprint?.Name);
+                    // Not tagged for hull aiming
+                    if (settings == null)
+                        continue;
+                    gun = cannon;
+                    layRate = settings.Value.Rate;
+                    layGrip = settings.Value.Force / 100f;
+                    break;
+                }
             }
             return gun;
         }
@@ -202,9 +205,17 @@ namespace Hydropneumatic
         private static Vector3 Target(UnityCoreModule::UnityEngine.Ray ray, Transform hull)
         {
             float nearest = SkyDistance;
-            foreach (var hit in Physics.RaycastAll(ray, MaxRange))
-                if (hit.distance < nearest && hit.transform != null && !hit.transform.IsChildOf(hull))
-                    nearest = hit.distance;
+            foreach (UnityPhysicsModule::UnityEngine.RaycastHit hit in Physics.RaycastAll(ray, MaxRange))
+            {
+                if (hit.distance >= nearest)
+                    continue;
+                if (hit.transform == null)
+                    continue;
+                // The player's own vehicle
+                if (hit.transform.IsChildOf(hull))
+                    continue;
+                nearest = hit.distance;
+            }
             return ray.origin + ray.direction * nearest;
         }
 
@@ -218,7 +229,21 @@ namespace Hydropneumatic
             layError = float.NaN;
             try
             {
-                if (PlayerVehicle.Root is not { } hull || Gun(hull) is not { } cannon || cannon == null || cannon.transform is not { } barrel)
+                Transform? hull = PlayerVehicle.Root;
+                if (hull == null)
+                {
+                    command = 0f;
+                    return;
+                }
+                // The gun tagged for hull aiming
+                Cannon? cannon = Gun(hull);
+                if (cannon == null)
+                {
+                    command = 0f;
+                    return;
+                }
+                Transform? barrel = cannon.transform;
+                if (barrel == null)
                 {
                     command = 0f;
                     return;
@@ -246,7 +271,10 @@ namespace Hydropneumatic
                     command = 0f;
                     return;
                 }
-                float yawRate = hull.GetComponent<Rigidbody>() is { } body ? Vector3.Dot(body.angularVelocity, hull.up) * Mathf.Rad2Deg : 0f;
+                float yawRate = 0f;
+                Rigidbody? body = hull.GetComponent<Rigidbody>();
+                if (body != null)
+                    yawRate = Vector3.Dot(body.angularVelocity, hull.up) * Mathf.Rad2Deg;
                 float yaw = Yaw(forward, desired, N(hull.up));
                 bool wasTurning = turning;
                 (command, turning) = Steer(yaw, yawRate, command, Time.deltaTime, turning);
@@ -390,14 +418,19 @@ namespace Hydropneumatic
         {
             Cannon? cannon = __instance.Component;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (drawer == null || cannon?.Blueprint is not { } blueprint)
+            if (drawer == null)
+                return;
+            if (cannon == null)
+                return;
+            CannonBlueprint? blueprint = cannon.Blueprint;
+            if (blueprint == null)
                 return;
             void Set((float, float)? settings)
             {
                 blueprint.Name = WithSettings(blueprint.Name ?? "", settings);
                 cannon.blueprintSlot?.MarkModified();
             }
-            var settings = Settings(blueprint.Name);
+            (float Rate, float Force)? settings = Settings(blueprint.Name);
             drawer.ToggleField(
                 "Hull aiming",
                 settings != null,

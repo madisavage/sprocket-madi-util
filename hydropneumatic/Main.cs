@@ -8,6 +8,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MadiLib;
 using Properties;
 using Sprocket.Blueprints;
@@ -85,7 +86,12 @@ namespace Hydropneumatic
             using var _ = MadiLib.Profile.Measure("hydropneumatic: HUD indicator");
             Ride.Prune();
             Pose.State pose = Ride.Current;
-            if (!ShowIndicator.Value || !Ride.Active || pose == default && !HullAim.Active)
+            if (!ShowIndicator.Value)
+                return 0f;
+            if (!Ride.Active)
+                return 0f;
+            // Level, and no hull aiming to show
+            if (pose == default && !HullAim.Active)
                 return 0f;
             const float icon = 40f, pad = 4f, column = 76f, gauge = icon + pad + column;
             float Degrees(float half) => MathF.Atan(Ride.Travel / (1000f * half)) * 180f / MathF.PI;
@@ -99,16 +105,21 @@ namespace Hydropneumatic
             float width = pad + gauges.Length * (gauge + pad) + (HullAim.Active ? icon + pad : 0f);
             GUI.Box(new Rect(left, bottom - height, width, height), "");
             float x = left + pad, y = bottom - height + pad;
-            foreach (var (resource, text, value, limit) in gauges)
+            foreach ((string resource, string text, float value, float limit) in gauges)
             {
-                if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } image)
+                UnityCoreModule::UnityEngine.Texture2D? image = HudDraw.Icon(typeof(Plugin).Assembly, resource);
+                if (image != null)
                     HudDraw.Image(new Rect(x, y, icon, icon), image, value == 0f ? HudDraw.Idle : HudDraw.Next);
                 HudDraw.Label(new Rect(x + icon + pad, y, column, 20f), text, 14, HudDraw.Idle);
                 HudDraw.CentredBar(new Rect(x + icon + pad, y + 26f, column, 8f), value, limit, HudDraw.Next);
                 x += gauge + pad;
             }
-            if (HullAim.Active && HudDraw.Icon(typeof(Plugin).Assembly, "hullaim.png") is { } aim)
-                HudDraw.Image(new Rect(x, y, icon, icon), aim, HullAim.Enabled ? HudDraw.Ok : HudDraw.Off);
+            if (HullAim.Active)
+            {
+                UnityCoreModule::UnityEngine.Texture2D? aim = HudDraw.Icon(typeof(Plugin).Assembly, "hullaim.png");
+                if (aim != null)
+                    HudDraw.Image(new Rect(x, y, icon, icon), aim, HullAim.Enabled ? HudDraw.Ok : HudDraw.Off);
+            }
             return height;
         }
 
@@ -120,8 +131,13 @@ namespace Hydropneumatic
         internal static (float Travel, float Rate)? Settings(string? name) => Pair(tag, "adjust", name, DefaultTravel, DefaultRate);
 
         /// <summary>The two numbers in <paramref name="name"/>'s <paramref name="tag"/>, as <see cref="NameTags.Numbers"/>.</summary>
-        internal static (float, float)? Pair(Regex tag, string word, string? name, float first, float second) =>
-            NameTags.Numbers(tag, word, name, new[] { first, second }) is { } n ? (n[0], n[1]) : null;
+        internal static (float, float)? Pair(Regex tag, string word, string? name, float first, float second)
+        {
+            float[]? numbers = NameTags.Numbers(tag, word, name, new[] { first, second });
+            if (numbers == null)
+                return null;
+            return (numbers[0], numbers[1]);
+        }
 
         // Track blueprint, its travel and rate properties
         private static readonly ObjectCache<FloatProperty> travels = new(), rates = new();
@@ -133,9 +149,14 @@ namespace Hydropneumatic
         [HarmonyPostfix, HarmonyPatch(typeof(TrackEditor), nameof(TrackEditor.OnGUI))]
         private static void Draw(TrackEditor __instance, IGUILayout __0)
         {
-            var slot = __instance.Component?.blueprintSlot;
+            BlueprintSlot<TrackBlueprint>? slot = __instance.Component?.blueprintSlot;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (drawer == null || slot?.Blueprint is not { } blueprint)
+            if (drawer == null)
+                return;
+            if (slot == null)
+                return;
+            TrackBlueprint? blueprint = slot.Blueprint;
+            if (blueprint == null)
                 return;
             // The panel's working copy may be saved back over the slot's: tag both
             TrackBlueprint? copy = __instance.blueprint;
@@ -146,7 +167,7 @@ namespace Hydropneumatic
                     copy.Name = blueprint.Name;
                 slot.MarkModified();
             }
-            var settings = Settings(blueprint.Name);
+            (float Travel, float Rate)? settings = Settings(blueprint.Name);
             drawer.ToggleField(
                 "Adjustable suspension",
                 settings != null,
@@ -190,8 +211,16 @@ namespace Hydropneumatic
         internal static string WithSettings(string name, (float Travel, float Rate)? settings) => WithNumbers("adjust", name, settings);
 
         /// <summary><paramref name="name"/> with its <paramref name="tag"/> replaced by <c>[word first second]</c>, or removed for null.</summary>
-        internal static string WithNumbers(string word, string name, (float, float)? numbers) =>
-            NameTags.With(name, word, numbers is var (first, second) ? $"[{word} {NameTags.Format(first)} {NameTags.Format(second)}]" : null);
+        internal static string WithNumbers(string word, string name, (float, float)? numbers)
+        {
+            string? newTag = null;
+            if (numbers != null)
+            {
+                (float first, float second) = numbers.Value;
+                newTag = $"[{word} {NameTags.Format(first)} {NameTags.Format(second)}]";
+            }
+            return NameTags.With(name, word, newTag);
+        }
     }
 
     /// <summary>
@@ -315,7 +344,7 @@ namespace Hydropneumatic
         internal static void Prune()
         {
             dead.Clear();
-            foreach (var (pointer, track) in tracks)
+            foreach ((IntPtr pointer, Track track) in tracks)
                 if (Released(track.Behaviour))
                     dead.Add(pointer);
             foreach (IntPtr pointer in dead)
@@ -376,9 +405,9 @@ namespace Hydropneumatic
         private static unsafe void Arms(Track track)
         {
             TrackBehaviour behaviour = track.Behaviour;
-            var (springs, length) = Array(behaviour, springsField);
-            var (states, count) = Array(behaviour, statesField);
-            var arms = behaviour.suspensionArmTransforms;
+            (IntPtr springs, int length) = Array(behaviour, springsField);
+            (IntPtr states, int count) = Array(behaviour, statesField);
+            Il2CppReferenceArray<Transform>? arms = behaviour.suspensionArmTransforms;
             track.Loaded.Clear();
             track.Wheels.Clear();
             track.Arms = 0;
@@ -388,7 +417,9 @@ namespace Hydropneumatic
             track.MinX = float.MaxValue;
             track.MaxX = float.MinValue;
             track.Reach = float.MaxValue;
-            for (int i = 0; i < length && i < count && i < arms.Length; i++)
+            // The springs, their states and the arm transforms should agree; never read past the shortest
+            int wheelCount = Math.Min(length, Math.Min(count, arms.Length));
+            for (int i = 0; i < wheelCount; i++)
             {
                 byte* spring = (byte*)springs + i * springSize;
                 float x = *(float*)(spring + originOffset);
@@ -416,7 +447,11 @@ namespace Hydropneumatic
         /// </remarks>
         private static void Struts(float deltaTime)
         {
-            if (PlayerVehicle.Root is not { } hull || hull.GetComponent<Rigidbody>() is not { } body)
+            Transform? hull = PlayerVehicle.Root;
+            if (hull == null)
+                return;
+            Rigidbody? body = hull.GetComponent<Rigidbody>();
+            if (body == null)
                 return;
             wheels.Clear();
             foreach (Track track in tracks.Values)
@@ -478,10 +513,23 @@ namespace Hydropneumatic
         [HarmonyPostfix, HarmonyPatch(typeof(TrackBehaviour), nameof(TrackBehaviour.Update))]
         private static void Frame(TrackBehaviour __instance)
         {
-            // Once a frame, on the first tagged player track's call
-            if (!Ready || Released(__instance) || Get(__instance) is not { Settings: var (tagTravel, rate) }
-                || PlayerVehicle.Root is not { } hull || !PlayerVehicle.Contains(__instance.Transform) || frameAt == Time.frameCount)
+            if (!Ready)
                 return;
+            if (Released(__instance))
+                return;
+            (float Travel, float Rate)? settings = Get(__instance).Settings;
+            // An untagged track
+            if (settings == null)
+                return;
+            Transform? hull = PlayerVehicle.Root;
+            if (hull == null)
+                return;
+            if (!PlayerVehicle.Contains(__instance.Transform))
+                return;
+            // Once a frame, on the first tagged player track's call
+            if (frameAt == Time.frameCount)
+                return;
+            (float tagTravel, float rate) = settings.Value;
             frameAt = Time.frameCount;
             using var _ = MadiLib.Profile.Measure("hydropneumatic: frame");
             if (hull != root)
@@ -500,7 +548,16 @@ namespace Hydropneumatic
             float dt = Time.deltaTime, step = rate * dt;
             float pitchStep = MathF.Atan(step / (1000f * HalfLength)) * 180f / MathF.PI;
             float rollStep = MathF.Atan(step / (1000f * HalfWidth)) * 180f / MathF.PI;
-            float Axis(Func<bool> plus, Func<bool> minus) => (plus() ? 1f : 0f) - (minus() ? 1f : 0f);
+            // 1, -1, or 0 with neither key or both held
+            float Axis(Func<bool> plus, Func<bool> minus)
+            {
+                float axis = 0f;
+                if (plus())
+                    axis += 1f;
+                if (minus())
+                    axis -= 1f;
+                return axis;
+            }
             float dHeight = Axis(Plugin.Raise, Plugin.Lower) * step;
             float dPitch = Axis(Plugin.PitchUp, Plugin.PitchDown) * pitchStep;
             // Roll left: lean left, the right side up
@@ -512,14 +569,15 @@ namespace Hydropneumatic
                     Plugin.PitchTarget = null;
                 Current = Pose.Move(Current, dHeight, dPitch, dRoll, travel, HalfLength, HalfWidth);
             }
-            else if (target is { } level)
+            else if (target != null)
             {
+                Pose.State level = target.Value;
                 Current = Pose.Toward(Current, level, dt, rate, HalfLength, HalfWidth, travel);
                 if (Current == level)
                     target = null;
             }
-            else if (Plugin.PitchTarget is { } pitch)
-                Current = Pose.Toward(Current, Current with { Pitch = pitch }, dt, rate, HalfLength, HalfWidth, travel);
+            else if (Plugin.PitchTarget != null)
+                Current = Pose.Toward(Current, Current with { Pitch = Plugin.PitchTarget.Value }, dt, rate, HalfLength, HalfWidth, travel);
         }
 
         /// <summary>Sets half the wheelbase and half the track spacing of the player's tagged tracks.</summary>
@@ -529,17 +587,26 @@ namespace Hydropneumatic
             float minX = float.MaxValue, maxX = float.MinValue, left = float.NaN, right = float.NaN, reach = float.MaxValue;
             foreach (Track track in tracks.Values)
             {
-                if (!Live(track) || track.Arms == 0 || track.Behaviour.Transform is not { } transform)
+                if (!Live(track))
+                    continue;
+                if (track.Arms == 0)
+                    continue;
+                Transform? transform = track.Behaviour.Transform;
+                if (transform == null)
                     continue;
                 minX = MathF.Min(minX, track.MinX);
                 maxX = MathF.Max(maxX, track.MaxX);
                 reach = MathF.Min(reach, track.Reach);
                 float side = Vector3.Dot(transform.position - hull.position, hull.right);
-                if (track.Behaviour.sideMultiplier < 0) left = side; else right = side;
+                if (track.Behaviour.sideMultiplier < 0)
+                    left = side;
+                else
+                    right = side;
             }
             if (maxX > minX)
                 HalfLength = (maxX - minX) / 2f;
-            if (!float.IsNaN(left) && !float.IsNaN(right) && right > left)
+            bool bothSides = !float.IsNaN(left) && !float.IsNaN(right);
+            if (bothSides && right > left)
                 HalfWidth = (right - left) / 2f;
             return reach;
         }
