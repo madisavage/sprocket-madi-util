@@ -127,7 +127,7 @@ namespace GuidedMunitions
             float Miss(float range)
             {
                 var start = new Vector3(0f, -offset, 0f);
-                var end = MadiLib.Trajectory.Fly(start, Vector3.Normalize(new Vector3(0f, offset, range)) * MathF.Min(launch, maxSpeed), range, 30f, 0.02f, Gravity, decel, thrust,
+                MadiLib.Trajectory.State end = MadiLib.Trajectory.Fly(start, Vector3.Normalize(new Vector3(0f, offset, range)) * MathF.Min(launch, maxSpeed), range, 30f, 0.02f, Gravity, decel, thrust,
                     (float age, float dt, Vector3 p, ref Vector3 v) => v = Capped(Steer(p, v, Vector3.Zero, Vector3.UnitZ, maxAccel, dt, ratedSpeed, liftToDrag, omega), maxSpeed));
                 return end.Crossed ? MathF.Sqrt(end.Position.X * end.Position.X + end.Position.Y * end.Position.Y) : float.PositiveInfinity;
             }
@@ -153,8 +153,11 @@ namespace GuidedMunitions
         /// <summary>Takes the line's origin and unit direction <paramref name="dt"/> s after the last.</summary>
         internal void Update(Vector3 newOrigin, Vector3 newDirection, float dt)
         {
-            if (origin is { } o && direction is { } d && dt > 0f)
+            // Nothing to measure against before the first line, or with no time passed
+            bool measured = origin != null && direction != null;
+            if (measured && dt > 0f)
             {
+                Vector3 o = origin!.Value, d = direction!.Value;
                 Vector3 velocity = (newOrigin - o) / dt;
                 if (velocity.Length() > MaxOriginSpeed)
                     velocity = Vector3.Zero;

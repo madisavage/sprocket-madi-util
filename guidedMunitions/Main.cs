@@ -102,7 +102,11 @@ namespace GuidedMunitions
         /// <summary>A guided round's fins add drag.</summary>
         private static bool Modify(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions)
         {
-            if (cannon.Blueprint is not { } gun || GuidanceOf(gun, id) is not { } guidance)
+            CannonBlueprint? gun = cannon.Blueprint;
+            if (gun == null)
+                return false;
+            Guidance? guidance = GuidanceOf(gun, id);
+            if (guidance == null)
                 return false;
             shape.Drag *= 1f + FinDrag.Value * guidance.MaxG;
             return true;
@@ -111,7 +115,8 @@ namespace GuidedMunitions
         /// <summary>Guides a guided round: the player's by their crosshair now, the AI's once its gunner says what it fired at.</summary>
         private static void Launch(IntPtr register, int projectile, ProjectileDefinition definition, CannonBlueprint owner, string id, Cannon gun)
         {
-            if (GuidanceOf(owner, id) is not { } guidance)
+            Guidance? guidance = GuidanceOf(owner, id);
+            if (guidance == null)
                 return;
             if (!loggedLifetime)
             {
@@ -146,7 +151,12 @@ namespace GuidedMunitions
             float maxSpeed = MaxSpeed(guidance);
             var motion = new LineMotion();
             // The player's round (no AI label) shows on the HUD
-            Indicator.Shot? shot = label == null ? Indicator.Track(wire, beam ? "beam" : "wire") : null;
+            Indicator.Shot? shot = null;
+            if (label == null)
+            {
+                string link = beam ? "beam" : "wire";
+                shot = Indicator.Track(wire, link);
+            }
             bool Ends(string why, float age, Vector3 position)
             {
                 if (shot != null)
@@ -171,9 +181,12 @@ namespace GuidedMunitions
                     }
                     if (Vector3.Distance(position, start.Value) > wire)
                         return Ends(beam ? "out of the beam's range" : "wire ran out", age, position);
-                    if (sight(position, velocity) is not { } line)
+                    (Vector3 Origin, Vector3 Direction)? sighted = sight(position, velocity);
+                    if (sighted == null)
                         return Ends("sight lost", age, position);
-                    if (beam ? !Saclos.InBeam(position, line.Origin, line.Direction) : !Saclos.InView(position, line.Origin, line.Direction))
+                    (Vector3 Origin, Vector3 Direction) line = sighted.Value;
+                    bool onLine = beam ? Saclos.InBeam(position, line.Origin, line.Direction) : Saclos.InView(position, line.Origin, line.Direction);
+                    if (!onLine)
                         return Ends(beam ? "left the beam" : "out of the sight's view", age, position);
                     if (Terrain.Cuts(line.Origin, position))
                         return Ends("terrain cut the line", age, position);
@@ -209,7 +222,7 @@ namespace GuidedMunitions
         {
             var start = new UnityVector3(from.X, from.Y, from.Z);
             var line = new UnityVector3(to.X - from.X, to.Y - from.Y, to.Z - from.Z);
-            foreach (var hit in Physics.RaycastAll(start, line.normalized, line.magnitude))
+            foreach (UnityPhysicsModule::UnityEngine.RaycastHit hit in Physics.RaycastAll(start, line.normalized, line.magnitude))
             {
                 if (hit.collider == null)
                     continue;
@@ -252,7 +265,11 @@ namespace GuidedMunitions
 
         private static void Postfix(GunnerAI __instance, GunnerFireEventArgs e)
         {
-            if (pending.Count == 0 || e == null || !pending.Remove(e.ProjectileID, out var shot))
+            if (pending.Count == 0)
+                return;
+            if (e == null)
+                return;
+            if (!pending.Remove(e.ProjectileID, out (IntPtr Register, Guidance Guidance, float Rated, float Time) shot))
                 return;
             IGunnerControl gunner = __instance.Gunner;
             Vehicle? own = gunner?.WeaponGameObject?.GetComponentInParent<Vehicle>();
@@ -297,8 +314,15 @@ namespace GuidedMunitions
             Vector3 forward = Vector3.Normalize(velocity);
             foreach (Vehicle vehicle in UnityObject.FindObjectsOfType<Vehicle>())
             {
-                if (vehicle == null || own != null && (vehicle.Pointer == own.Pointer || SameTeam(own, vehicle)))
+                if (vehicle == null)
                     continue;
+                if (own != null)
+                {
+                    if (vehicle.Pointer == own.Pointer)
+                        continue;
+                    if (SameTeam(own, vehicle))
+                        continue;
+                }
                 Vector3 to = Aim(vehicle) - position;
                 float off = MathF.Acos(Math.Clamp(Vector3.Dot(forward, Vector3.Normalize(to)), -1f, 1f)) * 180f / MathF.PI;
                 if (off < angle)
@@ -311,12 +335,25 @@ namespace GuidedMunitions
         }
 
         /// <summary>Whether both vehicles are spawned on the same team; false while either has no behaviour.</summary>
-        private static bool SameTeam(Vehicle a, Vehicle b) =>
-            a.behaviour is { } x && x != null && b.behaviour is { } y && y != null && x.ID.TeamID == y.ID.TeamID;
+        private static bool SameTeam(Vehicle a, Vehicle b)
+        {
+            VehicleBehaviour? x = a.behaviour;
+            if (x == null)
+                return false;
+            VehicleBehaviour? y = b.behaviour;
+            if (y == null)
+                return false;
+            return x.ID.TeamID == y.ID.TeamID;
+        }
 
         /// <summary>Where a round aims on <paramref name="vehicle"/>: its centre of mass, else its origin.</summary>
-        private static Vector3 Aim(Vehicle vehicle) =>
-            N(vehicle.GetComponent<Rigidbody>() is { } body && body != null ? body.worldCenterOfMass : vehicle.transform.position);
+        private static Vector3 Aim(Vehicle vehicle)
+        {
+            Rigidbody? body = vehicle.GetComponent<Rigidbody>();
+            if (body != null)
+                return N(body.worldCenterOfMass);
+            return N(vehicle.transform.position);
+        }
 
         private static Vector3 N(UnityVector3 v) => new(v.x, v.y, v.z);
 
@@ -346,7 +383,7 @@ namespace GuidedMunitions
             // The game's "lock turret": the sight looks around, the line holds
             if (__instance.GunnerAimLocked)
                 return;
-            var ray = __instance.aimRay;
+            UnityCoreModule::UnityEngine.Ray ray = __instance.aimRay;
             var direction = new Vector3(ray.direction.x, ray.direction.y, ray.direction.z);
             line = (new Vector3(ray.origin.x, ray.origin.y, ray.origin.z), Vector3.Normalize(direction));
         }
@@ -373,11 +410,15 @@ namespace GuidedMunitions
 
         internal static void Draw(IGUIElementDrawer drawer, Cannon cannon, string id, Action changed)
         {
-            if (cannon.Blueprint is not { } gun || !RocketPropelled.Plugin.HasMotor(gun, id))
+            CannonBlueprint? gun = cannon.Blueprint;
+            if (gun == null)
+                return;
+            // Only rocket rounds are guided
+            if (!RocketPropelled.Plugin.HasMotor(gun, id))
                 return;
             string? mode = Loadout.Get<GuidedRound>(gun, id)?.Guidance?.Mode;
             // Modes too new for the vehicle are hidden, except the round's own
-            var offered = options.Where(o => o.Mode == mode || Introduced.Allowed(o.Year?.Invoke() ?? 0f)).ToList();
+            List<(string Label, string? Mode, Func<float>? Year)> offered = options.Where(o => o.Mode == mode || Introduced.Allowed(o.Year?.Invoke() ?? 0f)).ToList();
             EditorGui.Dropdown(drawer, "Guidance", offered.Select(o => o.Label).ToList(), offered.FindIndex(o => o.Mode == mode), i =>
             {
                 string? picked = offered[i].Mode;
@@ -399,9 +440,12 @@ namespace GuidedMunitions
             if (!Introduced.Allowed(YearOf(mode)))
             {
                 if (!notes.TryGetValue((gun.Pointer, id), out StringProperty? note))
-                    notes[(gun.Pointer, id)] = note = EditorGui.Readout("Too new",
+                {
+                    note = EditorGui.Readout("Too new",
                         () => Introduced.Note(YearOf(Loadout.Get<GuidedRound>(gun, id)?.Guidance?.Mode)),
                         "This guidance is newer than the vehicle's year. It still works; pick another or a later year to clear this.");
+                    notes[(gun.Pointer, id)] = note;
+                }
                 drawer.Readonly(note);
             }
             // Per mode, so the range field's label follows it
@@ -424,8 +468,8 @@ namespace GuidedMunitions
                 EditorGui.Readout("Hits at", () =>
                 {
                     Guidance g = G();
-                    var speeds = RocketPropelled.Plugin.Speeds(gun, id);
-                    var thrust = RocketPropelled.Plugin.Thrust(gun, id);
+                    (float Launch, float Burnout)? speeds = RocketPropelled.Plugin.Speeds(gun, id);
+                    Func<float, float>? thrust = RocketPropelled.Plugin.Thrust(gun, id);
                     // Flown again only when an input changes: the thrust curve counts as its samples at the sim's steps
                     var hash = new HashCode();
                     float maxSpeed = Plugin.MaxSpeed(g);
@@ -433,16 +477,23 @@ namespace GuidedMunitions
                     if (thrust != null)
                         for (float t = 0f; t < 30f; t += 0.02f)
                             hash.Add(thrust(t));
-                    var key = (speeds?.Launch ?? 0f, g.MaxG, g.WireLength, Plugin.Rated(gun, id, g), Plugin.LiftToDrag.Value, g.Response, hash.ToHashCode(), Plugin.FinDrag.Value);
-                    if (!hitRanges.TryGetValue((gun.Pointer, id), out var cached) || cached.For != key)
+                    (float, float, float, float, float, float, int, float) key =
+                        (speeds?.Launch ?? 0f, g.MaxG, g.WireLength, Plugin.Rated(gun, id, g), Plugin.LiftToDrag.Value, g.Response, hash.ToHashCode(), Plugin.FinDrag.Value);
+                    if (!hitRanges.TryGetValue((gun.Pointer, id), out ((float, float, float, float, float, float, int, float) For, (float Min, float Max) Result) cached) || cached.For != key)
                     {
                         // The full-bore warhead's drag with the fins', on its mass, as the game does in flight
                         float mass = ShellProperties.GetProjectileMass(gun.Caliber), fins = 1f + Plugin.FinDrag.Value * g.MaxG;
-                        Func<float, float>? decel = Loadout.FullBoreDrag(gun.Caliber) is { } drag && mass > 0f ? v => drag(v) * fins / mass : null;
-                        hitRanges[(gun.Pointer, id)] = cached = (key, Saclos.HitRanges(key.Item1, g.MaxG * Saclos.Gravity, g.WireLength, key.Item4,
-                            key.Item5, g.Response, thrust, decel: decel, maxSpeed: maxSpeed));
+                        Func<float, float>? drag = Loadout.FullBoreDrag(gun.Caliber);
+                        // Without the game's drag or a mass to take it on, it flies without drag
+                        Func<float, float>? decel = null;
+                        if (drag != null && mass > 0f)
+                            decel = v => drag(v) * fins / mass;
+                        (float Min, float Max) result = Saclos.HitRanges(key.Item1, g.MaxG * Saclos.Gravity, g.WireLength, key.Item4,
+                            key.Item5, g.Response, thrust, decel: decel, maxSpeed: maxSpeed);
+                        cached = (key, result);
+                        hitRanges[(gun.Pointer, id)] = cached;
                     }
-                    var (min, max) = cached.Result;
+                    (float min, float max) = cached.Result;
                     return float.IsInfinity(min) ? "misses" : $"{min:0}-{max:0} m";
                 }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire or beam range. Its motor, guidance unit, ignition delay, drag (the fins' too) and turn costs count; a full-bore shell is the warhead."),
                 EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * G().MaxG * 100f:0}%", "Extra drag from the fins, over the round's own."),

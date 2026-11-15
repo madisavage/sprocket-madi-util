@@ -57,8 +57,18 @@ namespace GuidedMunitions
             for (int i = 0; i < shots.Count; i++)
             {
                 Shot shot = shots[i];
-                var (text, color) = shot.Lost != null ? ($"Guidance lost: {shot.Lost}", HudDraw.Blocked)
-                    : ($"GUIDED  {shot.Distance / 1000f:0.0} km / {shot.Wire / 1000f:0.0} km {shot.Link}", HudDraw.Ok);
+                string text;
+                Color color;
+                if (shot.Lost != null)
+                {
+                    text = $"Guidance lost: {shot.Lost}";
+                    color = HudDraw.Blocked;
+                }
+                else
+                {
+                    text = $"GUIDED  {shot.Distance / 1000f:0.0} km / {shot.Wire / 1000f:0.0} km {shot.Link}";
+                    color = HudDraw.Ok;
+                }
                 HudDraw.Label(new Rect(left + pad, bottom - height + pad + i * line, width - 2 * pad, line), text, 16, color, TextAnchor.MiddleLeft);
                 if (camera != null)
                     Box(camera, shot.Position, color);
