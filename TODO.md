@@ -1,0 +1,129 @@
+# TODO
+
+### Decided against
+
+- Moving name tags into description JSON: more uniform, but shared vehicles lose settings unless every plugin reads both formats.
+- Evicting `ObjectCache` entries: the leak is bounded by blueprints edited in one session.
+
+## Bug reports
+
+## Features
+
+Line numbers in this section are as of commit `0290ced`; re-check them before editing. Nothing here was built or run, so verify each in game.
+
+- [x] **F7. Restrict round types to a year** — `rounds/Loadout.cs` (`Register`, `Types`), `rounds/Main.cs` (`CannonEditorPatch`); depends on F6 for the year (falls back to the era start date until then)
+  - **Built (2026-11-14), checked in game:** `MadiLib/Introduced.cs` is the reusable part: `Introduced.Year` (designer tech year), `Allowed(year)`, `Note(year)`, and `Bind(...)` for an "Introduced" year setting; MadiLib's "Historical availability" setting (default on) turns it all off. `Loadout.Introduce(type, year, ofRound)` limits a round type. The cannon panel's Type dropdown hides types too new, except the round's own; a too-new round keeps its type and shows a "Too new: Not available until 1960" row. Designer rule only: battles and the AI don't check. Defaults: APHE 1914, HEAT 1942, APDS 1944, HESH 1945, long-rod sabot 1960, depleted uranium 1978; HE and AP always. Sabot's editor enforces its years too: before the long-rod year the length slider stops at 7.5 calibers (a longer saved rod keeps its length and can only shorten), and the material dropdown hides depleted uranium (unless chosen); crossing 8 calibers or changing material redraws the panel so the "Too new" row follows. Not done: limits on other round fields (HEAT penetration, filler). Also built and checked: guidedMunitions' Guidance dropdown is year-limited (SACLOS 1966, beam riding 1981), with a new beam-riding mode (no wire, lost past 200 m if over 5 m off the beam) and a Max wire speed cap (300 m/s) on SACLOS rounds, shown as a Top speed readout.
+  - Goal: a round type can only be picked when the vehicle's date is on or after its introduction year: e.g. HEAT, APDS, HESH, long-rod APFSDS (sabot with `Length >= LongRod.MinCalibers`), APHE. Defaults roughly historical, set per type in each plugin's config so players can change them.
+  - API: add an optional year to `Loadout.Register` (and a way for a type to judge a specific round, since sabot's year depends on its length/material: APDS vs APFSDS, tungsten vs DU). `"ap"` is always available.
+  - API: The API for limiting something to a year should be reusable for ATGMS and Rangefinders and Active Protection Systems
+  - Designer: the cannon panel's Type dropdown only lists the round types available by the vehicle's date. A round already of a type that's too new stays as it is, but is flagged ("not available until 1960") rather than silently changed, so loading an old file loses nothing.
+  - In battle: decide whether a too-new round still fires (just a designer rule) or falls back to AP. Prefer the designer rule only, unless scenario rules need the in-game check.
+  - Open questions: one global on/off setting ("historical round types")? Should limits also apply to round fields (max HEAT penetration in calibers, max filler, sabot materials such as DU by year)?
+  - Check: on a 1940 vehicle the Type dropdown has no HEAT/sabot; on a 1970 vehicle all show; an old file with a 1970 round on a 1940 vehicle keeps the round and shows the warning.
+
+- [ ] **F12. Repair NaNs in vehicle blueprints on load and save** — `madiUtil` (new patch); game: `VehicleDesignerCore` (`Load`, `ExecuteVehicleLoad`, `Saved` / `BlueprintSaveEventArgs`, `RequestSave`) in `Sprocket.VehicleDesigner.dll`, `MeshBlueprint` (`vertexPositions`, `serializedFaces`) in `Sprocket.PlateMeshGeneration.dll`; vehicle files are JSON (Newtonsoft writes non-finite floats as `NaN` / `Infinity`)
+  - Today: a NaN (or ±Infinity) in a vehicle file, most often a freeform/compartment vertex position, sometimes a transform or a part's float field, loads as is. Results range from an invisible or exploding mesh to broken physics and penetration sims, and the designer saves the NaN straight back, so the file stays broken. Players can't see or fix it by hand.
+  - Goal: on load, find non-finite numbers and repair them in memory with a notice; on save, never write one.
+  - Find out first: get a real broken file (ask players) and list which fields hold the NaNs. Does the game's loader throw, or load NaN quietly? Where is the last point that still has the raw JSON text or the deserialized blueprint before meshes are built (`ExecuteVehicleLoad`, the `Sprocket.Vehicles.Serialization` reader)? That is the one place to hook. Check the same path covers vehicles loaded outside the designer (custom battle, scenario, AI), or only fix in the designer at first.
+  - Repair rules, one per kind of value:
+    - Mesh vertex: the mean of its finite edge neighbours (`serializedEdges`); with none finite, the mean of the mesh's finite vertices. A face left with zero area afterwards is dropped, as the game would drop it.
+    - Transform: NaN position component 0, NaN rotation identity, NaN or 0 scale 1.
+    - Other float fields: the part's default (or 0 when there isn't one); clamp ±Infinity to the field's max when known.
+  - Do the walk on the parsed JSON (`JsonNode`), not on Il2Cpp objects: one pure function `Repair(JsonNode) -> list of what changed` that lives with no game types, so `tests/` can cover it (vertex with finite neighbours, vertex with none, transform, a file with no NaN unchanged byte for byte).
+  - Notify: one `NotifyError`-style message ("Repaired 3 bad values in Hull; check the shape and save"), and each change in the BepInEx log with its path. Don't rewrite the file on disk at load; the player saves when happy. Mark the vehicle modified (`MarkModified()`, as item 4) so the unsaved-changes prompt shows.
+  - On save: run the same check before writing. If anything is non-finite, repair it and log; never write `NaN`. A NaN appearing again after a repair points to its source (e.g. F15), so log the part and field.
+  - Keep: files without NaNs load and save exactly as before; players without madiUtil can still open repaired files.
+  - Open questions: repair silently or ask first (a dialog with "repair / load as is")? Back up the original file once (`name.bak`) before the first save after a repair?
+  - Check: a hand-edited file with `NaN` in one vertex, one transform and one cannon field loads with a notice, looks right, saves with no `NaN` in the file, and reloads with no notice.
+
+- [x] **F15. Catch NaN in composite's stacked plates** — `composite/Main.cs` (`Stack` :133-146, `Stacked` :289-332); feeds F12, which repairs what got saved already
+  - **Built (2026-11-14), untested in game:** `Stack` skips faces whose normal is NaN or zero, and refuses an axis that maps to zero. The per-vertex math is now `FreeformEditGuiPatch.Direction`: it skips unusable normals and throws "Selected faces point opposite ways..." when they cancel. `Stacked` throws if any new position isn't finite. Tests: `tests/Stacking.cs`. Not done: the 0.25 corner cap (spikes) is unchanged.
+  - Today: `Stacked` can make NaN vertex positions, which the add-on keeps and the vehicle saves:
+    - `:315` `Vector3.Normalize` of the sum of a vertex's face normals is NaN when they cancel: a vertex shared by selected faces pointing opposite ways (both sides of a thin plate, or a face and its symmetry mirror meeting at the centre line).
+    - `:133` the game's `face.normal` is NaN for a zero-area face, and passes straight in.
+    - `:146` the axis direction is NaN if `WorldToMesh` maps it to zero (unlikely).
+    - Not NaN, but related: the `0.25` cap at `:318` lengthens offsets up to 4× at sharp corners, giving spikes; worth a look while here.
+  - Fix: skip faces whose normal isn't finite or is near zero length. Where the summed normal is shorter than e.g. 1e-4, throw `InvalidOperationException("Selected faces point opposite ways at a shared corner; select one side.")`. Before returning, check every new position is finite and throw if not. `Stack` already catches `InvalidOperationException` and shows it with `NotifyError`, adding nothing, so the undo history stays clean.
+  - Test: move the per-vertex direction math out of `Stacked` into a pure `System.Numerics` function (`Direction(IReadOnlyList<Vector3> normals, Vector3? axis)`) and test it in `tests/` like `tests/Sabot.cs`: opposite normals throw, a NaN normal is skipped, a flat face gives its normal.
+  - Check: stacking both sides of a thin plate shows the error and adds nothing; ordinary stacks give the same shape as before.
+
+F17 and F18 share their base: a tagged part, not a material. A material only scales thickness (`rhaFactor`); it can't know the things that make NERA and ERA work: the angle the penetrator meets the element at, the plate thicknesses, the room behind for the plates to move into, where along the jet the interaction happens, and (for ERA) that a tile is used up. So the element is built from ordinary plates with ordinary materials, and the plugin adds the dynamic effect from its geometry. Build F17 first; F18 adds the explosive drive and the one-shot state.
+
+- [ ] **F18. ERA: one-shot explosive tiles that cut jets and rods** — builds on F17 (tagged elements, part identity, fragment chain); `highExplosive/Jet.cs` (`JetBudget`), `subcaliber/LongRod.cs`, `rounds/Impacts.cs`; health: `VehicleHealthRegister`/`HealthPool` as shellCam reads them; round fields: `highExplosive/Heat.cs` (`HeatRound`)
+  - Goal: explosive reactive armour (Blazer, Kontakt-1, later Kontakt-5). A tile is two plates with explosive between them. When a strong enough penetrator sets it off, the plates fly apart, each sweeping across the penetrator's path, and cut a jet down hard (Kontakt-1 against a single-charge jet: roughly half or more, to check), and, with thick flyer plates only (Kontakt-5), a long rod somewhat. Each tile works once.
+  - Element: a tagged part as in F17, e.g. `[era]`, with its two plates (steel) and the explosive layer as a plate of its own (a material for its mass, or air). The tag could carry the charge, e.g. `[era 2]` for kg of explosive per m², if the model needs it.
+  - Model, why not a material: the flyer plates' speed comes from the charge and their mass (Gurney: `v ≈ √(2E) · f(C/M)`), and the cut depends on how much of the penetrator they sweep across: obliquity, plate thickness, and the penetrator's speed (a fast rod spends less time in the sweep). Light ERA's thin plates barely touch a heavy rod; thick plates do. Same per-hit hook as F17, but a fraction of the remaining penetration, not a fixed loss, with config constants.
+  - Trigger: only a penetrator over a threshold sets a tile off (a penetration in mm or an energy density), so MG fire and HE spall don't; any HEAT jet does. Below the threshold the tile is just its plates.
+  - Spent state, in battle (not saved; battles don't save mid-fight): a set of detonated tiles keyed by the part's identity. A spent tile is its plates only, or nothing if it's destroyed. Pruned when the vehicle is gone (as audit item 3). The armour view's simulated shots treat every tile as live and mark nothing.
+  - Find out first:
+    - Everything in F17's "find out first", plus: can one add-on be destroyed or set to zero health in battle, and does that take its plates out of later sims and show in the shell cam? That would make "spent" the game's own state instead of ours.
+  - Tandem HEAT: a `HeatRound` field whose precursor sets the tile off first, so the main jet meets a spent tile. It costs shell mass or penetration. Date it with F7.
+  - Open questions: does a tile set off its neighbours (real ERA is designed not to)? Do APHE and full-bore AP over the threshold set it off, with little effect on them? Tile size limits (small tiles: a second hit nearby still finds a live one)? How do we make placing ERA easier?
+  - Check: a HEAT round on a live tile loses the expected fraction (`LogHits`), a second round on the same tile doesn't; MG fire doesn't set it off; a tandem round goes through as if the tile were spent; light tiles barely affect a long rod, heavy ones do; the armour view always shows tiles live.
+
+- [ ] **F19. Composite: plan the whole stack layer by layer (thickness and material per layer)** — `composite/Main.cs` (`FreeformEditGuiPatch.Postfix`, `Stack`, `Stacked`, `AddAddon`); materials: `armourMaterial/Main.cs` (`Plugin.Materials`, `Set`: `blueprint.armourTechID` in a blueprint edit frame, then `Component.SetArmourMaterial(id)`); UI model: `rounds/Main.cs` `CannonEditorPatch` (~:620-645, a list of rows drawn with `drawer.InputField`, `EditorGui.Dropdown` and buttons)
+  - Today: one layer thickness, one gap and a layer count for every plate; add-ons take plates round-robin, and each add-on's material is set by hand afterwards.
+  - Wanted (user's example): list the stack nearest first, e.g. **50 mm Steel, 100 mm Textolite, 25 mm Steel, 50 mm air, 5 mm Kevlar**. Each layer has its own thickness and material; "air" is a gap, not a plate. One click builds it all.
+  - Build: each non-air layer is one plate copy in its own add-on, with its thickness and its material already set; air layers add their thickness to the next offset. `Stacked` takes per-layer thicknesses/offsets instead of one `thickness` and `gap`. Keep the existing simple mode (layers/thickness/gap) or express it as a generated list.
+  - Merge (decided): touching layers of the same material (no air between) become one layer of their summed thickness, so `50 steel, 30 steel` builds one 80 mm plate.
+  - Thick layers past the game's per-plate cap (`ushort` thickness): edge case, ignore (decided).
+  - Material: set `armourTechID` on the new add-on's blueprint in the same op group, so one undo removes plates and materials together. Material list from the game's armour techs (as `armourMaterial` does); decide whether composite depends on `armourMaterial` or reads the techs itself. Respect the era/tech lock if the game has one.
+  - **UI (the biggest part; design and check it in game before the build code):**
+    - A "Layers" list in the Composite section, nearest the face first. Per row: material dropdown (with "Air" first), thickness field in mm, move up / move down, remove. Below it: "Add layer" (copies the last row's material), then the build button.
+    - Summary readouts under the list: total depth (plates + air), plate count after merging, and if cheap mass per m² and RHA-equivalent (`Rha` from `armourMaterial`).
+    - Row widgets are game properties (`FloatProperty`, `StringProperty`) that must outlive redraws: cache one per row as rounds caches per round ID (`names`), and drop stale ones when rows are removed. Mind the `FloatProperty.SoftMax` gotcha.
+    - Every row change calls the editor's `RequestRedraw`; check a 10-row list doesn't make the panel too tall (F1 had panels overflowing with no scroll) — collapse the list behind its own header if so.
+    - Maybe also a text field to paste/type the whole stack (`50 steel, 100 textolite, 25 steel, 50 air, 5 kevlar`), parsed into rows; unknown names show `NotifyError`. Nice to have, not v1 unless the row UI is clumsy.
+    - Open: where the list lives: one global list (simplest), or per vehicle/compartment.
+  - Presets (wanted): save the current list under a name, load or delete one from a dropdown. Store in the plugin's BepInEx config (one string entry, e.g. JSON `{name: [[material id, mm], ...]}`), keyed by material ID not display name; a preset naming a missing material loads that row as unset with a warning.
+  - Check: the example stack makes 4 add-ons (Steel, Textolite, Steel, Kevlar) at the right offsets with a 50 mm gap before the Kevlar, each with its material; one undo removes all of them; `50 steel, 30 steel` makes one 80 mm add-on; a saved preset survives a game restart.
+
+- [ ] **F28. Audit the codebase against our own guidelines** — `AGENTS.md` (Code style, Save compatibility, Use MadiLib, README), `contributing.md`; every plugin folder and `MadiLib/`
+  - Today: the rules in `AGENTS.md` were written after most of the code. Known breaks: `is not { } x` / `is not float x` patterns (84, 9 in `rounds/Main.cs`), chained ternaries (`MadiLib/Keybinds.cs` `Capture`), long one-line LINQ (`MadiLib/NameTags.cs`, `rounds/RackMix.cs`), empty catches (`MadiLib/Keybinds.cs` `Capture`, `MadiLib/TechFiles.cs`), and `Introduced.Allowed`, the example the rules name as bad.
+  - Goal: a list of every violation, grouped by rule and file, then fixes in small reviewable batches (one rule or one plugin per change).
+  - Rules to check: each Code style bullet (plain one-check-per-line logic, `var` only with the type on the same line, hooks fail toward the game's behaviour and log once, no empty catches, `CultureInfo.InvariantCulture`, `TryCast<T>()`, a comment on every skipping Prefix, `Profile.Measure` on per-frame hooks); settings saved only in the blueprint; helpers that duplicate MadiLib; player-facing features missing from the README.
+  - Also find out: which LINQ calls run every frame (candidates for a "no LINQ or allocations in per-frame hooks" rule).
+  - Keep: behaviour unchanged. Style fixes are refactors only; anything that changes behaviour (e.g. a catch that now logs) is noted in the change.
+  - Decided (2026-11-15): rewrite existing code that breaks the rules, `is not { } x` included, not only stop adding more.
+  - Open questions: batch by rule or by plugin?
+  - Check: `dotnet build` and `dotnet test tests` pass after each batch; touched hooks are checked in game.
+
+- [ ] **F29. Robust keybinding** — `MadiLib/Keybinds.cs` (`Register`, `RegisterHeld`, `Poll`, `Pressed`, `Capture`, `Typing`), `MadiLib/SettingsTab.cs`
+  - Today: binds are a string per bind in the config (`"Ctrl+Shift+S"`, `"WheelUp"`), polled each frame from `Keyboard.current`. Capture walks every `Key` each frame, catching (and hiding) exceptions for keys the keyboard lacks. Only keyboard keys and the mouse wheel can be bound.
+  - Goal (decided 2026-11-15), three features:
+    - **Mouse buttons:** binds can be mouse buttons (`Mouse.current` left, right, middle, and the side buttons `forwardButton`/`backButton`), with modifiers as for keys (`"Ctrl+Mouse4"`). Capture picks them up like a key. Clicking the bind's own button to start capture must not bind the left click straight away.
+    - **Conflict checking:** a bind sharing its exact key and modifiers with another bind shows a warning on its row in the Settings tab, naming the other bind and its subtab ("Also: Rounds › Next round"). Both still fire. Game controls are checked too if the game's bindings can be read (see Find out first).
+    - **Reset to default per bind:** a button on each row that sets the bind back to its registered default (`ConfigEntry.DefaultValue`), shown only when the bind differs from its default.
+  - Find out first: the game's own control scheme (Unity Input System actions) and whether it can be read to detect clashes with game controls; what happens today with an unknown key string; the names `Mouse.current` gives the side buttons, and whether all mice report them.
+  - Keep: existing config values keep working; `Register`'s signature stays, so no plugin needs changing.
+  - Not wanted for now: keyboard layout handling, gamepad support, recovering from hand-edited bad strings beyond what already happens.
+  - Open questions: should a clash with a game control block the bind, or only warn?
+  - Check: bind a side mouse button and fire it in game; bind two actions to the same key and both rows warn; reset one and its warning clears; the reset button hides on a default bind.
+
+- [ ] **F30. Effects mod: optional visual effects for the other plugins** — new plugin `effects/`; event source in `MadiLib/`; first user: `guidedMunitions` / `rocketPropelled` (`rocketPropelled/Flight.cs`)
+  - Goal: custom visual effects (e.g. a flying ATGM's motor flame and smoke trail) live in the effects plugin, not in the gameplay plugins. Every combination of installed plugins works as well as it can: guidedMunitions alone flies the missile with no extra effect; effects alone does nothing for missiles; both together show the trail. No gameplay plugin needs effects installed, and effects needs no gameplay plugin installed.
+  - Proposed design: gameplay plugins publish named events through MadiLib, e.g. `"rocket.motor.start"`, `"rocket.flying"` (each frame, with the round's transform), `"rocket.hit"`. MadiLib holds a tiny event registry (name to list of handlers). Effects subscribes by name, so neither side references the other's DLL; with no subscriber, publishing costs a dictionary lookup. Effects owns its assets and its settings (on/off per effect on its MadiLib Settings subtab).
+  - Find out first: how to make and load effects in an IL2CPP game with no Unity project of ours: AssetBundles built against the game's Unity version, or effects built in code (`ParticleSystem`, `LineRenderer`, `TrailRenderer`) through the interop. Which game effects (muzzle flash, smoke) can be found and reused. Cost of per-frame events and `Profile.Measure` for each handler.
+  - Keep: gameplay plugins work exactly as before without effects; nothing about effects is saved in blueprints, so shared vehicles are unchanged.
+  - Open questions: one event name list documented in `docs/MadiLib.md`, or each plugin documents its own? Do the event registry and its payload types go in MadiLib, shared with F31 (likely yes)?
+  - Check: all four combinations of guidedMunitions and effects installed or not: missiles fly the same, the trail shows only with both, and the log is clean in each.
+
+- [ ] **F31. Audio mod: optional sounds for the other plugins** — new plugin `audio/`; same MadiLib events as F30
+  - Goal: as F30, for sound: e.g. an ATGM motor's roar while it flies, the wire paying out, a rangefinder's click. Sounds live in the audio plugin. Every combination of guidedMunitions, effects and audio works as well as it can, and each of the three is optional.
+  - Proposed design: subscribe to the same MadiLib events as F30 (no new hooks in the gameplay plugins for sound alone). Sounds are files shipped with the plugin (e.g. `.ogg` / `.wav` next to the DLL, or a data package as `eraExpansion` is), played through `AudioSource`s attached to the round, following the game's volume setting.
+  - Find out first: loading audio files at runtime under IL2CPP (`UnityWebRequestMultimedia.GetAudioClip`, or decoding PCM ourselves into `AudioClip.Create`); which mixer group and volume slider the game's own effects use, so ours follow "Effects volume"; how the game positions 3D sound and its falloff.
+  - Keep: as F30. Nothing saved in blueprints; gameplay plugins unchanged without audio.
+  - Open questions: can players add or replace sounds by dropping files in a folder? Licensing for any sounds we ship.
+  - Check: all eight combinations of guidedMunitions, effects and audio installed or not; sound plays only with guidedMunitions and audio, follows the game's volume, and the log is clean.
+
+- [ ] **F32. Rockets, missiles especially, fly much too fast** (user report, 2026-11-15) — `rocketPropelled/Motor.cs` (`Motor.Build`, `Burn.Acceleration`, `Burn.DeltaV`), `rocketPropelled/Main.cs` (`Exhaust` 2000 m/s, `PropellantDensity` 1300 kg/m³, `CaseMass`, `Speeds`), `rocketPropelled/Flight.cs`; guidance: `guidedMunitions/Main.cs` (`WireSpeed` 300 m/s, `MaxSpeed`), `guidedMunitions/Saclos.cs` (`Capped`)
+  - Today: rocket rounds reach speeds far above real ones. Real references: first-generation ATGMs about 100–200 m/s (Malyutka ~115, SS.11 ~190), later wire-guided ATGMs ~200–300 (TOW ~280), beam riders up to ~500, unguided rockets ~300 (RPG-7) to ~700+ (aircraft rockets). SACLOS rounds are capped at the wire speed, but a 300 m/s cap is itself high for the early years, and beam riders have no cap at all.
+  - Find out first: log a few real designs (launch speed, burnout speed from `DeltaV`, top speed in flight, propellant vs dry mass) and find which term is out of line. Suspects:
+    - Launch speed: the gun's charge fires the round out at shell speed before the motor adds to it. Real missiles leave the tube slowly.
+    - Mass ratio: the propellant (a full-caliber cylinder `Length` calibers long) against the projectile's dry mass from the game. If the game's dry mass is light, `DeltaV` (rocket equation) runs away.
+    - Drag: flight uses the game's shell drag, while a finned, blunt missile has far more. Burnout speed is held for too long.
+    - Exhaust velocity: 2000 m/s is about right for solid propellant, so it's probably not the cause, but check what the default designs need to land in the real ranges.
+  - Goal: default and typical designs land in the real ranges above without hand-tuning each round. Designers can still build a fast rocket on purpose.
+  - Keep: saved motor settings keep loading; a vehicle's rockets may get slower, so note it in the README.
+  - Open questions: fix it in the physics (launch speed, mass, drag), or limit it by year as with round types (`Introduced`)? Should the wire speed cap depend on the year?
+  - Check: a Malyutka-like and a TOW-like design fly at about their real speeds; the sight (`DynamicSight`) still predicts their drop; `dotnet test tests` (`tests/Rocket.cs`, `tests/Guidance.cs`) passes, with test values updated where the speeds were wrong.
