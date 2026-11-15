@@ -209,18 +209,38 @@ namespace Rounds
             years[type] = (year, ofRound);
 
         /// <summary>The first year <paramref name="type"/> can be picked; 0 for always.</summary>
-        internal static float YearOf(string type) => years.TryGetValue(type, out var y) ? y.Year() : 0f;
+        internal static float YearOf(string type)
+        {
+            if (!years.TryGetValue(type, out (Func<float> Year, Func<CannonBlueprint, string, float>? OfRound) limit))
+                return 0f;
+            return limit.Year();
+        }
 
         /// <summary>The first year round <paramref name="id"/> of <paramref name="type"/> is available; 0 for always.</summary>
-        internal static float YearOf(CannonBlueprint owner, string id, string type) =>
-            years.TryGetValue(type, out var y) ? y.OfRound?.Invoke(owner, id) ?? y.Year() : 0f;
+        internal static float YearOf(CannonBlueprint owner, string id, string type)
+        {
+            if (!years.TryGetValue(type, out (Func<float> Year, Func<CannonBlueprint, string, float>? OfRound) limit))
+                return 0f;
+            // A type whose rounds differ judges this one
+            if (limit.OfRound != null)
+                return limit.OfRound(owner, id);
+            return limit.Year();
+        }
 
         /// <summary>Whether the player asked for the AI's decisions to be logged (rounds' <b>Log AI</b>).</summary>
         public static bool LogAi => Plugin.LogAi.Value;
 
         /// <summary>Round <paramref name="id"/>'s penetration in mm at <paramref name="speed"/> m/s, as its type works it out; 0 if its type doesn't say.</summary>
-        internal static float Penetration(CannonBlueprint owner, string id, float speed) =>
-            Raw(owner, id) is { } raw && Types.FirstOrDefault(t => t.Type == raw.Type).Penetration is { } of ? of(owner, id, speed) : 0f;
+        internal static float Penetration(CannonBlueprint owner, string id, float speed)
+        {
+            (string Json, string Type)? raw = Raw(owner, id);
+            if (raw == null)
+                return 0f;
+            Func<CannonBlueprint, string, float, float>? of = Types.FirstOrDefault(t => t.Type == raw.Value.Type).Penetration;
+            if (of == null)
+                return 0f;
+            return of(owner, id, speed);
+        }
 
         /// <summary>
         /// Adds another icon, as <see cref="Register"/>'s, under
@@ -277,16 +297,32 @@ namespace Rounds
         /// <c>ProjectileTypeID</c> value), and the projectile's mass in kg;
         /// null for a type that isn't a round's own, such as the game's.
         /// </summary>
-        public static (CannonBlueprint Owner, string Id, float Mass)? RoundOfProjectile(int type) =>
-            Projectiles.Of(type) is { } entry ? (entry.Owner, entry.Id, entry.Def.Mass) : null;
+        public static (CannonBlueprint Owner, string Id, float Mass)? RoundOfProjectile(int type)
+        {
+            Projectiles.Entry? entry = Projectiles.Of(type);
+            if (entry == null)
+                return null;
+            return (entry.Owner, entry.Id, entry.Def.Mass);
+        }
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as JSON text, and its type; null if there's none.</summary>
         internal static (string Json, string Type)? Raw(CannonBlueprint owner, string id) =>
             RoundsIn(Parsed(owner))[id] is JsonObject round ? (round.ToJsonString(), (string?)round["type"] ?? "") : null;
 
         /// <summary>The round <paramref name="id"/> in <paramref name="owner"/> as a <typeparamref name="T"/>, if it is of <paramref name="type"/>; otherwise null.</summary>
-        public static T? Get<T>(CannonBlueprint? owner, string? id, string type) where T : class =>
-            owner != null && id != null && RoundsIn(Parsed(owner))[id] is JsonObject round && (string?)round["type"] == type ? Get<T>(owner, id) : null;
+        public static T? Get<T>(CannonBlueprint? owner, string? id, string type) where T : class
+        {
+            if (owner == null)
+                return null;
+            if (id == null)
+                return null;
+            JsonObject? round = RoundsIn(Parsed(owner))[id] as JsonObject;
+            if (round == null)
+                return null;
+            if ((string?)round["type"] != type)
+                return null;
+            return Get<T>(owner, id);
+        }
 
         /// <summary>
         /// The round <paramref name="id"/> in <paramref name="owner"/> as a
@@ -295,7 +331,12 @@ namespace Rounds
         /// </summary>
         public static T? Get<T>(CannonBlueprint? owner, string? id) where T : class
         {
-            if (owner == null || id == null || RoundsIn(Parsed(owner))[id] is not JsonObject round)
+            if (owner == null)
+                return null;
+            if (id == null)
+                return null;
+            JsonObject? round = RoundsIn(Parsed(owner))[id] as JsonObject;
+            if (round == null)
                 return null;
             try
             {
@@ -316,7 +357,8 @@ namespace Rounds
         /// <summary>Changes the round <paramref name="id"/> in <paramref name="owner"/> and saves it. Fields <typeparamref name="T"/> doesn't have are kept.</summary>
         public static void Edit<T>(CannonBlueprint owner, string id, Action<T> change) where T : new() => Change(owner, rounds =>
         {
-            if (rounds[id] is not JsonObject round)
+            JsonObject? round = rounds[id] as JsonObject;
+            if (round == null)
                 return;
             T value;
             try
@@ -347,7 +389,12 @@ namespace Rounds
         /// </summary>
         public static T? Fired<T>(Il2CppObjectBase? behaviour, string type) where T : class
         {
-            if (behaviour == null || !Tracker.Cannons.TryGetValue(behaviour.Pointer, out Cannon? cannon) || Owner(cannon) is not { } owner)
+            if (behaviour == null)
+                return null;
+            if (!Tracker.Cannons.TryGetValue(behaviour.Pointer, out Cannon? cannon))
+                return null;
+            CannonBlueprint? owner = Owner(cannon);
+            if (owner == null)
                 return null;
             return Get<T>(owner, Tracker.Loaded(behaviour.Pointer, owner), type);
         }
@@ -414,8 +461,13 @@ namespace Rounds
         {
             // The weapon's own load state lags its task's on the frame a load lands
             LoadTask? task = weapon?.loadTask?.TryCast<LoadTask>();
-            if (weapon == null || task == null || task.State == LoadState.Loaded
-                || !Tracker.IsWaiting(weapon.Pointer) && !weapon.NeedsReload && weapon.LoadFraction >= 1f)
+            if (weapon == null)
+                return;
+            if (task == null)
+                return;
+            if (task.State == LoadState.Loaded)
+                return;
+            if (HasShell(weapon))
                 return;
             try
             {
@@ -425,6 +477,16 @@ namespace Rounds
             {
                 Plugin.Logger.LogWarning($"Couldn't have a gun ask for ammo again: {e.Message}");
             }
+        }
+
+        /// <summary>Whether <paramref name="weapon"/> holds a shell, by our count and the game's.</summary>
+        private static bool HasShell(WeaponBehaviour weapon)
+        {
+            if (Tracker.IsWaiting(weapon.Pointer))
+                return false;
+            if (weapon.NeedsReload)
+                return false;
+            return weapon.LoadFraction >= 1f;
         }
 
         /// <summary>Whether <paramref name="rack"/>'s gun has rounds, so its shells are told apart.</summary>
@@ -456,10 +518,18 @@ namespace Rounds
             if (owner == null || shell == null)
                 return owner;
             // Checked on the cached copies: this runs every frame, the move once
-            if (Parsed(owner)["rounds"] is JsonObject || Parsed(shell)["rounds"] is not JsonObject)
+            // The cannon has its rounds already
+            if (Parsed(owner)["rounds"] is JsonObject)
                 return owner;
-            if (Moved(owner.Description, shell.Description) is { } moved)
-                (owner.Description, shell.Description) = moved;
+            // The shell slot has none to move
+            if (Parsed(shell)["rounds"] is not JsonObject)
+                return owner;
+            (string Owner, string Shell)? moved = Moved(owner.Description, shell.Description);
+            if (moved != null)
+            {
+                owner.Description = moved.Value.Owner;
+                shell.Description = moved.Value.Shell;
+            }
             return owner;
         }
 
@@ -471,12 +541,25 @@ namespace Rounds
         /// </summary>
         internal static (string Owner, string Shell)? Moved(string? owner, string? shell)
         {
-            if (MadiLib.Descriptions.Parse(owner) is not { } root || root["rounds"] is JsonObject
-                || MadiLib.Descriptions.Parse(shell) is not { } old || old["rounds"] is not JsonObject rounds)
+            JsonObject? root = MadiLib.Descriptions.Parse(owner);
+            if (root == null)
+                return null;
+            // The cannon has rounds already
+            if (root["rounds"] is JsonObject)
+                return null;
+            JsonObject? old = MadiLib.Descriptions.Parse(shell);
+            if (old == null)
+                return null;
+            JsonObject? rounds = old["rounds"] as JsonObject;
+            if (rounds == null)
                 return null;
             old.Remove("rounds");
             root["rounds"] = rounds;
-            return (root.ToJsonString(), old.Count == 0 ? "" : old.ToJsonString());
+            // A shell slot with no other keys is left with no description
+            string shellText = "";
+            if (old.Count > 0)
+                shellText = old.ToJsonString();
+            return (root.ToJsonString(), shellText);
         }
 
         /// <summary>
@@ -537,19 +620,31 @@ namespace Rounds
         {
             if (shell == null)
                 return null;
-            if (cannonOfShell.TryGetValue(shell.Pointer, out Cannon? known) && Alive(known) && known.ShellBlueprint?.Pointer == shell.Pointer)
-                return known;
+            if (cannonOfShell.TryGetValue(shell.Pointer, out Cannon? known))
+            {
+                if (Alive(known) && known.ShellBlueprint?.Pointer == shell.Pointer)
+                    return known;
+            }
             // The scan finds every object in the scene, and racks are looked up many times a frame: a shell no cannon uses is scanned for at most once a second
             float now = Time.unscaledTime;
             if (missed.TryGetValue(shell.Pointer, out float retry) && now < retry)
                 return null;
             using (MadiLib.Profile.Measure("rounds: cannon scan"))
                 foreach (Cannon cannon in UnityObject.FindObjectsOfType<Cannon>())
-                    if (cannon.ShellBlueprint is { } s)
-                        cannonOfShell[s.Pointer] = cannon;
-            if (!cannonOfShell.ContainsKey(shell.Pointer))
+                {
+                    ShellSlotBlueprint? used = cannon.ShellBlueprint;
+                    if (used != null)
+                        cannonOfShell[used.Pointer] = cannon;
+                }
+            if (!cannonOfShell.TryGetValue(shell.Pointer, out known))
+            {
                 missed[shell.Pointer] = now + 1f;
-            return cannonOfShell.TryGetValue(shell.Pointer, out known) && known.ShellBlueprint?.Pointer == shell.Pointer ? known : null;
+                return null;
+            }
+            // A cannon that has since changed shell slot
+            if (known.ShellBlueprint?.Pointer != shell.Pointer)
+                return null;
+            return known;
         }
 
         private static bool Alive(Cannon cannon)
@@ -604,7 +699,8 @@ namespace Rounds
 
         private static void Change(CannonBlueprint owner, Action<JsonObject> change)
         {
-            if (Read(owner) is not { } root)
+            JsonObject? root = Read(owner);
+            if (root == null)
                 return;
             change(RoundsOf(root));
             owner.Description = root.ToJsonString();

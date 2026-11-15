@@ -49,37 +49,73 @@ namespace Rounds
         /// </summary>
         internal static Entry? For(IntPtr gun, ProjectileDefinition game, string? round = null)
         {
-            if (!Tracker.Cannons.TryGetValue(gun, out Cannon? cannon) || cannon.ShellBlueprint is not { } shell || Loadout.Owner(cannon) is not { } owner
-                || (round ?? Tracker.Loaded(gun, owner)) is not { } id || Loadout.Raw(owner, id) is not { } raw)
+            if (!Tracker.Cannons.TryGetValue(gun, out Cannon? cannon))
                 return null;
-            var type = Loadout.Types.FirstOrDefault(t => t.Type == raw.Type);
-            if (type.Projectile == null && Loadout.Modifiers.Count == 0 || IProjectileTypeRegister.Instance is not { } register)
+            ShellSlotBlueprint? shell = cannon.ShellBlueprint;
+            if (shell == null)
+                return null;
+            CannonBlueprint? owner = Loadout.Owner(cannon);
+            if (owner == null)
+                return null;
+            // The round asked for, else the loaded one
+            string? id = round;
+            if (id == null)
+                id = Tracker.Loaded(gun, owner);
+            if (id == null)
+                return null;
+            (string Json, string Type)? raw = Loadout.Raw(owner, id);
+            if (raw == null)
+                return null;
+            // The round's type's projectile and hit; none for a type no plugin registered
+            RoundProjectile? projectile = null;
+            RoundHit? hit = null;
+            int typeIndex = Loadout.Types.FindIndex(t => t.Type == raw.Value.Type);
+            if (typeIndex >= 0)
+            {
+                projectile = Loadout.Types[typeIndex].Projectile;
+                hit = Loadout.Types[typeIndex].Hit;
+            }
+            // Nothing would change the game's projectile
+            if (projectile == null && Loadout.Modifiers.Count == 0)
+                return null;
+            IProjectileTypeRegister? register = IProjectileTypeRegister.Instance;
+            if (register == null)
                 return null;
 
-            string key = $"{game.Guid}|{raw.Json}|{version}";
-            if (guids.TryGetValue(key, out var known) && register.TryGet(known, out IProjectileType existing)
-                && existing?.TryCast<ProjectileDefinition>() is { } made && entries.TryGetValue(made.Pointer, out Entry? entry))
-                return entry;
+            string key = $"{game.Guid}|{raw.Value.Json}|{version}";
+            Entry? known = Known(register, key);
+            if (known != null)
+                return known;
 
-            var functions = GameFunctions(shell, game);
-            RoundShape? shape = type.Projectile != null ? type.Projectile(game, cannon, id, functions)
-                : new RoundShape { Mass = game.Mass, Diameter = game.Diameter, Length = game.Length, LaunchLength = game.Length, Drag = game.dragConstant };
+            List<ProjectileFunctionDefinition> functions = GameFunctions(shell, game);
+            RoundShape? shape;
+            if (projectile != null)
+                shape = projectile(game, cannon, id, functions);
+            else
+                shape = new RoundShape { Mass = game.Mass, Diameter = game.Diameter, Length = game.Length, LaunchLength = game.Length, Drag = game.dragConstant };
             if (shape == null)
                 return null;
             bool modified = false;
             foreach (RoundModifier modifier in Loadout.Modifiers)
                 modified |= modifier(game, cannon, id, shape, functions);
-            if (type.Projectile == null && !modified)
+            if (projectile == null && !modified)
                 return null;
-            var guid = Il2CppSystem.Guid.Parse(new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key))).ToString());
+            Il2CppSystem.Guid guid = Il2CppSystem.Guid.Parse(new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key))).ToString());
             var list = new Il2CppSystem.Collections.Generic.List<ProjectileFunctionDefinition>();
             foreach (ProjectileFunctionDefinition function in functions)
                 list.Add(function);
-            IProjectileType? created = register.TryGet(guid, out IProjectileType again) ? again
+            IProjectileType? created;
+            if (register.TryGet(guid, out IProjectileType again))
+                created = again;
+            else
+            {
                 // Named by the round alone: Dynamic Gun Sight labels rounds by type name, cut to 8 characters by default
-                : register.Create(Loadout.List(owner).FirstOrDefault(r => r.Id == id).Name ?? game.Name, guid, shape.Mass, shape.Diameter, shape.Length,
+                string name = Loadout.List(owner).FirstOrDefault(r => r.Id == id).Name ?? game.Name;
+                created = register.Create(name, guid, shape.Mass, shape.Diameter, shape.Length,
                     game.MinSpeed, game.Lifetime, list.Cast<Il2CppSystem.Collections.Generic.IReadOnlyList<ProjectileFunctionDefinition>>());
-            if (created?.TryCast<ProjectileDefinition>() is not { } def)
+            }
+            ProjectileDefinition? def = created?.TryCast<ProjectileDefinition>();
+            if (def == null)
                 return null;
             register.AddUser(guid);
 
@@ -87,16 +123,38 @@ namespace Rounds
             def.Diameter = shape.Diameter;
             def.Length = shape.Length;
             def.dragConstant = shape.Drag;
-            entry = new Entry(def, shape, game.Diameter, game.ID.Value, type.Hit, owner, id);
+            Entry entry = new Entry(def, shape, game.Diameter, game.ID.Value, hit, owner, id);
             entries[def.Pointer] = entry;
             guids[key] = guid;
             return entry;
         }
 
+        /// <summary>The entry made before for <paramref name="key"/>, if the game still has its projectile type; otherwise null.</summary>
+        private static Entry? Known(IProjectileTypeRegister register, string key)
+        {
+            if (!guids.TryGetValue(key, out Il2CppSystem.Guid known))
+                return null;
+            if (!register.TryGet(known, out IProjectileType existing))
+                return null;
+            ProjectileDefinition? made = existing?.TryCast<ProjectileDefinition>();
+            if (made == null)
+                return null;
+            return Of(made.Pointer);
+        }
+
         /// <summary>The round of the projectile type <paramref name="id"/>, if it's one of ours.</summary>
-        internal static Entry? Of(int id) =>
-            IProjectileTypeRegister.Instance is { } register && register.TryGet(new ProjectileTypeID(id), out IProjectileType type)
-            && type?.TryCast<ProjectileDefinition>() is { } def && entries.TryGetValue(def.Pointer, out Entry? entry) ? entry : null;
+        internal static Entry? Of(int id)
+        {
+            IProjectileTypeRegister? register = IProjectileTypeRegister.Instance;
+            if (register == null)
+                return null;
+            if (!register.TryGet(new ProjectileTypeID(id), out IProjectileType type))
+                return null;
+            ProjectileDefinition? def = type?.TryCast<ProjectileDefinition>();
+            if (def == null)
+                return null;
+            return Of(def.Pointer);
+        }
 
         /// <summary>The round of the projectile definition at <paramref name="def"/>, if it's one of ours.</summary>
         internal static Entry? Of(IntPtr def) => entries.TryGetValue(def, out Entry? entry) ? entry : null;
@@ -106,6 +164,14 @@ namespace Rounds
         {
             entry.Def.Diameter = launch ? entry.GameDiameter : entry.Shape.Diameter;
             entry.Def.Length = launch ? entry.Shape.LaunchLength : entry.Shape.Length;
+        }
+
+        /// <summary>The game's projectile definition for the type <paramref name="behaviour"/> has loaded; null when it can't be found.</summary>
+        internal static ProjectileDefinition? LoadedGame(CannonBehaviour behaviour)
+        {
+            ProjectileRegister? register = behaviour.projectileFactory?.TryCast<ProjectileRegister>();
+            IProjectileDefinitionSource? source = register?.definitionSource;
+            return source?.GetProjectileDefinition(behaviour.LoadedProjectileTypeID);
         }
 
         /// <summary>The function definitions the game made <paramref name="game"/> from, in order.</summary>
@@ -135,7 +201,8 @@ namespace Rounds
                 return;
             // The shot launches during this call, with the ID that's next now
             int projectile = register!.nextID;
-            if (Projectiles.For(__instance.Pointer, game) is not { } entry)
+            Projectiles.Entry? entry = Projectiles.For(__instance.Pointer, game);
+            if (entry == null)
             {
                 Impacts.RaisePlayerFired(__instance.Pointer, game.Mass, game.Diameter, projectile);
                 return;
@@ -184,32 +251,63 @@ namespace Rounds
         /// <summary>Sets the cannon of <paramref name="gun"/> (its behaviour) to its loaded round's velocity, or the game's for its own shell.</summary>
         internal static void Update(IntPtr gun)
         {
+            if (!Tracker.Cannons.TryGetValue(gun, out Cannon? cannon))
+                return;
+            CannonBlueprint? blueprint = cannon.Blueprint;
+            if (blueprint == null)
+                return;
+            CannonBehaviour? behaviour = cannon.behaviour;
+            if (behaviour == null)
+                return;
             // An unloaded gun's type is -1, which the game throws on; its first load updates it
-            if (!Tracker.Cannons.TryGetValue(gun, out Cannon? cannon) || cannon.Blueprint is not { } blueprint || cannon.behaviour is not { } behaviour
-                || behaviour.LoadedProjectileTypeID.Value < 0
-                || behaviour.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource?.GetProjectileDefinition(behaviour.LoadedProjectileTypeID) is not { } game)
+            if (behaviour.LoadedProjectileTypeID.Value < 0)
+                return;
+            ProjectileDefinition? game = Projectiles.LoadedGame(behaviour);
+            if (game == null)
                 return;
             Games[gun] = game;
             float speed = Speed(gun, blueprint, game);
-            // The AI gunner takes flight time as range over this speed: its mean speed to the target, drag and motor counted
-            if (!PlayerVehicle.Contains(cannon) && AiRange.Of(cannon) is float range && AtRange(gun, blueprint, game, null, range) is { } at && at.Time > 0f)
-            {
-                float before = speed;
-                speed = range / at.Time;
-                if (Plugin.LogAi.Value)
-                    Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Sprocket.Vehicles.Vehicle>()?.name ?? "vehicle"} aim: target {range:0} m, there in {at.Time:0.00} s at {at.Speed:0} m/s; leads by {speed:0} m/s (else {before:0})");
-            }
+            if (!PlayerVehicle.Contains(cannon))
+                speed = AiLead(gun, cannon, blueprint, game, speed);
             cannon.muzzleVelocity = speed;
         }
 
+        /// <summary>
+        /// The speed the AI gunner leads by: it takes flight time as range over
+        /// this speed, so its mean speed to its target, drag and motor counted.
+        /// <paramref name="speed"/> without a target, or when the round doesn't get there.
+        /// </summary>
+        private static float AiLead(IntPtr gun, Cannon cannon, CannonBlueprint blueprint, ProjectileDefinition game, float speed)
+        {
+            float? range = AiRange.Of(cannon);
+            if (range == null)
+                return speed;
+            (float Speed, float Time)? at = AtRange(gun, blueprint, game, null, range.Value);
+            if (at == null)
+                return speed;
+            // No flight time to divide by
+            if (!(at.Value.Time > 0f))
+                return speed;
+            float lead = range.Value / at.Value.Time;
+            if (Plugin.LogAi.Value)
+                Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Sprocket.Vehicles.Vehicle>()?.name ?? "vehicle"} aim: target {range.Value:0} m, there in {at.Value.Time:0.00} s at {at.Value.Speed:0} m/s; leads by {lead:0} m/s (else {speed:0})");
+            return lead;
+        }
+
         /// <summary>The speed round <paramref name="round"/> (else the loaded one) of <paramref name="gun"/> leaves the muzzle at, m/s.</summary>
-        internal static float Launch(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition game, string? round = null) =>
-            Projectiles.For(gun, game, round) is { } entry ? blueprint.MuzzleVelocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length) : blueprint.MuzzleVelocity;
+        internal static float Launch(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition game, string? round = null)
+        {
+            Projectiles.Entry? entry = Projectiles.For(gun, game, round);
+            // The game's own shell
+            if (entry == null)
+                return blueprint.MuzzleVelocity;
+            return blueprint.MuzzleVelocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
+        }
 
         /// <summary>Round <paramref name="round"/>'s (else the loaded one's) speed and flight time at <paramref name="range"/> m, with its drag and any motor; null if it doesn't get there.</summary>
         internal static (float Speed, float Time)? AtRange(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition game, string? round, float range)
         {
-            var entry = Projectiles.For(gun, game, round);
+            Projectiles.Entry? entry = Projectiles.For(gun, game, round);
             return AiRange.At(entry?.Def ?? game, Launch(gun, blueprint, game, round), range, entry?.Shape.Thrust);
         }
 
@@ -221,9 +319,15 @@ namespace Rounds
         internal static float Speed(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition? game, string? round = null)
         {
             float velocity = blueprint.MuzzleVelocity;
-            if (game != null && Projectiles.For(gun, game, round) is { } entry)
-                velocity = entry.Shape.AimVelocity > 0f ? entry.Shape.AimVelocity : velocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
-            return velocity;
+            if (game == null)
+                return velocity;
+            Projectiles.Entry? entry = Projectiles.For(gun, game, round);
+            // The game's own shell
+            if (entry == null)
+                return velocity;
+            if (entry.Shape.AimVelocity > 0f)
+                return entry.Shape.AimVelocity;
+            return velocity * Loadout.VelocityRatio(blueprint, entry.Shape.LaunchLength / game.Length);
         }
     }
 
@@ -270,11 +374,17 @@ namespace Rounds
         /// </summary>
         internal static void Fired(IntPtr gun, Projectiles.Entry entry)
         {
-            if (clearAll != null && !seen.Contains(entry.Def.Pointer) && Tracker.Cannons.TryGetValue(gun, out var cannon) && PlayerVehicle.Contains(cannon))
-            {
-                Clear();
-                seen.Add(entry.Def.Pointer);
-            }
+            // Dynamic Gun Sight isn't installed
+            if (clearAll == null)
+                return;
+            if (seen.Contains(entry.Def.Pointer))
+                return;
+            if (!Tracker.Cannons.TryGetValue(gun, out Cannon? cannon))
+                return;
+            if (!PlayerVehicle.Contains(cannon))
+                return;
+            Clear();
+            seen.Add(entry.Def.Pointer);
         }
 
         /// <summary>
@@ -284,20 +394,27 @@ namespace Rounds
         /// </summary>
         private static void MeasurePrefix(ref int __0)
         {
-            if (Projectiles.Of(__0) is { } entry)
+            Projectiles.Entry? entry = Projectiles.Of(__0);
+            if (entry != null)
                 __0 = entry.GameId;
         }
 
         /// <summary><c>Load(int typeId)</c>: the game's type of one of the player's guns reads as its loaded round's.</summary>
         private static void LoadPrefix(ref int __0)
         {
-            foreach (var (gun, cannon, owner) in Tracker.PlayerGuns())
+            foreach ((IntPtr gun, Cannon cannon, CannonBlueprint owner) in Tracker.PlayerGuns())
             {
-                if (cannon.behaviour?.LoadedProjectileTypeID.Value != __0
-                    || cannon.behaviour.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource?.GetProjectileDefinition(cannon.behaviour.LoadedProjectileTypeID) is not { } game)
+                CannonBehaviour? behaviour = cannon.behaviour;
+                if (behaviour == null)
+                    continue;
+                if (behaviour.LoadedProjectileTypeID.Value != __0)
+                    continue;
+                ProjectileDefinition? game = Projectiles.LoadedGame(behaviour);
+                if (game == null)
                     continue;
                 // The round being loaded, so the sight is ready by the time it lands
-                if (Projectiles.For(gun, game, Tracker.Upcoming(gun, owner)) is { } entry)
+                Projectiles.Entry? entry = Projectiles.For(gun, game, Tracker.Upcoming(gun, owner));
+                if (entry != null)
                     __0 = entry.Def.ID.Value;
                 return;
             }
