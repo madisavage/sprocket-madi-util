@@ -24,11 +24,13 @@ namespace FireControl
             float angle = 0f;
             for (int i = 0; i < 8; i++)
             {
-                if (Height(speed, angle, decel, range, gravity) is not float height)
+                float? height = Height(speed, angle, decel, range, gravity);
+                // Falls short
+                if (height == null)
                     return null;
                 // Raising the gun by a small angle lifts the shell at that range by about range × angle
-                angle -= height / range;
-                if (MathF.Abs(height) < 0.01f)
+                angle -= height.Value / range;
+                if (MathF.Abs(height.Value) < 0.01f)
                     return angle;
                 if (angle > MathF.PI / 4f)
                     return null;
@@ -39,7 +41,7 @@ namespace FireControl
         /// <summary>The shell's height at <paramref name="range"/> m downrange, fired at <paramref name="angle"/>; null if it falls short.</summary>
         internal static float? Height(float speed, float angle, Func<float, float> decel, float range, float gravity)
         {
-            var end = Trajectory.Fly(Vector3.Zero, new Vector3(0f, MathF.Sin(angle), MathF.Cos(angle)) * speed, range, MaxTime, Step, gravity, decel);
+            Trajectory.State end = Trajectory.Fly(Vector3.Zero, new Vector3(0f, MathF.Sin(angle), MathF.Cos(angle)) * speed, range, MaxTime, Step, gravity, decel);
             return end.Crossed ? end.Position.Y : null;
         }
     }

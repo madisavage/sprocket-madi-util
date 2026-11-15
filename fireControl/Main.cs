@@ -86,11 +86,30 @@ namespace FireControl
         internal static readonly string[] Names = { "None", "Stereoscopic", "Laser" };
         private static JsonObject? Read(CannonBlueprint? gun) => gun == null ? null : Descriptions.Parsed(gun);
 
-        internal static Rangefinder RangefinderOf(CannonBlueprint? gun) =>
-            Read(gun)?["rangefinder"] is JsonValue value && value.TryGetValue(out string? name) && Enum.TryParse(name, true, out Rangefinder kind) ? kind : Rangefinder.None;
+        internal static Rangefinder RangefinderOf(CannonBlueprint? gun)
+        {
+            JsonValue? value = Read(gun)?["rangefinder"] as JsonValue;
+            if (value == null)
+                return Rangefinder.None;
+            if (!value.TryGetValue(out string? name))
+                return Rangefinder.None;
+            if (!Enum.TryParse(name, true, out Rangefinder kind))
+                return Rangefinder.None;
+            return kind;
+        }
 
-        internal static float ElevationOf(CannonBlueprint? gun) =>
-            Read(gun)?["elevation"] is JsonValue value && value.TryGetValue(out float mils) && float.IsFinite(mils) ? mils : 0f;
+        internal static float ElevationOf(CannonBlueprint? gun)
+        {
+            JsonValue? value = Read(gun)?["elevation"] as JsonValue;
+            if (value == null)
+                return 0f;
+            if (!value.TryGetValue(out float mils))
+                return 0f;
+            // A hand-edited NaN or infinity would throw the gun's aim away
+            if (!float.IsFinite(mils))
+                return 0f;
+            return mils;
+        }
 
         /// <summary>Sets <paramref name="key"/> in <paramref name="gun"/>'s description (removed for null), other keys kept; false when it holds other text than JSON.</summary>
         internal static bool Set(CannonBlueprint gun, string key, JsonNode? value)
@@ -131,14 +150,16 @@ namespace FireControl
 
         internal static void Adjust(int direction)
         {
-            if (Gun() is { } cannon)
+            Cannon? cannon = Gun();
+            if (cannon != null)
                 manual[cannon.Pointer] = manual.GetValueOrDefault(cannon.Pointer) + direction * Plugin.ManualStep.Value;
         }
 
         /// <summary>Clears the active gun's by-hand mils and range.</summary>
         internal static void Reset()
         {
-            if (Gun() is not { } cannon)
+            Cannon? cannon = Gun();
+            if (cannon == null)
                 return;
             manual.Remove(cannon.Pointer);
             ranges.Remove(cannon.Pointer);
@@ -170,12 +191,26 @@ namespace FireControl
         /// <summary>Ranges the point under the crosshair with the gun's rangefinder.</summary>
         internal static void Range()
         {
-            if (Gun() is not { } cannon || GunSettings.RangefinderOf(cannon.Blueprint) is var kind && kind == Rangefinder.None || hull == null)
+            Cannon? cannon = Gun();
+            if (cannon == null)
+                return;
+            Rangefinder kind = GunSettings.RangefinderOf(cannon.Blueprint);
+            if (kind == Rangefinder.None)
+                return;
+            if (hull == null)
                 return;
             float nearest = float.PositiveInfinity;
-            foreach (var hit in Physics.RaycastAll(sight, MaxRange))
-                if (hit.distance < nearest && hit.transform != null && !hit.transform.IsChildOf(hull))
-                    nearest = hit.distance;
+            foreach (UnityPhysicsModule::UnityEngine.RaycastHit hit in Physics.RaycastAll(sight, MaxRange))
+            {
+                if (hit.distance >= nearest)
+                    continue;
+                if (hit.transform == null)
+                    continue;
+                // The player's own vehicle
+                if (hit.transform.IsChildOf(hull))
+                    continue;
+                nearest = hit.distance;
+            }
             if (float.IsPositiveInfinity(nearest))
                 return;
             // Stereo error grows with range squared and shrinks with base length; laser is exact
@@ -204,18 +239,35 @@ namespace FireControl
 
         internal static string? Status()
         {
-            if (PlayerVehicle.Root == null || Gun() is not { } cannon)
+            if (PlayerVehicle.Root == null)
+                return null;
+            Cannon? cannon = Gun();
+            if (cannon == null)
                 return null;
             Land();
-            var kind = GunSettings.RangefinderOf(cannon.Blueprint);
+            Rangefinder kind = GunSettings.RangefinderOf(cannon.Blueprint);
             float mils = GunSettings.ElevationOf(cannon.Blueprint) + manual.GetValueOrDefault(cannon.Pointer);
             if (kind == Rangefinder.None && mils == 0f)
                 return null;
-            string ranged = !float.IsNaN(pendingAt) && pendingGun == cannon.Pointer ? "ranging…"
-                : ranges.TryGetValue(cannon.Pointer, out float r) ? $"{r:0} m" + (solutions.TryGetValue(cannon.Pointer, out var s) && s.Angle == null ? " (out of reach)" : "")
-                : kind == Rangefinder.None ? "" : "no range";
+            string ranged;
+            if (!float.IsNaN(pendingAt) && pendingGun == cannon.Pointer)
+                ranged = "ranging…";
+            else if (ranges.TryGetValue(cannon.Pointer, out float r))
+            {
+                ranged = $"{r:0} m";
+                // Ranged, but too far for the gun to reach
+                if (solutions.TryGetValue(cannon.Pointer, out ((float Range, float Speed, IntPtr Projectile) For, float? Angle) s) && s.Angle == null)
+                    ranged += " (out of reach)";
+            }
+            else if (kind == Rangefinder.None)
+                ranged = "";
+            else
+                ranged = "no range";
             string extra = mils == 0f ? "" : $"{mils:+0.0;-0.0} mil";
-            return $"Fire control: {ranged}{(ranged.Length > 0 && extra.Length > 0 ? ", " : "")}{extra}";
+            string separator = "";
+            if (ranged.Length > 0 && extra.Length > 0)
+                separator = ", ";
+            return $"Fire control: {ranged}{separator}{extra}";
         }
 
         /// <summary>
@@ -227,7 +279,11 @@ namespace FireControl
         {
             Transform? root = PlayerVehicle.Root;
             float now = Time.realtimeSinceStartup;
-            if (root != hull || guns.Count == 0 && now - lookedUp > 1f)
+            // A new vehicle, or none found yet and a second since the last look
+            bool lookAgain = root != hull;
+            if (guns.Count == 0 && now - lookedUp > 1f)
+                lookAgain = true;
+            if (lookAgain)
             {
                 if (root != hull)
                     Clear();
@@ -242,13 +298,17 @@ namespace FireControl
                 return null;
             int group = controller == null ? 0 : (int)controller.FireGroup;
             Cannon? pick = null;
-            foreach (var (cannon, cannonGroup) in guns)
-                if (cannon != null && (group == 0 || (cannonGroup & group) != 0))
-                {
-                    if (GunSettings.RangefinderOf(cannon.Blueprint) != Rangefinder.None)
-                        return cannon;
-                    pick ??= cannon;
-                }
+            foreach ((Cannon cannon, int cannonGroup) in guns)
+            {
+                if (cannon == null)
+                    continue;
+                // Not in the controller's fire group; group 0 is no controller, so any gun
+                if (group != 0 && (cannonGroup & group) == 0)
+                    continue;
+                if (GunSettings.RangefinderOf(cannon.Blueprint) != Rangefinder.None)
+                    return cannon;
+                pick ??= cannon;
+            }
             return pick ?? guns[0].Cannon;
         }
 
@@ -257,22 +317,31 @@ namespace FireControl
         {
             Land();
             float angle = (GunSettings.ElevationOf(cannon.Blueprint) + manual.GetValueOrDefault(cannon.Pointer)) / 1000f;
-            if (!ranges.TryGetValue(cannon.Pointer, out float r) || cannon.behaviour is not { } behaviour)
+            if (!ranges.TryGetValue(cannon.Pointer, out float r))
                 return angle;
+            Sprocket.Vehicles.Weapons.Cannons.CannonBehaviour? behaviour = cannon.behaviour;
+            if (behaviour == null)
+                return angle;
+            ProjectileDefinition? projectile = null;
             // An unloaded gun's type is -1: keep the last solution
-            if (behaviour.LoadedProjectileTypeID.Value >= 0
-                && behaviour.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource?.GetProjectileDefinition(behaviour.LoadedProjectileTypeID) is { } projectile)
+            if (behaviour.LoadedProjectileTypeID.Value >= 0)
+                projectile = behaviour.projectileFactory?.TryCast<ProjectileRegister>()?.definitionSource?.GetProjectileDefinition(behaviour.LoadedProjectileTypeID);
+            if (projectile == null)
             {
-                // rounds sets the cannon's muzzle velocity to its loaded round's
-                var key = (r, cannon.muzzleVelocity, projectile.Pointer);
-                if (!solutions.TryGetValue(cannon.Pointer, out var solution) || solution.For != key)
-                {
-                    float mass = projectile.Mass;
-                    solutions[cannon.Pointer] = solution = (key, Ballistics.Elevation(cannon.muzzleVelocity, v => mass > 0f ? projectile.CalculateDragForce(v) / mass : 0f, r, -Physics.gravity.y));
-                }
-                return angle + (solution.Angle ?? 0f);
+                if (solutions.TryGetValue(cannon.Pointer, out ((float Range, float Speed, IntPtr Projectile) For, float? Angle) last))
+                    return angle + (last.Angle ?? 0f);
+                return angle;
             }
-            return angle + (solutions.TryGetValue(cannon.Pointer, out var last) ? last.Angle ?? 0f : 0f);
+            // rounds sets the cannon's muzzle velocity to its loaded round's
+            (float Range, float Speed, IntPtr Projectile) key = (r, cannon.muzzleVelocity, projectile.Pointer);
+            if (!solutions.TryGetValue(cannon.Pointer, out ((float Range, float Speed, IntPtr Projectile) For, float? Angle) solution) || solution.For != key)
+            {
+                float mass = projectile.Mass;
+                float? solved = Ballistics.Elevation(cannon.muzzleVelocity, v => mass > 0f ? projectile.CalculateDragForce(v) / mass : 0f, r, -Physics.gravity.y);
+                solution = (key, solved);
+                solutions[cannon.Pointer] = solution;
+            }
+            return angle + (solution.Angle ?? 0f);
         }
 
         /// <summary>The sight's aim ray, for ranging, and the controller, for its fire group.</summary>
@@ -301,7 +370,10 @@ namespace FireControl
             if (!trunnions.IsChildOf(root))
                 return;
             if (!laid.TryGetValue(__instance.Pointer, out Cannon? cannon))
-                laid[__instance.Pointer] = cannon = trunnions.GetComponentInChildren<Cannon>();
+            {
+                cannon = trunnions.GetComponentInChildren<Cannon>();
+                laid[__instance.Pointer] = cannon;
+            }
             // Each gun keeps its own by-hand mils and range
             float angle = cannon == null ? 0f : Elevation(cannon);
             if (angle != 0f)
@@ -313,7 +385,13 @@ namespace FireControl
         private static void Draw(CannonEditor __instance, IGUILayout __0)
         {
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (drawer == null || __instance.Component is not { } cannon || cannon.Blueprint is not { } blueprint)
+            if (drawer == null)
+                return;
+            Cannon? cannon = __instance.Component;
+            if (cannon == null)
+                return;
+            CannonBlueprint? blueprint = cannon.Blueprint;
+            if (blueprint == null)
                 return;
             EditorGui.Dropdown(drawer, "Rangefinder", GunSettings.Names, (int)GunSettings.RangefinderOf(blueprint), i =>
             {
