@@ -12,6 +12,7 @@ using HarmonyLib;
 using MadiLib;
 using Properties;
 using Sprocket.Blueprints;
+using Sprocket.DamageModelling;
 using Sprocket.ProjectilePhysicsSystems;
 using Sprocket.UI;
 using Sprocket.Vehicles;
@@ -53,7 +54,7 @@ namespace Rounds
                 int round = n;
                 Keybinds.Register(this, "Rounds", $"Round {n}", $"Digit{n}", () => Tracker.SelectRound(round));
             }
-            using (var icon = typeof(Plugin).Assembly.GetManifestResourceStream("ap.png"))
+            using (System.IO.Stream? icon = typeof(Plugin).Assembly.GetManifestResourceStream("ap.png"))
                 Loadout.Register("ap", "AP", (_, _, _, _) => { }, icon: icon,
                     penetration: (owner, _, speed) => Impacts.DeMarre(owner.Caliber, ShellProperties.GetProjectileMass(owner.Caliber), speed, owner.PenetratorConstant));
             Hud.AddPanel(AmmoBar.Draw);
@@ -147,7 +148,13 @@ namespace Rounds
                 return;
             Prune();
             // A cannon enabled again gets a new behaviour; forget the old one, keeping the player's pick
-            foreach (IntPtr old in Cannons.Where(c => c.Value.Pointer == cannon.Pointer && c.Key != cannon.behaviour.Pointer).Select(c => c.Key).ToList())
+            List<IntPtr> stale = new List<IntPtr>();
+            foreach (KeyValuePair<IntPtr, Cannon> known in Cannons)
+            {
+                if (known.Value.Pointer == cannon.Pointer && known.Key != cannon.behaviour.Pointer)
+                    stale.Add(known.Key);
+            }
+            foreach (IntPtr old in stale)
             {
                 Cannons.Remove(old);
                 loaded.Remove(old);
@@ -180,22 +187,36 @@ namespace Rounds
         /// <summary>Drops the mixes of racks no longer known.</summary>
         private static void ForgetMixes()
         {
-            foreach (var key in mixes.Keys.Where(k => !racks.ContainsKey(k.Rack)).ToList())
+            foreach ((IntPtr Rack, IntPtr Owner) key in mixes.Keys.Where(k => !racks.ContainsKey(k.Rack)).ToList())
                 mixes.Remove(key);
         }
 
         /// <summary>The round <paramref name="gun"/> loads next: the player's pick, the AI's (see <see cref="AiPick"/>), or its first round.</summary>
         internal static string? Selected(IntPtr gun, CannonBlueprint? owner)
         {
-            // Only once the player's vehicle is known, so theirs isn't taken for the AI's at spawn
-            if (!selected.ContainsKey(gun) && !players.Contains(gun) && owner != null && Cannons.TryGetValue(gun, out Cannon? cannon) && PlayerVehicle.Root != null)
-            {
-                if (PlayerVehicle.Contains(cannon))
-                    players.Add(gun);
-                else
-                    AiPick(gun, cannon, owner, "first load");
-            }
+            Meet(gun, owner);
             return PickOrFirst(selected, gun, owner);
+        }
+
+        /// <summary>The first time <paramref name="gun"/> is asked about: marks it the player's, or has the AI pick its round.</summary>
+        private static void Meet(IntPtr gun, CannonBlueprint? owner)
+        {
+            // Has a pick already, or is known to be the player's
+            if (selected.ContainsKey(gun))
+                return;
+            if (players.Contains(gun))
+                return;
+            if (owner == null)
+                return;
+            if (!Cannons.TryGetValue(gun, out Cannon? cannon))
+                return;
+            // Only once the player's vehicle is known, so theirs isn't taken for the AI's at spawn
+            if (PlayerVehicle.Root == null)
+                return;
+            if (PlayerVehicle.Contains(cannon))
+                players.Add(gun);
+            else
+                AiPick(gun, cannon, owner, "first load");
         }
 
         /// <summary>
@@ -206,28 +227,62 @@ namespace Rounds
         /// </summary>
         private static void AiPick(IntPtr gun, Cannon cannon, CannonBlueprint owner, string reason)
         {
-            var left = Left(cannon);
+            Dictionary<string, int> left = Left(cannon);
             CannonBlueprint blueprint = cannon.Blueprint ?? owner;
-            AiVelocity.Games.TryGetValue(gun, out var game);
-            var rounds = Loadout.List(owner);
-            float? range = game == null ? null : AiRange.Of(cannon);
-            var rated = rounds.Where(r => left.GetValueOrDefault(r.Id) > 0).Select(r =>
+            AiVelocity.Games.TryGetValue(gun, out ProjectileDefinition? game);
+            List<(string Id, string Name, string Type)> rounds = Loadout.List(owner);
+            float? range = null;
+            if (game != null)
+                range = AiRange.Of(cannon);
+            // Rounds with shells left, rated at their speed at the target
+            List<(string Id, string Name, float Speed, float Penetration)> rated = new List<(string Id, string Name, float Speed, float Penetration)>();
+            foreach ((string Id, string Name, string Type) round in rounds)
             {
-                // A round that doesn't reach the target rates at no speed
-                float speed = range is float at ? AiVelocity.AtRange(gun, blueprint, game!, r.Id, at)?.Speed ?? 0f : AiVelocity.Speed(gun, blueprint, game, r.Id);
-                return (r.Id, r.Name, Speed: speed, Penetration: Loadout.Penetration(owner, r.Id, speed));
-            }).OrderByDescending(r => r.Penetration).ToList();
+                if (left.GetValueOrDefault(round.Id) <= 0)
+                    continue;
+                float speed = RatedSpeed(gun, blueprint, game, round.Id, range);
+                rated.Add((round.Id, round.Name, speed, Loadout.Penetration(owner, round.Id, speed)));
+            }
+            // A stable sort: ties keep the panel's order
+            rated = rated.OrderByDescending(r => r.Penetration).ToList();
             string? best = rated.Count > 0 ? rated[0].Id : PickOrFirst(selected, gun, owner);
             if (best == null)
                 return;
-            if (Plugin.LogAi.Value && (!selected.TryGetValue(gun, out string? before) || before != best))
-            {
-                var empty = rounds.Where(r => left.GetValueOrDefault(r.Id) == 0).Select(r => r.Name).ToList();
-                Plugin.Logger.LogInfo($"AI {cannon.GetComponentInParent<Vehicle>()?.name ?? "vehicle"} (gun {gun.ToInt64():X}), {reason}{(range is float d ? $", target {d:0} m" : "")}: picks \"{rounds.FirstOrDefault(r => r.Id == best).Name}\""
-                    + (rated.Count == 0 ? ", no round has shells left" : " from " + string.Join(", ", rated.Select(r => $"{r.Name} {r.Penetration:0} mm @{r.Speed:0} m/s ×{left[r.Id]}")))
-                    + (empty.Count > 0 ? $"; none left: {string.Join(", ", empty)}" : ""));
-            }
+            bool changed = !selected.TryGetValue(gun, out string? before) || before != best;
+            if (Plugin.LogAi.Value && changed)
+                LogAiPick(cannon, gun, reason, range, rounds, rated, left, best);
             selected[gun] = best;
+        }
+
+        /// <summary>The speed round <paramref name="id"/> is rated at: at the target's <paramref name="range"/>, or with none the speed the AI leads it by.</summary>
+        private static float RatedSpeed(IntPtr gun, CannonBlueprint blueprint, ProjectileDefinition? game, string id, float? range)
+        {
+            if (range == null)
+                return AiVelocity.Speed(gun, blueprint, game, id);
+            // A range is only found with the game's projectile known
+            (float Speed, float Time)? at = AiVelocity.AtRange(gun, blueprint, game!, id, range.Value);
+            // A round that doesn't reach the target rates at no speed
+            if (at == null)
+                return 0f;
+            return at.Value.Speed;
+        }
+
+        private static void LogAiPick(Cannon cannon, IntPtr gun, string reason, float? range, List<(string Id, string Name, string Type)> rounds,
+            List<(string Id, string Name, float Speed, float Penetration)> rated, Dictionary<string, int> left, string best)
+        {
+            string vehicle = cannon.GetComponentInParent<Vehicle>()?.name ?? "vehicle";
+            string message = $"AI {vehicle} (gun {gun.ToInt64():X}), {reason}";
+            if (range != null)
+                message += $", target {range.Value:0} m";
+            message += $": picks \"{rounds.FirstOrDefault(r => r.Id == best).Name}\"";
+            if (rated.Count == 0)
+                message += ", no round has shells left";
+            else
+                message += " from " + string.Join(", ", rated.Select(r => $"{r.Name} {r.Penetration:0} mm @{r.Speed:0} m/s ×{left[r.Id]}"));
+            List<string> empty = rounds.Where(r => left.GetValueOrDefault(r.Id) == 0).Select(r => r.Name).ToList();
+            if (empty.Count > 0)
+                message += $"; none left: {string.Join(", ", empty)}";
+            Plugin.Logger.LogInfo(message);
         }
 
         /// <summary>
@@ -237,12 +292,20 @@ namespace Rounds
         internal static string? Loaded(IntPtr gun, CannonBlueprint? owner) => PickOrFirst(loaded, gun, owner);
 
         /// <summary>The round <paramref name="gun"/>'s loader is loading, or else the one loaded.</summary>
-        internal static string? Upcoming(IntPtr gun, CannonBlueprint? owner) => carried.TryGetValue(gun, out var carry) ? carry.Id : Loaded(gun, owner);
+        internal static string? Upcoming(IntPtr gun, CannonBlueprint? owner)
+        {
+            if (carried.TryGetValue(gun, out (string Id, IntPtr Rack) carry))
+                return carry.Id;
+            return Loaded(gun, owner);
+        }
 
         private static string? PickOrFirst(Dictionary<IntPtr, string> picks, IntPtr gun, CannonBlueprint? owner)
         {
-            var ids = Loadout.List(owner).Select(r => r.Id).ToList();
-            return picks.TryGetValue(gun, out string? id) && ids.Contains(id) ? id : ids.FirstOrDefault();
+            List<string> ids = Loadout.List(owner).Select(r => r.Id).ToList();
+            // The pick, while it's still one of the gun's rounds
+            if (picks.TryGetValue(gun, out string? id) && ids.Contains(id))
+                return id;
+            return ids.FirstOrDefault();
         }
 
         private static IntPtr VehicleOf(UnityCoreModule::UnityEngine.Component part) => part.GetComponentInParent<Vehicle>()?.Pointer ?? IntPtr.Zero;
@@ -250,11 +313,21 @@ namespace Rounds
         /// <summary><paramref name="rack"/>'s gun and the blueprint holding its rounds.</summary>
         private static (IntPtr Gun, CannonBlueprint? Owner) GunOf(AmmoRackBehaviour rack)
         {
-            ShellSlotBlueprint? shell = racks.TryGetValue(rack.Pointer, out AmmoRack? component) ? component.shellSlotBlueprintSlot?.Blueprint : null;
-            IntPtr gun = Cannons.ContainsKey(Loading) ? Loading
-                : shell != null && gunOfShell.TryGetValue((shell.Pointer, VehicleOf(component!)), out IntPtr owner) ? owner
-                : IntPtr.Zero;
-            return (gun, Cannons.TryGetValue(gun, out Cannon? cannon) ? Loadout.Owner(cannon) : Loadout.OwnerOf(shell));
+            ShellSlotBlueprint? shell = null;
+            if (racks.TryGetValue(rack.Pointer, out AmmoRack? component))
+                shell = component.shellSlotBlueprintSlot?.Blueprint;
+            // The gun whose load is running, else the one using this rack's shell on its vehicle
+            IntPtr gun = IntPtr.Zero;
+            if (Cannons.ContainsKey(Loading))
+                gun = Loading;
+            else if (shell != null && gunOfShell.TryGetValue((shell.Pointer, VehicleOf(component!)), out IntPtr user))
+                gun = user;
+            CannonBlueprint? owner;
+            if (Cannons.TryGetValue(gun, out Cannon? cannon))
+                owner = Loadout.Owner(cannon);
+            else
+                owner = Loadout.OwnerOf(shell);
+            return (gun, owner);
         }
 
         /// <summary>The round <paramref name="rack"/> was given: its pick, or its gun's first round; null for a rack without rounds.</summary>
@@ -264,13 +337,23 @@ namespace Rounds
         /// <summary><paramref name="rack"/>'s mix as <paramref name="owner"/>'s rounds read it, without taking in changes to its count; null for a rack without rounds.</summary>
         private static RackMix? MixOf(AmmoRackBehaviour rack, CannonBlueprint? owner)
         {
-            if (owner == null || !racks.TryGetValue(rack.Pointer, out AmmoRack? component) || component.Blueprint is not { } blueprint)
+            if (owner == null)
+                return null;
+            if (!racks.TryGetValue(rack.Pointer, out AmmoRack? component))
+                return null;
+            AmmoRackBlueprint? blueprint = component.Blueprint;
+            if (blueprint == null)
                 return null;
             JsonObject design = Loadout.Parsed(blueprint), rounds = Loadout.Parsed(owner);
-            var key = (rack.Pointer, owner.Pointer);
-            if (mixes.TryGetValue(key, out var known) && known.Rack == design && known.Owner == rounds)
-                return known.Mix;
-            if (RackMix.Read(design, Loadout.List(owner).Select(r => r.Id).ToList(), rack.Capacity) is not { } mix)
+            (IntPtr Rack, IntPtr Owner) key = (rack.Pointer, owner.Pointer);
+            if (mixes.TryGetValue(key, out (JsonObject Rack, JsonObject Owner, RackMix Mix) known))
+            {
+                // Read from these same descriptions: nothing changed since
+                if (known.Rack == design && known.Owner == rounds)
+                    return known.Mix;
+            }
+            RackMix? mix = RackMix.Read(design, Loadout.List(owner).Select(r => r.Id).ToList(), rack.Capacity);
+            if (mix == null)
                 return null;
             mixes[key] = (design, rounds, mix);
             return mix;
@@ -284,7 +367,7 @@ namespace Rounds
                 return null;
             // The game puts a shell back by itself when a gun's request changes: that's the round its loader took, and the loader no longer holds it
             if (round == null && rack.AmountStored > mix.Counts.Values.Sum())
-                foreach (var (gun, carry) in carried)
+                foreach ((IntPtr gun, (string Id, IntPtr Rack) carry) in carried)
                     if (carry.Rack == rack.Pointer)
                     {
                         round = carry.Id;
@@ -301,7 +384,7 @@ namespace Rounds
         /// <summary>The rounds to re-rack into <paramref name="rack"/>, best first; null for a rack without rounds.</summary>
         internal static List<string>? Wanted(AmmoRackBehaviour rack)
         {
-            var (gun, owner) = GunOf(rack);
+            (IntPtr gun, CannonBlueprint? owner) = GunOf(rack);
             return Synced(rack, owner)?.Wanted(Selected(gun, owner));
         }
 
@@ -315,9 +398,19 @@ namespace Rounds
         /// </summary>
         internal static bool HoldsNext(AmmoRackBehaviour rack)
         {
-            var (gun, owner) = GunOf(rack);
-            return Selected(gun, owner) is { } next && Synced(rack, owner) is { } mix
-                && (mix.Count(next) > 0 || carried.TryGetValue(gun, out var carry) && carry.Rack == rack.Pointer && carry.Id == next);
+            (IntPtr gun, CannonBlueprint? owner) = GunOf(rack);
+            string? next = Selected(gun, owner);
+            if (next == null)
+                return false;
+            RackMix? mix = Synced(rack, owner);
+            if (mix == null)
+                return false;
+            if (mix.Count(next) > 0)
+                return true;
+            // Its loader carries the next round from this rack
+            if (!carried.TryGetValue(gun, out (string Id, IntPtr Rack) carry))
+                return false;
+            return carry.Rack == rack.Pointer && carry.Id == next;
         }
 
         /// <summary>
@@ -329,15 +422,34 @@ namespace Rounds
         {
             if (Reracking || RoundOf(rack) == null)
                 return true;
-            var (gun, owner) = GunOf(rack);
+            (IntPtr gun, CannonBlueprint? owner) = GunOf(rack);
             // The game may just have put the carried shell back in another rack, on its way to this one
-            if (carried.TryGetValue(gun, out var held) && racks.TryGetValue(held.Rack, out AmmoRack? from) && from != null && from.behaviour != null)
-                Synced(from.behaviour, owner);
-            // A mixed rack can hold the round just picked while its loader carries the one picked before
-            if (HoldsNext(rack) && (!carried.TryGetValue(gun, out var carry) || carry.Id == Selected(gun, owner)))
-                return true;
+            if (carried.TryGetValue(gun, out (string Id, IntPtr Rack) held))
+            {
+                AmmoRackBehaviour? from = LiveRack(held.Rack);
+                if (from != null)
+                    Synced(from, owner);
+            }
+            if (HoldsNext(rack))
+            {
+                // A mixed rack can hold the round just picked while its loader carries the one picked before
+                if (!carried.TryGetValue(gun, out (string Id, IntPtr Rack) carry))
+                    return true;
+                if (carry.Id == Selected(gun, owner))
+                    return true;
+            }
             waiting.Add(gun);
             return false;
+        }
+
+        /// <summary>The behaviour of the known rack with behaviour <paramref name="rack"/>; null when it's gone.</summary>
+        private static AmmoRackBehaviour? LiveRack(IntPtr rack)
+        {
+            if (!racks.TryGetValue(rack, out AmmoRack? component))
+                return null;
+            if (component == null)
+                return null;
+            return component.behaviour;
         }
 
         /// <summary>
@@ -346,15 +458,23 @@ namespace Rounds
         /// </summary>
         internal static void Dropped(IntPtr gun)
         {
-            if (carried.Remove(gun, out var carry) && racks.TryGetValue(carry.Rack, out AmmoRack? rack) && rack != null && rack.behaviour != null)
-                Synced(rack.behaviour, GunOf(rack.behaviour).Owner, carry.Id);
+            if (!carried.Remove(gun, out (string Id, IntPtr Rack) carry))
+                return;
+            AmmoRackBehaviour? rack = LiveRack(carry.Rack);
+            if (rack != null)
+                Synced(rack, GunOf(rack).Owner, carry.Id);
         }
 
         /// <summary>A load from <paramref name="rack"/> was refused, so its gun's load task holds no shell.</summary>
         internal static void Refused(AmmoRackBehaviour rack) => Dropped(GunOf(rack).Gun);
 
         /// <summary>Whether <paramref name="gun"/>'s loader holds a shell it took from <paramref name="rack"/>.</summary>
-        internal static bool Carries(IntPtr gun, AmmoRackBehaviour rack) => carried.TryGetValue(gun, out var carry) && carry.Rack == rack.Pointer;
+        internal static bool Carries(IntPtr gun, AmmoRackBehaviour rack)
+        {
+            if (!carried.TryGetValue(gun, out (string Id, IntPtr Rack) carry))
+                return false;
+            return carry.Rack == rack.Pointer;
+        }
 
         /// <summary>
         /// A shell left <paramref name="rack"/>: the round a re-rack moved, or
@@ -362,8 +482,9 @@ namespace Rounds
         /// </summary>
         internal static void Took(AmmoRackBehaviour rack)
         {
-            var (gun, owner) = GunOf(rack);
-            if (MixOf(rack, owner) is not { } mix)
+            (IntPtr gun, CannonBlueprint? owner) = GunOf(rack);
+            RackMix? mix = MixOf(rack, owner);
+            if (mix == null)
                 return;
             string id = mix.Pick(Reracking ? Moving : Selected(gun, owner));
             mix.Sync(rack.AmountStored, id);
@@ -372,7 +493,10 @@ namespace Rounds
                 return;
             waiting.Remove(gun);
             carried[gun] = (id, rack.Pointer);
-            if (Cannons.TryGetValue(gun, out Cannon? cannon) && PlayerVehicle.Contains(cannon) && id != Loaded(gun, Loadout.Owner(cannon)))
+            if (!Cannons.TryGetValue(gun, out Cannon? cannon))
+                return;
+            // The player's gun is about to load a different round
+            if (PlayerVehicle.Contains(cannon) && id != Loaded(gun, Loadout.Owner(cannon)))
                 DynamicSight.Clear();
         }
 
@@ -383,7 +507,9 @@ namespace Rounds
         internal static void Landed(LoadTask task)
         {
             IntPtr gun = task.target?.Pointer ?? IntPtr.Zero;
-            if (task.State != LoadState.Loaded || !carried.Remove(gun, out var carry))
+            if (task.State != LoadState.Loaded)
+                return;
+            if (!carried.Remove(gun, out (string Id, IntPtr Rack) carry))
                 return;
             string id = carry.Id;
             bool changed = !loaded.TryGetValue(gun, out string? before) || before != id;
@@ -391,14 +517,28 @@ namespace Rounds
             Log($"gun {gun.ToInt64():X} loaded {id}");
             // That may have been the AI's last shell of its pick. Only now it's in the gun: picking again while the loader
             // carries it hides its rack from stagedAmmo, which puts the shell back and takes the new pick's, back and forth
-            if (selected.TryGetValue(gun, out string? pick) && !players.Contains(gun) && Cannons.TryGetValue(gun, out Cannon? ai)
-                && Loadout.Owner(ai) is { } owner && Left(ai).GetValueOrDefault(pick) == 0)
-                AiPick(gun, ai, owner, $"out of {Loadout.List(owner).FirstOrDefault(r => r.Id == pick).Name}");
+            if (selected.TryGetValue(gun, out string? pick))
+                RepickIfOut(gun, pick);
             if (changed)
                 LoadedChanged(gun);
             // Its target's range moves between loads, and a rocket's aim speed goes by it
             else if (!players.Contains(gun))
                 AiVelocity.Update(gun);
+        }
+
+        /// <summary>An AI gun with no shells of <paramref name="pick"/> left picks again.</summary>
+        private static void RepickIfOut(IntPtr gun, string pick)
+        {
+            if (players.Contains(gun))
+                return;
+            if (!Cannons.TryGetValue(gun, out Cannon? ai))
+                return;
+            CannonBlueprint? owner = Loadout.Owner(ai);
+            if (owner == null)
+                return;
+            if (Left(ai).GetValueOrDefault(pick) != 0)
+                return;
+            AiPick(gun, ai, owner, $"out of {Loadout.List(owner).FirstOrDefault(r => r.Id == pick).Name}");
         }
 
         /// <summary><paramref name="gun"/> fired, for the shell log.</summary>
@@ -412,13 +552,21 @@ namespace Rounds
         internal static List<(IntPtr Gun, Cannon Cannon, CannonBlueprint Owner)> PlayerGuns()
         {
             var guns = new List<(IntPtr, Cannon, CannonBlueprint)>();
-            foreach (var (gun, cannon) in Cannons.ToList())
+            foreach ((IntPtr gun, Cannon cannon) in Cannons.ToList())
             {
                 try
                 {
                     if (cannon == null)
+                    {
                         Forget(gun);
-                    else if (PlayerVehicle.Contains(cannon) && Loadout.Owner(cannon) is { } owner && Loadout.List(owner).Count > 0)
+                        continue;
+                    }
+                    if (!PlayerVehicle.Contains(cannon))
+                        continue;
+                    CannonBlueprint? owner = Loadout.Owner(cannon);
+                    if (owner == null)
+                        continue;
+                    if (Loadout.List(owner).Count > 0)
                         guns.Add((gun, cannon, owner));
                 }
                 catch (Exception)
@@ -433,10 +581,10 @@ namespace Rounds
         /// <summary>Drops guns and racks destroyed with their vehicles; run at each spawn, as the HUD may never walk them.</summary>
         private static void Prune()
         {
-            foreach (var (gun, cannon) in Cannons.ToList())
+            foreach ((IntPtr gun, Cannon cannon) in Cannons.ToList())
                 if (cannon == null)
                     Forget(gun);
-            foreach (var (behaviour, rack) in racks.ToList())
+            foreach ((IntPtr behaviour, AmmoRack rack) in racks.ToList())
                 if (rack == null)
                     racks.Remove(behaviour);
             ForgetMixes();
@@ -452,7 +600,7 @@ namespace Rounds
             waiting.Remove(gun);
             players.Remove(gun);
             AiVelocity.Games.Remove(gun);
-            foreach (var key in gunOfShell.Where(g => g.Value == gun).Select(g => g.Key).ToList())
+            foreach ((IntPtr Shell, IntPtr Vehicle) key in gunOfShell.Where(g => g.Value == gun).Select(g => g.Key).ToList())
                 gunOfShell.Remove(key);
         }
 
@@ -460,9 +608,13 @@ namespace Rounds
         private static Dictionary<string, int> Left(Cannon cannon, Dictionary<string, int>? ready = null)
         {
             var left = new Dictionary<string, int>();
-            if (cannon.GetComponentInParent<Vehicle>()?.transform is not { } vehicle)
+            Vehicle? owner = cannon.GetComponentInParent<Vehicle>();
+            if (owner == null)
                 return left;
-            foreach (var (behaviour, rack) in racks.ToList())
+            UnityCoreModule::UnityEngine.Transform vehicle = owner.transform;
+            if (vehicle == null)
+                return left;
+            foreach ((IntPtr behaviour, AmmoRack rack) in racks.ToList())
             {
                 try
                 {
@@ -471,10 +623,17 @@ namespace Rounds
                         racks.Remove(behaviour);
                         continue;
                     }
-                    if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer || !rack.transform.IsChildOf(vehicle) || Contents(rack.behaviour) is not { } held)
+                    // Another gun's shell
+                    if (rack.shellSlotBlueprintSlot?.Blueprint?.Pointer != cannon.ShellBlueprint?.Pointer)
+                        continue;
+                    // On another vehicle
+                    if (!rack.transform.IsChildOf(vehicle))
+                        continue;
+                    IReadOnlyDictionary<string, int>? held = Contents(rack.behaviour);
+                    if (held == null)
                         continue;
                     bool isReady = ready != null && Loadout.IsReady?.Invoke(rack.behaviour) == true;
-                    foreach (var (id, count) in held)
+                    foreach ((string id, int count) in held)
                     {
                         left[id] = left.GetValueOrDefault(id) + count;
                         if (isReady)
@@ -496,7 +655,7 @@ namespace Rounds
         /// <summary>Makes the player's next gun with rounds the active one, for the round keys.</summary>
         internal static void SelectGun()
         {
-            var guns = PlayerGuns();
+            List<(IntPtr Gun, Cannon Cannon, CannonBlueprint Owner)> guns = PlayerGuns();
             if (guns.Count > 0)
                 active = guns[(Active(guns) + 1) % guns.Count].Gun;
         }
@@ -509,11 +668,11 @@ namespace Rounds
         /// </summary>
         internal static void SelectRound(int n)
         {
-            var guns = PlayerGuns();
+            List<(IntPtr Gun, Cannon Cannon, CannonBlueprint Owner)> guns = PlayerGuns();
             if (guns.Count == 0)
                 return;
-            var (gun, cannon, owner) = guns[Active(guns)];
-            var ids = Loadout.List(owner);
+            (IntPtr gun, Cannon cannon, CannonBlueprint owner) = guns[Active(guns)];
+            List<(string Id, string Name, string Type)> ids = Loadout.List(owner);
             if (n > ids.Count)
                 return;
             selected[gun] = ids[n - 1].Id;
@@ -531,18 +690,23 @@ namespace Rounds
         /// round keys pick for it, and each round with its icon key and its
         /// shells left in all its racks and in ready racks.
         /// </summary>
-        internal static List<(IntPtr Gun, string Name, string? Loaded, string? Next, bool Waiting, bool Active, List<(string Id, string Name, string Type, string Icon, int Left, int Ready)> Rounds)> Guns()
+        internal static List<GunRow> Guns()
         {
-            var guns = new List<(IntPtr, string, string?, string?, bool, bool, List<(string, string, string, string, int, int)>)>();
-            var player = PlayerGuns();
+            List<GunRow> guns = new List<GunRow>();
+            List<(IntPtr Gun, Cannon Cannon, CannonBlueprint Owner)> player = PlayerGuns();
             int current = Active(player);
             for (int i = 0; i < player.Count; i++)
             {
-                var (gun, cannon, owner) = player[i];
+                (IntPtr gun, Cannon cannon, CannonBlueprint owner) = player[i];
                 var ready = new Dictionary<string, int>();
-                var left = Left(cannon, ready);
-                var rounds = Loadout.List(owner).Select(r => (r.Id, r.Name, r.Type, Loadout.IconOf(owner, r.Id, r.Type), left.GetValueOrDefault(r.Id), ready.GetValueOrDefault(r.Id))).ToList();
-                guns.Add((gun, GunName(owner, i), Loaded(gun, owner), Selected(gun, owner), waiting.Contains(gun), i == current, rounds));
+                Dictionary<string, int> left = Left(cannon, ready);
+                List<RoundCell> rounds = new List<RoundCell>();
+                foreach ((string Id, string Name, string Type) round in Loadout.List(owner))
+                {
+                    string icon = Loadout.IconOf(owner, round.Id, round.Type);
+                    rounds.Add(new RoundCell(round.Id, round.Name, round.Type, icon, left.GetValueOrDefault(round.Id), ready.GetValueOrDefault(round.Id)));
+                }
+                guns.Add(new GunRow(gun, GunName(owner, i), Loaded(gun, owner), Selected(gun, owner), waiting.Contains(gun), i == current, rounds));
             }
             return guns;
         }
@@ -554,6 +718,12 @@ namespace Rounds
             return name.Length > 0 ? name : $"Gun {index + 1}";
         }
     }
+
+    /// <summary>One of the player's guns on the ammo bar, from <see cref="Tracker.Guns"/>.</summary>
+    internal readonly record struct GunRow(IntPtr Gun, string Name, string? Loaded, string? Next, bool Waiting, bool Active, List<RoundCell> Rounds);
+
+    /// <summary>One round in a gun's ammo bar row: its icon key, and its shells left in all its racks and in ready racks.</summary>
+    internal readonly record struct RoundCell(string Id, string Name, string Type, string Icon, int Left, int Ready);
 
     /// <summary>
     /// The rounds an ammo rack is designed with, stored as
@@ -567,7 +737,7 @@ namespace Rounds
         /// <summary>The round <paramref name="rack"/> was given among <paramref name="owner"/>'s: its pick, or the first; null if there are none.</summary>
         internal static string? Get(AmmoRackBlueprint? rack, CannonBlueprint? owner)
         {
-            var ids = Ids(owner);
+            List<string> ids = Ids(owner);
             return rack == null ? ids.FirstOrDefault() : RackMix.FillOf(Loadout.Parsed(rack), ids);
         }
 
@@ -582,13 +752,14 @@ namespace Rounds
         /// </summary>
         internal static void SetCount(AmmoRackBlueprint rack, RackMix design, string id, int count)
         {
-            if (Loadout.Read(rack) is not { } root)
+            JsonObject? root = Loadout.Read(rack);
+            if (root == null)
                 return;
             root.Remove("mix");
             var split = new JsonObject();
             string? most = null;
             int largest = 0;
-            foreach (var (round, assigned) in design.Targets)
+            foreach ((string round, int assigned) in design.Targets)
             {
                 int slots = round == id ? count : assigned;
                 if (slots <= 0)
@@ -694,16 +865,24 @@ namespace Rounds
             Cannon? cannon = __instance.Component;
             CannonBlueprint? owner = Loadout.Owner(cannon);
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (cannon == null || owner == null || drawer == null || Loadout.Types.Count == 0)
+            if (cannon == null)
+                return;
+            if (owner == null)
+                return;
+            if (drawer == null)
+                return;
+            // No plugin registered a round type
+            if (Loadout.Types.Count == 0)
                 return;
             if (!EditorGui.Section(drawer, "rounds.cannon", "Rounds", __instance.RequestRedraw))
                 return;
             Action changed = () => cannon.blueprintSlot?.MarkModified();
             Loadout.redraw = __instance.RequestRedraw;
-            foreach (var (id, name, type) in Loadout.List(owner))
+            foreach ((string id, string name, string type) in Loadout.List(owner))
             {
                 if (!names.TryGetValue((owner.Pointer, id), out StringProperty? field))
-                    names[(owner.Pointer, id)] = field = new StringProperty(
+                {
+                    field = new StringProperty(
                         "Round name",
                         (Func<string>)(() => Loadout.List(owner).FirstOrDefault(r => r.Id == id).Name ?? ""),
                         (Action<string>)(value =>
@@ -712,22 +891,34 @@ namespace Rounds
                             changed();
                         }),
                         "Shown in the HUD, the rack panel and the Delete button.");
+                    names[(owner.Pointer, id)] = field;
+                }
                 drawer.InputField(field);
                 int index = Loadout.Types.FindIndex(t => t.Type == type);
                 // Types too new for the vehicle are hidden, except the round's own
-                var offered = Loadout.Types.Where(t => t.Type == type || MadiLib.Introduced.Allowed(Loadout.YearOf(t.Type))).ToList();
-                EditorGui.Dropdown(drawer, "Type", offered.Select(t => t.Label).ToList(), offered.FindIndex(t => t.Type == type), i =>
+                List<int> offered = new List<int>();
+                for (int t = 0; t < Loadout.Types.Count; t++)
                 {
-                    Loadout.SetType(owner, id, offered[i].Type);
+                    string candidate = Loadout.Types[t].Type;
+                    if (candidate == type || MadiLib.Introduced.Allowed(Loadout.YearOf(candidate)))
+                        offered.Add(t);
+                }
+                List<string> labels = offered.Select(t => Loadout.Types[t].Label).ToList();
+                EditorGui.Dropdown(drawer, "Type", labels, offered.IndexOf(index), i =>
+                {
+                    Loadout.SetType(owner, id, Loadout.Types[offered[i]].Type);
                     changed();
                     __instance.RequestRedraw();
                 }, "What kind of round this is. Types newer than the vehicle's year are hidden (MadiLib's Historical availability).");
                 if (!MadiLib.Introduced.Allowed(Loadout.YearOf(owner, id, type)))
                 {
                     if (!notes.TryGetValue((owner.Pointer, id), out StringProperty? note))
-                        notes[(owner.Pointer, id)] = note = EditorGui.Readout("Too new",
+                    {
+                        note = EditorGui.Readout("Too new",
                             () => MadiLib.Introduced.Note(Loadout.YearOf(owner, id, Loadout.List(owner).FirstOrDefault(r => r.Id == id).Type ?? "")),
                             "This round is newer than the vehicle's year. It still fires; pick another type or a later year to clear this.");
+                        notes[(owner.Pointer, id)] = note;
+                    }
                     drawer.Readonly(note);
                 }
                 if (index >= 0)
@@ -772,24 +963,33 @@ namespace Rounds
         private static void Postfix(AmmoRackEditor __instance, IGUILayout __0)
         {
             AmmoRack? rack = __instance.Component;
-            var rounds = Loadout.List(Loadout.OwnerOf(rack?.shellSlotBlueprintSlot?.Blueprint));
+            if (rack == null)
+                return;
+            if (rack.Blueprint == null)
+                return;
+            List<(string Id, string Name, string Type)> rounds = Loadout.List(Loadout.OwnerOf(rack.shellSlotBlueprintSlot?.Blueprint));
+            // One round has nothing to split
+            if (rounds.Count < 2)
+                return;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
-            if (rack == null || rack.Blueprint == null || rounds.Count < 2 || drawer == null)
+            if (drawer == null)
                 return;
             StringProperty readout = unassigned.Get(rack, () => EditorGui.Readout(
                 "Unassigned",
-                () => Design(rack) is { } mix ? $"{mix.Unassigned}" : "",
+                () => UnassignedText(rack),
                 "Slots for no round in particular: they hold an even balance of all rounds, at the start and when re-racked."));
             shown = new List<(string Id, FloatProperty Slider)>();
-            foreach (var (id, name, _) in rounds)
+            foreach ((string id, string name, string _) in rounds)
             {
                 if (!counts.TryGetValue((rack.Pointer, id, name), out FloatProperty? slider))
-                    counts[(rack.Pointer, id, name)] = slider = new FloatProperty(
+                {
+                    slider = new FloatProperty(
                         name,
                         (Func<float>)(() => Design(rack)?.Targets.GetValueOrDefault(id) ?? 0),
                         (Action<float>)(value =>
                         {
-                            if (Design(rack) is not { } before)
+                            RackMix? before = Design(rack);
+                            if (before == null)
                                 return;
                             RackRound.SetCount(rack.Blueprint, before, id, Math.Clamp((int)Math.Round(value), 0, before.Limit(id)));
                             rack.blueprintReference?.MarkModified();
@@ -801,20 +1001,32 @@ namespace Rounds
                         Min = 0f,
                         Step = 1f
                     };
+                    counts[(rack.Pointer, id, name)] = slider;
+                }
                 shown.Add((id, slider));
             }
             Limits(rack);
-            foreach (var (_, slider) in shown)
-                drawer.Float(slider);
+            foreach ((string Id, FloatProperty Slider) entry in shown)
+                drawer.Float(entry.Slider);
             drawer.Readonly(readout);
+        }
+
+        /// <summary>The rack's slots for no round in particular, as the readout shows them.</summary>
+        private static string UnassignedText(AmmoRack rack)
+        {
+            RackMix? mix = Design(rack);
+            if (mix == null)
+                return "";
+            return $"{mix.Unassigned}";
         }
 
         /// <summary>Caps each slider at its round's own slots and those unassigned.</summary>
         private static void Limits(AmmoRack rack)
         {
-            if (Design(rack) is not { } mix)
+            RackMix? mix = Design(rack);
+            if (mix == null)
                 return;
-            foreach (var (id, slider) in shown)
+            foreach ((string id, FloatProperty slider) in shown)
             {
                 // An empty 0..0 range drops the slider and leaves the pooled field's old text (another panel's value); the setter clamps to the real limit
                 slider.Max = Math.Max(mix.Limit(id), 1);

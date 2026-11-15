@@ -39,7 +39,7 @@ namespace Rounds
             Shown.Clear();
             if (!Plugin.ShowIndicator.Value)
                 return 0f;
-            var guns = Tracker.Guns();
+            List<GunRow> guns = Tracker.Guns();
             if (guns.Count == 0)
                 return 0f;
             // Built here, not at load: GUI.skin only exists inside OnGUI
@@ -48,14 +48,14 @@ namespace Rounds
             count ??= new GUIStyle(GUI.skin.label) { fontSize = CountFont, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = false, clipping = TextClipping.Overflow };
             label ??= new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = true };
 
-            var badge = Loadout.GunBadge;
+            Action<IntPtr, Rect>? badge = Loadout.GunBadge;
             float badgeWidth = badge != null ? BadgeWidth + Pad : 0f;
             float top = bottom;
             for (int g = guns.Count - 1; g >= 0; g--)
             {
-                var (gun, gunName, loadedId, nextId, isWaiting, isActive, rounds) = guns[g];
+                (IntPtr gun, string gunName, string? loadedId, string? nextId, bool isWaiting, bool isActive, List<RoundCell> rounds) = guns[g];
                 Shown.Add(gun);
-                var rerack = Loadout.Reracking?.Invoke(gun);
+                (string Round, float Progress)? rerack = Loadout.Reracking?.Invoke(gun);
                 // With one gun, the keys always pick for it, so there's nothing to mark
                 bool marked = isActive && guns.Count > 1;
                 top -= GunHeight + CellHeight + 2 * Pad;
@@ -69,8 +69,9 @@ namespace Rounds
                 {
                     var cell = new Rect(left + Pad + r * (CellWidth + Pad), cells, CellWidth, CellHeight);
                     Cell(cell, rounds[r], rounds[r].Id == loadedId, rounds[r].Id == nextId, isWaiting);
-                    if (rerack is { } moving && moving.Round == rounds[r].Id)
-                        HudDraw.Bar(new Rect(cell.x + Pad, cell.yMax - 3f, cell.width - 2 * Pad, 3f), moving.Progress, HudDraw.Ok);
+                    // A plugin is moving this round into a ready rack
+                    if (rerack != null && rerack.Value.Round == rounds[r].Id)
+                        HudDraw.Bar(new Rect(cell.x + Pad, cell.yMax - 3f, cell.width - 2 * Pad, 3f), rerack.Value.Progress, HudDraw.Ok);
                     if (marked && r < 9)
                         GUI.Label(new Rect(cell.x + HudDraw.Frame + 1f, cell.y + NameHeight, 12f, NameHeight), $"{r + 1}", key);
                 }
@@ -81,7 +82,7 @@ namespace Rounds
             return bottom - top;
         }
 
-        private static void Cell(Rect cell, (string Id, string Name, string Type, string Icon, int Left, int Ready) round, bool isLoaded, bool isNext, bool isWaiting)
+        private static void Cell(Rect cell, RoundCell round, bool isLoaded, bool isNext, bool isWaiting)
         {
             Color before = GUI.color;
             if (isNext)
@@ -91,7 +92,8 @@ namespace Rounds
             GUI.color = tint;
             GUI.Label(new Rect(cell.x, cell.y, cell.width, NameHeight), round.Name, name);
             var art = new Rect(cell.x + Pad, cell.y + NameHeight, cell.width - 2 * Pad, cell.height - NameHeight - CountHeight);
-            if (Icon(round.Icon) is { } icon)
+            Texture2D? icon = Icon(round.Icon);
+            if (icon != null)
                 HudDraw.Image(art, icon, tint);
             else
                 GUI.Label(art, Loadout.Types.FirstOrDefault(t => t.Type == round.Type).Label ?? round.Type, label);

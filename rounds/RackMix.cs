@@ -50,18 +50,28 @@ namespace Rounds
         /// </summary>
         public static RackMix? Read(JsonObject rack, IReadOnlyList<string> ids, int capacity)
         {
-            if (FillOf(rack, ids) is not { } fill)
+            string? fill = FillOf(rack, ids);
+            if (fill == null)
                 return null;
-            var targets = ids.ToDictionary(id => id, _ => 0);
+            Dictionary<string, int> targets = ids.ToDictionary(id => id, _ => 0);
             int left = Math.Max(capacity, 0);
             if (rack["split"] is JsonObject split)
             {
-                foreach (var (id, value) in split)
-                    if (targets.ContainsKey(id) && value is JsonValue number && number.TryGetValue(out int count) && count > 0)
-                    {
-                        targets[id] = Math.Min(count, left);
-                        left -= targets[id];
-                    }
+                foreach ((string id, JsonNode? value) in split)
+                {
+                    // No longer one of the gun's rounds
+                    if (!targets.ContainsKey(id))
+                        continue;
+                    JsonValue? number = value as JsonValue;
+                    if (number == null)
+                        continue;
+                    if (!number.TryGetValue(out int count))
+                        continue;
+                    if (count <= 0)
+                        continue;
+                    targets[id] = Math.Min(count, left);
+                    left -= targets[id];
+                }
             }
             else
             {

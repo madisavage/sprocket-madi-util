@@ -36,15 +36,25 @@ namespace Rounds
         internal static float? Of(Cannon cannon)
         {
             Vehicle? own = cannon.GetComponentInParent<Vehicle>();
-            if (own?.behaviour is not { } ours || ours == null)
+            if (own == null)
+                return null;
+            VehicleBehaviour? ours = own.behaviour;
+            if (ours == null)
                 return null;
             UnityVector3 from = cannon.transform.position, forward = cannon.transform.forward;
             float best = MaxOffAngle;
             float? range = null;
             foreach (Vehicle vehicle in UnityObject.FindObjectsOfType<Vehicle>())
             {
+                if (vehicle == null)
+                    continue;
+                if (vehicle.Pointer == own.Pointer)
+                    continue;
                 // Without a behaviour it's a wreck or not spawned: no team to tell it by
-                if (vehicle == null || vehicle.Pointer == own.Pointer || vehicle.behaviour is not { } theirs || theirs == null || theirs.ID.TeamID == ours.ID.TeamID)
+                VehicleBehaviour? theirs = vehicle.behaviour;
+                if (theirs == null)
+                    continue;
+                if (theirs.ID.TeamID == ours.ID.TeamID)
                     continue;
                 UnityVector3 to = vehicle.transform.position - from;
                 if (to.magnitude < MinRange)
@@ -68,7 +78,7 @@ namespace Rounds
         {
             float mass = def.Mass;
             // Level and without gravity: drop barely changes the speed along the path
-            var end = Trajectory.Fly(Vector3.Zero, new Vector3(0f, 0f, launch), range, 60f, 0.01f,
+            Trajectory.State end = Trajectory.Fly(Vector3.Zero, new Vector3(0f, 0f, launch), range, 60f, 0.01f,
                 decel: v => mass > 0f ? def.CalculateDragForce(v) / mass : 0f, thrust: thrust);
             return end.Crossed ? (end.Speed, end.Time) : null;
         }

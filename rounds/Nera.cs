@@ -41,7 +41,7 @@ namespace Rounds
         {
             if (armour == null)
             {
-                var read = ArmourMesh.Read(simulation);
+                (N[] Points, int[] Triangles, int[] Objects, int Bad) read = ArmourMesh.Read(simulation);
                 armour = (read.Points, read.Triangles);
             }
             return armour.Value;
@@ -84,12 +84,14 @@ namespace Rounds
                 if (fragment.Material >= 0)
                 {
                     MaterialInfo m = simulation.materials[fragment.Material];
-                    if (Materials.TryGetValue((m.spallFactor, m.rhaFactor, m.density), out var material))
+                    if (Materials.TryGetValue((m.spallFactor, m.rhaFactor, m.density), out (string Name, float Value) material))
                     {
                         // The face it entered the interlayer by: where the fragment before ended. The game doesn't record it
-                        var (points, triangles) = Armour(simulation);
-                        if (ArmourMesh.Face(points, triangles, Num(FragmentArray.Spawn(pointer, fragment.Parent)), Num(entry.Direction), entry.Travel) is not { } normal)
+                        (N[] points, int[] triangles) = Armour(simulation);
+                        N? face = ArmourMesh.Face(points, triangles, Num(FragmentArray.Spawn(pointer, fragment.Parent)), Num(entry.Direction), entry.Travel);
+                        if (face == null)
                             break;
+                        N normal = face.Value;
                         float cos = Math.Clamp(Math.Abs(N.Dot(N.Normalize(Num(entry.Direction)), normal)), 0f, 1f);
                         float taken = material.Value * (1f - cos * cos) * Math.Min(fragment.Travel * cos / Interlayer, 1f) * roomFactor;
                         loss += taken;

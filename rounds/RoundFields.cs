@@ -24,8 +24,11 @@ namespace Rounds
         /// </summary>
         public static (FloatProperty[] Fields, StringProperty[] Readouts) For(CannonBlueprint gun, string id, string key, Func<(FloatProperty[], StringProperty[])> make)
         {
-            if (!sets.TryGetValue((gun.Pointer, id, key), out var set))
-                sets[(gun.Pointer, id, key)] = set = make();
+            if (!sets.TryGetValue((gun.Pointer, id, key), out (FloatProperty[] Fields, StringProperty[] Readouts) set))
+            {
+                set = make();
+                sets[(gun.Pointer, id, key)] = set;
+            }
             return set;
         }
 
@@ -55,12 +58,12 @@ namespace Rounds
             }), tooltip)
             { Min = min };
             // In the order the game's own panels set them, Step last
-            if (max is { } top)
-                field.Max = top;
-            if (softMax is { } soft)
+            if (max != null)
+                field.Max = max.Value;
+            if (softMax != null)
             {
                 field.SoftMin = min;
-                field.SoftMax = soft;
+                field.SoftMax = softMax.Value;
                 field.UseSoftLimits = true;
             }
             field.Step = step;

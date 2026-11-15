@@ -126,7 +126,11 @@ namespace Rounds
 
         internal static void RaisePlayerFired(IntPtr gun, float mass, float diameter, int projectile)
         {
-            if (PlayerFired != null && Tracker.Cannons.TryGetValue(gun, out var cannon) && MadiLib.PlayerVehicle.Contains(cannon))
+            if (PlayerFired == null)
+                return;
+            if (!Tracker.Cannons.TryGetValue(gun, out Sprocket.Vehicles.Cannons.Cannon? cannon))
+                return;
+            if (MadiLib.PlayerVehicle.Contains(cannon))
                 PlayerFired(mass, diameter, projectile);
         }
 
@@ -294,11 +298,22 @@ namespace Rounds
                 Impacts.Simulating = false;
                 Impacts.RaiseSimulated(ref __0);
             }
-            else if (Projectiles.Of(Impacts.StruckDefinition) is { Hit: not null } round)
+            else
             {
-                // A failing round falls back to the game's shell for this hit only
-                try { round.Hit(ref __0, round.Owner, round.Id); }
-                catch (Exception e) { Plugin.Logger.LogError($"A round's hit handler failed: {e}"); }
+                Projectiles.Entry? round = Projectiles.Of(Impacts.StruckDefinition);
+                // Only rounds whose type handles its own hits
+                if (round != null && round.Hit != null)
+                {
+                    // A failing round falls back to the game's shell for this hit only
+                    try
+                    {
+                        round.Hit(ref __0, round.Owner, round.Id);
+                    }
+                    catch (Exception e)
+                    {
+                        Plugin.Logger.LogError($"A round's hit handler failed: {e}");
+                    }
+                }
             }
         }
 
@@ -346,7 +361,7 @@ namespace Rounds
 
         internal static unsafe void Apply()
         {
-            var field = Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(
+            System.Reflection.FieldInfo? field = Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(
                 AccessTools.Method(typeof(ArmourPiercingProjectileFunction), nameof(ArmourPiercingProjectileFunction.HitDamageModel)));
             IntPtr method = (IntPtr)field!.GetValue(null)!;
             // Field offsets count the object header, which a struct behind a pointer doesn't have
@@ -402,7 +417,7 @@ namespace Rounds
 
         internal static unsafe void Apply()
         {
-            var field = Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(AccessTools.Method(typeof(CompoundStructure), nameof(CompoundStructure.CreateSpallBurst)));
+            System.Reflection.FieldInfo? field = Il2CppInteropUtils.GetIl2CppMethodInfoPointerFieldForGeneratedMethod(AccessTools.Method(typeof(CompoundStructure), nameof(CompoundStructure.CreateSpallBurst)));
             method = (IntPtr)field!.GetValue(null)!;
             static int Offset(string name) => MadiLib.Native.StructOffset<CompoundStructure.SpallSpawnBurst>(name);
             volume = Offset("volume");
@@ -445,9 +460,9 @@ namespace Rounds
                 HasTemplate = true;
             }
             float bursts = Impacts.SpallBursts, mass = Impacts.FragmentMass;
-            if (Impacts.FirstBurst is { } first)
+            if (Impacts.FirstBurst != null)
             {
-                (bursts, mass) = first;
+                (bursts, mass) = Impacts.FirstBurst.Value;
                 Impacts.FirstBurst = null;
             }
             // Spall of spall stays the game's: scaled, each generation outweighs the last, and thin plates feed a chain reaction
@@ -572,8 +587,10 @@ namespace Rounds
                 {
                     Vector3* d = (Vector3*)(fragment + SpallDetour.FragmentDirection);
                     // Into a plate: turn its path toward the plate's normal, so it goes through less of it
-                    if (*(short*)(fragment + SpallDetour.FragmentMaterial) >= 0 && plate is { } n)
+                    bool intoPlate = *(short*)(fragment + SpallDetour.FragmentMaterial) >= 0;
+                    if (intoPlate && plate != null)
                     {
+                        Vector3 n = plate.Value;
                         Vector3 inward = Vector3.Dot(n, *d) < 0f ? -n : n;
                         *d = Vector3.RotateTowards(*d, inward, Impacts.Normalization * MathF.PI / 180f, 0f);
                     }
@@ -595,8 +612,9 @@ namespace Rounds
         [HarmonyPatch(typeof(CompoundStructure), "GetIntersectionNormal"), HarmonyPostfix]
         private static void Turn(ref Vector3 __result)
         {
-            if (direction is not { } d)
+            if (direction == null)
                 return;
+            Vector3 d = direction.Value;
             Vector3 normal = __result;
             plate = normal;
             // Toward the line on the normal's side: against the projectile going in, along it coming out

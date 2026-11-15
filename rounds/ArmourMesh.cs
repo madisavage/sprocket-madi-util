@@ -1,6 +1,7 @@
 extern alias UnityCoreModule;
 
 using System;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -42,7 +43,7 @@ namespace Rounds
             if (!ready)
                 Init();
             int header = MadiLib.Native.ArrayHeader;
-            var frames = sim.spaceFrames;
+            Il2CppStructArray<StructureSpaceFrame> frames = sim.spaceFrames;
             IntPtr array = Marshal.ReadIntPtr(sim.Pointer, meshes);
             if (array == IntPtr.Zero || frames == null)
                 return (Array.Empty<Vector3>(), Array.Empty<int>(), Array.Empty<int>(), 0);
@@ -96,8 +97,14 @@ namespace Rounds
             Vector3 d = Vector3.Normalize(direction);
             float nearest = float.PositiveInfinity;
             for (int i = 0; i + 2 < triangles.Length; i += 3)
-                if (Cross(points, triangles, i, origin, d) is { } t && t > 0.0001f && t < nearest)
-                    nearest = t;
+            {
+                float? t = Cross(points, triangles, i, origin, d);
+                if (t == null)
+                    continue;
+                // Ahead of the origin, and nearer than any so far
+                if (t.Value > 0.0001f && t.Value < nearest)
+                    nearest = t.Value;
+            }
             return nearest;
         }
 
@@ -131,12 +138,17 @@ namespace Rounds
             float best = Math.Max(0.001f, 0.02f * distance);
             Vector3? normal = null;
             for (int i = 0; i + 2 < triangles.Length; i += 3)
-                if (Cross(points, triangles, i, origin, d) is { } t && MathF.Abs(t - distance) <= best)
+            {
+                float? t = Cross(points, triangles, i, origin, d);
+                if (t == null)
+                    continue;
+                if (MathF.Abs(t.Value - distance) <= best)
                 {
-                    best = MathF.Abs(t - distance);
+                    best = MathF.Abs(t.Value - distance);
                     Vector3 a = points[triangles[i]];
                     normal = Vector3.Normalize(Vector3.Cross(points[triangles[i + 1]] - a, points[triangles[i + 2]] - a));
                 }
+            }
             return normal;
         }
     }
