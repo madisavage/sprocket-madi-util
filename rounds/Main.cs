@@ -259,12 +259,8 @@ namespace Rounds
         {
             if (range == null)
                 return AiVelocity.Speed(gun, blueprint, game, id);
-            // A range is only found with the game's projectile known
-            (float Speed, float Time)? at = AiVelocity.AtRange(gun, blueprint, game!, id, range.Value);
-            // A round that doesn't reach the target rates at no speed
-            if (at == null)
-                return 0f;
-            return at.Value.Speed;
+            // A range is only found with the game's projectile known. A round that doesn't reach the target rates at no speed
+            return AiVelocity.AtRange(gun, blueprint, game!, id, range.Value)?.Speed ?? 0f;
         }
 
         private static void LogAiPick(Cannon cannon, IntPtr gun, string reason, float? range, List<(string Id, string Name, string Type)> rounds,
@@ -608,10 +604,7 @@ namespace Rounds
         private static Dictionary<string, int> Left(Cannon cannon, Dictionary<string, int>? ready = null)
         {
             var left = new Dictionary<string, int>();
-            Vehicle? owner = cannon.GetComponentInParent<Vehicle>();
-            if (owner == null)
-                return left;
-            UnityCoreModule::UnityEngine.Transform vehicle = owner.transform;
+            UnityCoreModule::UnityEngine.Transform? vehicle = cannon.GetComponentInParent<Vehicle>()?.transform;
             if (vehicle == null)
                 return left;
             foreach ((IntPtr behaviour, AmmoRack rack) in racks.ToList())

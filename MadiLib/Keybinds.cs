@@ -113,10 +113,7 @@ namespace MadiLib
         /// <summary>Whether a text field has focus, as the game's UI text fields (TextMeshPro) do while typed in.</summary>
         internal static bool Typing()
         {
-            EventSystem events = EventSystem.current;
-            if (events == null)
-                return false;
-            GameObject selected = events.currentSelectedGameObject;
+            GameObject? selected = EventSystem.current?.currentSelectedGameObject;
             if (selected == null)
                 return false;
             TMP_InputField field = selected.GetComponent<TMP_InputField>();

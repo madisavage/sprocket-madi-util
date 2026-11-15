@@ -58,9 +58,7 @@ namespace Rounds
             if (owner == null)
                 return null;
             // The round asked for, else the loaded one
-            string? id = round;
-            if (id == null)
-                id = Tracker.Loaded(gun, owner);
+            string? id = round ?? Tracker.Loaded(gun, owner);
             if (id == null)
                 return null;
             (string Json, string Type)? raw = Loadout.Raw(owner, id);

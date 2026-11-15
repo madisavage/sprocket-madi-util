@@ -235,14 +235,8 @@ namespace Hydropneumatic
                     command = 0f;
                     return;
                 }
-                // The gun tagged for hull aiming
-                Cannon? cannon = Gun(hull);
-                if (cannon == null)
-                {
-                    command = 0f;
-                    return;
-                }
-                Transform? barrel = cannon.transform;
+                // The barrel of the gun tagged for hull aiming
+                Transform? barrel = Gun(hull)?.transform;
                 if (barrel == null)
                 {
                     command = 0f;
