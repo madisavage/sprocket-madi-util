@@ -88,7 +88,17 @@ namespace StagedAmmo
         internal static bool IsNear(VehicleComponentPath? path) => path != null && path.Distance <= ReadyDistance.Value;
 
         /// <summary>The speed in <paramref name="rackName"/>'s <c>[auto]</c> tag, or null when it isn't an autoloader rack.</summary>
-        internal static float? RackSpeed(string? rackName) => NameTags.Numbers(tag, "auto", rackName, new[] { 1f }) is { } n ? (n[0] > 0f ? n[0] : 1f) : null;
+        internal static float? RackSpeed(string? rackName)
+        {
+            float[]? numbers = NameTags.Numbers(tag, "auto", rackName, new[] { 1f });
+            // Not an autoloader rack
+            if (numbers == null)
+                return null;
+            if (numbers[0] > 0f)
+                return numbers[0];
+            // A speed of 0 or less: the plain autoloader speed
+            return 1f;
+        }
 
         internal static bool IsAuto(IAmmoSourceComponent? source) => RackSpeed(source?.AmmoSource?.RackIdentifier) != null;
 
@@ -99,12 +109,29 @@ namespace StagedAmmo
         internal static bool IsPaused(string? rackName) => NameTags.Has(PauseTag, "pause", rackName);
 
         /// <summary>Shells the loader re-racks into <paramref name="rackName"/> per carry: its <c>[clip N]</c> tag, else 1.</summary>
-        internal static int ClipSize(string? rackName) => NameTags.Numbers(ClipTag, "clip", rackName, new[] { 1f }) is { } n && n[0] >= 1f ? (int)n[0] : 1;
+        internal static int ClipSize(string? rackName)
+        {
+            float[]? numbers = NameTags.Numbers(ClipTag, "clip", rackName, new[] { 1f });
+            if (numbers == null)
+                return 1;
+            if (numbers[0] >= 1f)
+                return (int)numbers[0];
+            return 1;
+        }
 
         /// <summary><paramref name="rackName"/> with its tag replaced by one for <paramref name="speed"/>, or removed for null.</summary>
-        internal static string WithTag(string rackName, float? speed) =>
-            NameTags.With(rackName, "auto", speed == null ? null
-                : Math.Abs(speed.Value - 1f) < 0.001f ? "[auto]" : $"[auto x{NameTags.Format(speed.Value)}]");
+        internal static string WithTag(string rackName, float? speed)
+        {
+            string? newTag;
+            if (speed == null)
+                newTag = null;
+            // The plain autoloader speed needs no number
+            else if (Math.Abs(speed.Value - 1f) < 0.001f)
+                newTag = "[auto]";
+            else
+                newTag = $"[auto x{NameTags.Format(speed.Value)}]";
+            return NameTags.With(rackName, "auto", newTag);
+        }
     }
 
     /// <summary>One gun's rack finder: its full rack lists and restock state.</summary>
@@ -169,13 +196,20 @@ namespace StagedAmmo
 
         private static void Postfix(VehicleWeaponLoadController __instance, Profile.Section __state)
         {
-            using var total = __state;
+            using Profile.Section total = __state;
             float now = Time.time;
-            var tasks = __instance.loadTasks;
+            Il2CppReferenceArray<VehicleWeaponLoadController.LoadTask> tasks = __instance.loadTasks;
             if (tasks != null)
-                foreach (var task in tasks)
-                    if (task?.Task?.TryCast<LoadTask>() is { } loadTask)
+            {
+                foreach (VehicleWeaponLoadController.LoadTask task in tasks)
+                {
+                    if (task == null)
+                        continue;
+                    LoadTask? loadTask = task.Task?.TryCast<LoadTask>();
+                    if (loadTask != null)
                         Update(loadTask, task.Contributors, now);
+                }
+            }
 
             // Guns with no loader aren't in any controller; update them once a frame from whichever controller runs first
             if (orphanFrame == Time.frameCount)
@@ -212,7 +246,7 @@ namespace StagedAmmo
         private static void Prune(float now)
         {
             dead.Clear();
-            foreach (var (finder, staging) in Staged)
+            foreach ((IntPtr finder, Staging staging) in Staged)
                 if (now - staging.LastSeen > 10f)
                     dead.Add(finder);
             foreach (IntPtr finder in dead)
@@ -234,14 +268,14 @@ namespace StagedAmmo
                 rackPaths.Clear();
 
             dead.Clear();
-            foreach (var (finder, seen) in retired)
+            foreach ((IntPtr finder, float seen) in retired)
                 if (now - seen > 10f)
                     dead.Add(finder);
             foreach (IntPtr finder in dead)
                 retired.Remove(finder);
 
             dead.Clear();
-            foreach (var (gun, finder) in gunFinders)
+            foreach ((IntPtr gun, IntPtr finder) in gunFinders)
                 if (!Staged.ContainsKey(finder) && !retired.ContainsKey(finder))
                     dead.Add(gun);
             foreach (IntPtr gun in dead)
@@ -362,13 +396,20 @@ namespace StagedAmmo
             if (contributors == null)
                 return best;
             foreach (ILoadTaskContributor contributor in contributors)
-                if (contributor?.TryCast<LoadContributeTask>() is { } loader)
-                {
-                    if (loader.OperateCount > 0)
-                        best = Math.Max(best, loader.efficiency);
-                    able |= loader.EnableFraction > 0f;
-                }
-            return best > 0f ? best : able ? last : 0f;
+            {
+                LoadContributeTask? loader = contributor?.TryCast<LoadContributeTask>();
+                if (loader == null)
+                    continue;
+                if (loader.OperateCount > 0)
+                    best = Math.Max(best, loader.efficiency);
+                able |= loader.EnableFraction > 0f;
+            }
+            if (best > 0f)
+                return best;
+            // Away, but still able: keep its last
+            if (able)
+                return last;
+            return 0f;
         }
 
         private static AmmoRackBehaviour? Rack(IAmmoSourceComponent? source) => source?.AmmoSource?.TryCast<AmmoRackBehaviour>();
@@ -385,15 +426,26 @@ namespace StagedAmmo
             bool readyHolds = false;
             for (int i = 0; i < count; i++)
             {
-                holds[i] = Rack(staging.Sources[i]) is { } rack && RoundsLink.HoldsNext(rack);
+                AmmoRackBehaviour? rack = Rack(staging.Sources[i]);
+                holds[i] = rack != null && RoundsLink.HoldsNext(rack);
                 readyHolds |= staging.Ready[i] && holds[i];
             }
-            bool fromStowage = !readyHolds && !staging.Auto && Plugin.LoadFromStowage.Value;
+            // No ready rack holds the next round: a crew loader may take it from stowage, if the setting allows
+            bool fromStowage = Plugin.LoadFromStowage.Value;
+            if (readyHolds)
+                fromStowage = false;
+            if (staging.Auto)
+                fromStowage = false;
             var show = new bool[count];
             for (int i = 0; i < count; i++)
-                show[i] = !RoundsLink.HasRounds(Rack(staging.Sources[i])) ? staging.Ready[i]
-                    : fromStowage ? holds[i]
-                    : staging.Ready[i] && holds[i];
+            {
+                if (!RoundsLink.HasRounds(Rack(staging.Sources[i])))
+                    show[i] = staging.Ready[i];
+                else if (fromStowage)
+                    show[i] = holds[i];
+                else
+                    show[i] = staging.Ready[i] && holds[i];
+            }
             return show;
         }
 
@@ -432,12 +484,19 @@ namespace StagedAmmo
             for (int i = 0; i < count; i++)
             {
                 // Autoloader racks, else racks flagged [ready], else by distance
-                staging.Ready[i] = staging.Auto ? auto[i] : anyFlagged ? flagged[i] : Plugin.IsNear(staging.Paths[i]);
-                if (staging.Ready[i] && Rack(staging.Sources[i]) is { } rack)
-                {
-                    ReadyRacks[rack.Pointer] = ReadyRacks.GetValueOrDefault(rack.Pointer) + 1;
-                    staging.ReadyRacks.Add(rack.Pointer);
-                }
+                if (staging.Auto)
+                    staging.Ready[i] = auto[i];
+                else if (anyFlagged)
+                    staging.Ready[i] = flagged[i];
+                else
+                    staging.Ready[i] = Plugin.IsNear(staging.Paths[i]);
+                if (!staging.Ready[i])
+                    continue;
+                AmmoRackBehaviour? rack = Rack(staging.Sources[i]);
+                if (rack == null)
+                    continue;
+                ReadyRacks[rack.Pointer] = ReadyRacks.GetValueOrDefault(rack.Pointer) + 1;
+                staging.ReadyRacks.Add(rack.Pointer);
             }
             staging.ShownRacks = Showing(staging);
             for (int i = 0; i < count; i++)
@@ -469,8 +528,8 @@ namespace StagedAmmo
         private static void Restock(Staging staging, float elapsed)
         {
             using var _ = Profile.Measure("stagedAmmo: Restock");
-            var sources = staging.Sources;
-            var paths = staging.Paths;
+            Il2CppReferenceArray<IAmmoSourceComponent> sources = staging.Sources;
+            Il2CppReferenceArray<VehicleComponentPath> paths = staging.Paths;
             int count = Math.Min(staging.Ready.Length, Math.Min(sources.Length, paths.Length));
             var racks = new AmmoRackBehaviour?[count];
             // With rounds, each rack's shells per round, found once rather than for every rack pair
@@ -503,9 +562,17 @@ namespace StagedAmmo
             for (int i = 0; i < count; i++)
             {
                 AmmoRackBehaviour? ready = racks[i];
-                if (ready == null || !staging.Ready[i] || ready.AmountStored >= ready.Capacity || paths[i].Distance >= targetDistance)
+                if (ready == null)
                     continue;
-                var (next, id) = NextRackOut(i, racks, contents, staging);
+                if (!staging.Ready[i])
+                    continue;
+                // Full
+                if (ready.AmountStored >= ready.Capacity)
+                    continue;
+                // No nearer than the best so far
+                if (paths[i].Distance >= targetDistance)
+                    continue;
+                (int next, string? id) = NextRackOut(i, racks, contents, staging);
                 if (next < 0)
                     continue;
                 target = i;
@@ -522,7 +589,14 @@ namespace StagedAmmo
                 staging.Progress = 0f;
                 return;
             }
-            if (staging.IsPlayer && !Plugin.PlayerReRack || staging.LoaderEfficiency <= 0f || staging.LoaderBusy)
+            // The player turned re-racking off for their own vehicle
+            if (staging.IsPlayer && !Plugin.PlayerReRack)
+                return;
+            // No loader able to carry
+            if (staging.LoaderEfficiency <= 0f)
+                return;
+            // The loader is loading the gun: re-racking waits
+            if (staging.LoaderBusy)
                 return;
 
             staging.Required = ReRackTime(sources[from]!.Component, sources[target]!.Component) * Plugin.ReRackTimeMultiplier.Value / staging.LoaderEfficiency;
@@ -534,8 +608,11 @@ namespace StagedAmmo
             AmmoRackBehaviour goal = racks[target]!;
             for (int n = 0; n < clip && goal.AmountStored < goal.Capacity; n++)
             {
+                int src = from;
+                string? id = round;
                 // A clip may be of different rounds
-                var (src, id) = n == 0 ? (from, round) : NextRackOut(target, racks, contents, staging);
+                if (n > 0)
+                    (src, id) = NextRackOut(target, racks, contents, staging);
                 if (src < 0 || !RoundsLink.Move(racks[src]!, goal, id))
                     break;
             }
@@ -547,7 +624,9 @@ namespace StagedAmmo
         /// </summary>
         private static (int From, string? Round) NextRackOut(int target, AmmoRackBehaviour?[] racks, IReadOnlyDictionary<string, int>?[] contents, Staging staging)
         {
-            if (RoundsLink.Wanted(racks[target]!) is not { } wanted)
+            IReadOnlyList<string>? wanted = RoundsLink.Wanted(racks[target]!);
+            // A rack without rounds
+            if (wanted == null)
                 return (NextRackOut(target, racks, staging, contents, null), null);
             foreach (string id in wanted)
             {
@@ -575,16 +654,50 @@ namespace StagedAmmo
             float distance = float.MaxValue;
             for (int j = 0; j < racks.Length; j++)
             {
+                if (j == target)
+                    continue;
                 AmmoRackBehaviour? rack = racks[j];
+                if (rack == null)
+                    continue;
+                if (rack.AmountStored == 0)
+                    continue;
                 float d = staging.Paths[j].Distance;
-                if (j == target || rack == null || rack.AmountStored == 0 || staging.Ready[j] && (staging.Auto || d <= targetDistance || Shared(rack)) || d >= distance
-                    || !rack.ShellSizeID.Equals(ready.ShellSizeID) || !rack.StoredTypeID.Equals(ready.StoredTypeID)
-                    || (id == null ? contents[j] != null : contents[j]?.GetValueOrDefault(id) is null or 0))
+                // No nearer than the nearest found so far
+                if (d >= distance)
+                    continue;
+                if (staging.Ready[j])
+                {
+                    if (staging.Auto)
+                        continue;
+                    // A ready rack only gives to one nearer the breech
+                    if (d <= targetDistance)
+                        continue;
+                    if (Shared(rack))
+                        continue;
+                }
+                if (!rack.ShellSizeID.Equals(ready.ShellSizeID))
+                    continue;
+                if (!rack.StoredTypeID.Equals(ready.StoredTypeID))
+                    continue;
+                if (!Holds(contents[j], id))
                     continue;
                 nearest = j;
                 distance = d;
             }
             return nearest;
+        }
+
+        /// <summary>
+        /// Whether a rack with <paramref name="contents"/> (null for a rack without rounds) has a shell for
+        /// <paramref name="id"/>: one of that round, or for <paramref name="id"/> null, any shell of a rack without rounds.
+        /// </summary>
+        private static bool Holds(IReadOnlyDictionary<string, int>? contents, string? id)
+        {
+            if (id == null)
+                return contents == null;
+            if (contents == null)
+                return false;
+            return contents.GetValueOrDefault(id) != 0;
         }
 
         // (From rack, to rack), crew path between them; one Key:Value pair per pair re-racked between
@@ -728,7 +841,7 @@ namespace StagedAmmo
 
         private static void Postfix(AmmoRackEditor __instance, IGUILayout __0)
         {
-            var name = __instance.properties?.Name;
+            StringProperty? name = __instance.properties?.Name;
             IGUIElementDrawer? drawer = __0?.TryCast<IGUIElementDrawer>();
             if (name == null || drawer == null)
                 return;
@@ -809,12 +922,22 @@ namespace StagedAmmo
 
         private const float Icon = 40f, BarWidth = 140f, Pad = 4f, RowHeight = Icon + 2 * Pad;
 
-        internal static State Of(Staging staging) =>
-            !staging.HasTarget ? (staging.StowedShells == 0 ? State.StowageEmpty : State.Idle)
-            : !Plugin.PlayerReRack ? State.Off
-            : staging.LoaderEfficiency <= 0f ? State.NoLoader
-            : staging.LoaderBusy ? State.Paused
-            : State.Running;
+        internal static State Of(Staging staging)
+        {
+            if (!staging.HasTarget)
+            {
+                if (staging.StowedShells == 0)
+                    return State.StowageEmpty;
+                return State.Idle;
+            }
+            if (!Plugin.PlayerReRack)
+                return State.Off;
+            if (staging.LoaderEfficiency <= 0f)
+                return State.NoLoader;
+            if (staging.LoaderBusy)
+                return State.Paused;
+            return State.Running;
+        }
 
         /// <summary>The player's gun with WeaponBehaviour <paramref name="gun"/>, if staged and updated in the last second.</summary>
         internal static Staging? Find(IntPtr gun)
@@ -866,7 +989,8 @@ namespace StagedAmmo
         /// <summary>Rounds' ammo bar column for <paramref name="gun"/>: the icon, and below it a short state.</summary>
         internal static void Badge(IntPtr gun, Rect column)
         {
-            if (Find(gun) is { } staging)
+            Staging? staging = Find(gun);
+            if (staging != null)
                 Badge(staging, column, true);
         }
 
@@ -874,8 +998,14 @@ namespace StagedAmmo
         private static void Badge(Staging staging, Rect r, bool caption)
         {
             State state = Of(staging);
-            string resource = state == State.StowageEmpty ? "stowage.png" : staging.Auto && state != State.NoLoader ? "autoloader.png" : "loader.png";
-            if (HudDraw.Icon(typeof(Plugin).Assembly, resource) is { } icon)
+            string resource = "loader.png";
+            if (state == State.StowageEmpty)
+                resource = "stowage.png";
+            // With no crew to work it, an autoloader shows the crew icon
+            else if (staging.Auto && state != State.NoLoader)
+                resource = "autoloader.png";
+            UnityCoreModule::UnityEngine.Texture2D? icon = HudDraw.Icon(typeof(Plugin).Assembly, resource);
+            if (icon != null)
                 HudDraw.Image(new Rect(r.x, r.y, r.width, r.width), icon, Color(state));
             if (!caption)
                 return;
@@ -953,9 +1083,24 @@ namespace StagedAmmo
         {
             Rounds.Loadout.IsReady = rack => LoadControllerUpdatePatch.ReadyRacks.ContainsKey(rack.Pointer);
             Rounds.Loadout.GunBadge = Indicator.Badge;
-            Rounds.Loadout.Reracking = gun =>
-                Indicator.Find(gun) is { Target: not null, Round: { } round } staging && Indicator.Of(staging) is Indicator.State.Running or Indicator.State.Paused
-                    ? (round, Indicator.Progress(staging)) : null;
+            Rounds.Loadout.Reracking = Reracking;
+        }
+
+        /// <summary>The round <paramref name="gun"/>'s loader is moving into a ready rack and how far along it is; null when it isn't.</summary>
+        private static (string Round, float Progress)? Reracking(IntPtr gun)
+        {
+            Staging? staging = Indicator.Find(gun);
+            if (staging == null)
+                return null;
+            if (staging.Target == null)
+                return null;
+            if (staging.Round == null)
+                return null;
+            // Moving, or held up while the loader loads the gun
+            Indicator.State state = Indicator.Of(staging);
+            if (state != Indicator.State.Running && state != Indicator.State.Paused)
+                return null;
+            return (staging.Round, Indicator.Progress(staging));
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
