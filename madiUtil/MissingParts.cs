@@ -100,9 +100,17 @@ namespace MadiUtil
         private static bool Load(VehicleBlueprintSerializer __instance, string path, ref IVehicleBlueprint __result)
         {
             string json;
-            try { json = File.ReadAllText(path); }
-            catch (Exception) { return true; }
-            if (Stripped(json) is not { } stripped)
+            try
+            {
+                json = File.ReadAllText(path);
+            }
+            catch (Exception e)
+            {
+                Plugin.Logger.LogWarning($"Couldn't read {path} to check for missing parts, the game loads it: {e.Message}");
+                return true;
+            }
+            string? stripped = Stripped(json);
+            if (stripped == null)
                 return true;
             // Keep the original once, so reinstalling the mod can bring the parts back after a save drops them
             string backup = path + ".bak";
@@ -116,6 +124,7 @@ namespace MadiUtil
             }
             catch (Exception e) { Plugin.Logger.LogError($"Couldn't back up {path}: {e.Message}"); }
             __result = __instance.DeserializeJSON(stripped);
+            // Loaded here without the missing parts; the game's load would fail on them
             return false;
         }
     }

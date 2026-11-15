@@ -244,10 +244,16 @@ namespace ArmourMaterial
                 Property p => p.Name,
                 _ => null,
             };
-            if (label == null || !label.Contains("RHA", StringComparison.OrdinalIgnoreCase))
+            if (label == null)
+                return true;
+            if (!label.Contains("RHA", StringComparison.OrdinalIgnoreCase))
+                return true;
+            IGUIElementDrawer? drawer = __instance.TryCast<IGUIElementDrawer>();
+            if (drawer == null)
                 return true;
             if (!DrawingPatch.Placed)
-                MaterialDropdown.Draw(__instance.Cast<IGUIElementDrawer>(), DrawingPatch.Editor);
+                MaterialDropdown.Draw(drawer, DrawingPatch.Editor);
+            // The Material dropdown takes the "Use RHA" toggle's place
             return false;
         }
     }

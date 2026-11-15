@@ -625,7 +625,12 @@ namespace Rounds
         {
             using var _ = MadiLib.Profile.Measure("rounds: LoadTask.Update prefix");
             Tracker.Loading = __instance.target?.Pointer ?? IntPtr.Zero;
-            if (__instance.State != LoadState.Loading || __instance.rack?.TryCast<AmmoRackBehaviour>() is not { } rack || Tracker.MayTake(rack))
+            if (__instance.State != LoadState.Loading)
+                return true;
+            AmmoRackBehaviour? rack = __instance.rack?.TryCast<AmmoRackBehaviour>();
+            if (rack == null)
+                return true;
+            if (Tracker.MayTake(rack))
                 return true;
             bool holds = Tracker.Carries(Tracker.Loading, rack);
             int before = rack.AmountStored;
@@ -637,6 +642,7 @@ namespace Rounds
             Tracker.Loading = IntPtr.Zero;
             // The game reloads from the rack it last used without asking for ammo, so a round picked while loaded would never load
             Loadout.RequestAmmo(__instance.target?.TryCast<WeaponBehaviour>());
+            // The load was cancelled: the game's update would carry on with it
             return false;
         }
 

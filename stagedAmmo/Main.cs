@@ -659,13 +659,18 @@ namespace StagedAmmo
                 return true;
             }
             VehicleAmmoRackFinder? finder = __instance.rackLookup?.TryCast<VehicleAmmoRackFinder>();
-            if (finder == null || !LoadControllerUpdatePatch.Staged.TryGetValue(finder.Pointer, out Staging? staging) || !staging.Auto)
+            if (finder == null)
+                return true;
+            if (!LoadControllerUpdatePatch.Staged.TryGetValue(finder.Pointer, out Staging? staging))
+                return true;
+            if (!staging.Auto)
                 return true;
             if (!loggedBlock)
             {
                 loggedBlock = true;
                 Plugin.Logger.LogInfo("Blocking crew loading on an autoloaded gun");
             }
+            // An autoloaded gun's load task only runs from Autoload, at the autoloader's speed, not the crew's
             return false;
         }
     }

@@ -221,7 +221,11 @@ namespace MadiUtil
     [HarmonyPatch(typeof(EditorConfigurationSelectorPlugin), nameof(EditorConfigurationSelectorPlugin.SetConfigAsyncVoid))]
     internal static class EraPickPatch
     {
-        private static bool Prefix(EditorConfigurationSelectorPlugin __instance, ref int __0) => EraYears.Pick(__instance, ref __0);
+        private static bool Prefix(EditorConfigurationSelectorPlugin __instance, ref int __0)
+        {
+            // A pick of one of our year rows sets that date itself; the game would read the row as an era index
+            return EraYears.Pick(__instance, ref __0);
+        }
     }
 
     [HarmonyPatch(typeof(DropDown), nameof(DropDown.SetSelectedWithoutNotify))]
