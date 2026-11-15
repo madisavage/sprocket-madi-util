@@ -108,14 +108,24 @@ namespace RocketPropelled
             return v;
         }
 
-        /// <summary>Distance flown from launch at <paramref name="v0"/> m/s to burnout, m, without drag or gravity.</summary>
-        internal float BurnDistance(float v0, float dry)
+        /// <summary>
+        /// Distance flown from launch at <paramref name="v0"/> m/s to burnout, m, without gravity,
+        /// slowed by <paramref name="decel"/> (drag, m/s² at a speed; null for none).
+        /// </summary>
+        internal float BurnDistance(float v0, float dry, Func<float, float>? decel = null) => FlyToBurnOut(v0, dry, decel).Position.Z;
+
+        /// <summary>Speed at burnout, m/s, from launch at <paramref name="v0"/> m/s, without gravity, slowed by <paramref name="decel"/> as in <see cref="BurnDistance"/>.</summary>
+        internal float BurnOutSpeed(float v0, float dry, Func<float, float>? decel = null) => FlyToBurnOut(v0, dry, decel).Velocity.Z;
+
+        private MadiLib.Trajectory.State FlyToBurnOut(float v0, float dry, Func<float, float>? decel)
         {
+            var start = new System.Numerics.Vector3(0f, 0f, v0);
             float end = BurnOut;
+            if (end <= 0f)
+                return new MadiLib.Trajectory.State(System.Numerics.Vector3.Zero, start, 0f, false);
             Burn burn = this;
-            return end <= 0f ? 0f
-                : MadiLib.Trajectory.Fly(System.Numerics.Vector3.Zero, new System.Numerics.Vector3(0f, 0f, v0), float.PositiveInfinity, end, end / 400f,
-                    thrust: t => burn.Acceleration(t, dry)).Position.Z;
+            return MadiLib.Trajectory.Fly(System.Numerics.Vector3.Zero, start, float.PositiveInfinity, end, end / 400f,
+                decel: decel, thrust: t => burn.Acceleration(t, dry));
         }
     }
 }

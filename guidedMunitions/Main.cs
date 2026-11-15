@@ -49,6 +49,7 @@ namespace GuidedMunitions
         internal static ConfigEntry<float> FinDrag = null!;
         internal static ConfigEntry<float> LiftToDrag = null!;
         internal static ConfigEntry<float> UnitLength = null!;
+        internal static ConfigEntry<float> FinWeight = null!;
         internal static ConfigEntry<float> SaclosYear = null!, BeamYear = null!;
         internal static ConfigEntry<float> WireSpeed = null!;
 
@@ -75,9 +76,13 @@ namespace GuidedMunitions
             UnitLength = Config.Bind("Guidance", "Unit length", 1f, new ConfigDescription(
                 "Length in calibers of a guided round's guidance unit, a full-bore section of 1500 kg/m³. The charge pushes it and it's dead weight all flight, so guided rounds leave slower and speed up less.",
                 new AcceptableValueRange<float>(0f, 4f), new Step(0.25f)));
+            FinWeight = Config.Bind("Guidance", "Fin weight", 0.25f, new ConfigDescription(
+                "Calibers of guidance section added per g of max turn: bigger fins and the actuators to move them weigh more. Dead weight, as the guidance unit.",
+                new AcceptableValueRange<float>(0f, 2f), new Step(0.05f)));
             UnitLength.SettingChanged += (_, _) => Loadout.Invalidate();
-            RocketPropelled.Plugin.Payload = (gun, id) => GuidanceOf(gun, id) == null ? 0f
-                : MathF.PI / 4f * MathF.Pow(gun.Caliber / 1000f, 3f) * UnitLength.Value * UnitDensity;
+            FinWeight.SettingChanged += (_, _) => Loadout.Invalidate();
+            RocketPropelled.Plugin.Payload = Weight;
+            RocketPropelled.Plugin.ExtraDrag = FinDragOf;
             LiftToDrag = Config.Bind("Guidance", "Lift to drag", 4f, new ConfigDescription(
                 "Turning costs speed: every m/s² the fins pull, holding the round's weight too, slows it by 1/this m/s². Lower bleeds speed faster, so rounds without a motor sink sooner.",
                 new AcceptableValueRange<float>(1f, 20f), new Step(0.5f)));
@@ -88,7 +93,7 @@ namespace GuidedMunitions
             WireSpeed = Config.Bind("Guidance", "Max wire speed", 300f, new ConfigDescription(
                 "Fastest a wire-guided (SACLOS) round flies while its wire pays out, m/s: faster and the wire would snap, so the round is held to this until the wire runs out. Beam riders have no limit. TOW tops out near 280.",
                 new AcceptableValueRange<float>(50f, 2000f), new SoftMax(600f), new Step(10f)));
-            SettingsTab.AddSection("Rounds", "Guidance", SaclosYear, BeamYear, WireSpeed, FinDrag, LiftToDrag, UnitLength);
+            SettingsTab.AddSection("Rounds", "Guidance", SaclosYear, BeamYear, WireSpeed, FinDrag, LiftToDrag, UnitLength, FinWeight);
             Loadout.Modify(Modify);
             Loadout.AddFields(GuidanceEditor.Draw);
             Loadout.Launched += Launch;
@@ -98,6 +103,26 @@ namespace GuidedMunitions
         /// <summary>Round <paramref name="id"/>'s guidance in <paramref name="gun"/>; null without guidance or a motor to fly it.</summary>
         internal static Guidance? GuidanceOf(CannonBlueprint gun, string id) =>
             RocketPropelled.Plugin.HasMotor(gun, id) ? Loadout.Get<GuidedRound>(gun, id)?.Guidance : null;
+
+        /// <summary>Round <paramref name="id"/>'s guidance unit and fins in <paramref name="gun"/>, kg; 0 without guidance.</summary>
+        internal static float Weight(CannonBlueprint gun, string id)
+        {
+            Guidance? guidance = GuidanceOf(gun, id);
+            if (guidance == null)
+                return 0f;
+            // A full-bore section: the unit's length, and more for each g the fins pull
+            float calibers = UnitLength.Value + FinWeight.Value * guidance.MaxG;
+            return MathF.PI / 4f * MathF.Pow(gun.Caliber / 1000f, 3f) * calibers * UnitDensity;
+        }
+
+        /// <summary>Round <paramref name="id"/>'s drag over its own from its fins, as a multiple; 1 without guidance.</summary>
+        internal static float FinDragOf(CannonBlueprint gun, string id)
+        {
+            Guidance? guidance = GuidanceOf(gun, id);
+            if (guidance == null)
+                return 1f;
+            return 1f + FinDrag.Value * guidance.MaxG;
+        }
 
         /// <summary>A guided round's fins add drag.</summary>
         private static bool Modify(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions)
@@ -474,6 +499,11 @@ namespace GuidedMunitions
                     var hash = new HashCode();
                     float maxSpeed = Plugin.MaxSpeed(g);
                     hash.Add(maxSpeed);
+                    // Drag counts as its samples too: Body drag (rocketPropelled) and the fins'
+                    Func<float, float>? decel = RocketPropelled.Plugin.Decel(gun, id);
+                    if (decel != null)
+                        for (float v = 50f; v <= 1000f; v += 50f)
+                            hash.Add(decel(v));
                     if (thrust != null)
                         for (float t = 0f; t < 30f; t += 0.02f)
                             hash.Add(thrust(t));
@@ -481,13 +511,6 @@ namespace GuidedMunitions
                         (speeds?.Launch ?? 0f, g.MaxG, g.WireLength, Plugin.Rated(gun, id, g), Plugin.LiftToDrag.Value, g.Response, hash.ToHashCode(), Plugin.FinDrag.Value);
                     if (!hitRanges.TryGetValue((gun.Pointer, id), out ((float, float, float, float, float, float, int, float) For, (float Min, float Max) Result) cached) || cached.For != key)
                     {
-                        // The full-bore warhead's drag with the fins', on its mass, as the game does in flight
-                        float mass = ShellProperties.GetProjectileMass(gun.Caliber), fins = 1f + Plugin.FinDrag.Value * g.MaxG;
-                        Func<float, float>? drag = Loadout.FullBoreDrag(gun.Caliber);
-                        // Without the game's drag or a mass to take it on, it flies without drag
-                        Func<float, float>? decel = null;
-                        if (drag != null && mass > 0f)
-                            decel = v => drag(v) * fins / mass;
                         (float Min, float Max) result = Saclos.HitRanges(key.Item1, g.MaxG * Saclos.Gravity, g.WireLength, key.Item4,
                             key.Item5, g.Response, thrust, decel: decel, maxSpeed: maxSpeed);
                         cached = (key, result);
@@ -495,7 +518,9 @@ namespace GuidedMunitions
                     }
                     (float min, float max) = cached.Result;
                     return float.IsInfinity(min) ? "misses" : $"{min:0}-{max:0} m";
-                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire or beam range. Its motor, guidance unit, ignition delay, drag (the fins' too) and turn costs count; a full-bore shell is the warhead."),
+                }, "Target ranges it passes within 0.5 m of, fired from 2 m below the sight at a still target under the crosshair, out to the wire or beam range. Its motor, guidance unit and fin weight, ignition delay, drag (body and fins) and turn costs count; a full-bore shell is the warhead."),
+                EditorGui.Readout("Guidance weight", () => $"{Plugin.Weight(gun, id):0.00} kg",
+                    "Guidance unit and fins, dead weight launched with the motor. Grows with Max turn."),
                 EditorGui.Readout("Fin drag", () => $"+{Plugin.FinDrag.Value * G().MaxG * 100f:0}%", "Extra drag from the fins, over the round's own."),
                 beam
                     ? EditorGui.Readout("Beam", () => $"stay within {Saclos.BeamRadius:0} m",

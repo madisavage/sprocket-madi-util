@@ -88,5 +88,21 @@ namespace Tests
             Assert.Equal(2f, b.BurnOut);
             Assert.Equal(0f, b.SustainPropellant);
         }
+
+        [Fact]
+        public void WithoutDragBurnOutSpeedIsTheRocketEquation()
+        {
+            Burn b = new Motor { Length = 2f, BurnTime = 2f }.Build(100f, 1000f, 0.5f, 2000f);
+            Assert.Equal(100f + b.DeltaV(10f), b.BurnOutSpeed(100f, 10f), 0);
+        }
+
+        [Fact]
+        public void LongSustainerHoldsTheSpeedWhereThrustMeetsDrag()
+        {
+            // No propellant mass to speak of: a steady 20 m/s² push against 0.002 v² m/s² of drag settles at 100 m/s
+            Burn b = new Burn(0f, 0f, 0f, 0f, 0f, 1e-6f, 200f, 60f);
+            float speed = b.BurnOutSpeed(300f, 10f, v => 0.002f * v * v);
+            Assert.Equal(100f, speed, 0);
+        }
     }
 }

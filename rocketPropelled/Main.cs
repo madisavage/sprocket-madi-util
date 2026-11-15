@@ -37,6 +37,7 @@ namespace RocketPropelled
         internal static ConfigEntry<float> Exhaust = null!;
         internal static ConfigEntry<float> PropellantDensity = null!;
         internal static ConfigEntry<float> CaseMass = null!;
+        internal static ConfigEntry<float> BodyDrag = null!;
         internal static ConfigEntry<bool> LogFlights = null!;
 
         /// <summary>
@@ -45,6 +46,13 @@ namespace RocketPropelled
         /// It counts as the motor's case: the charge pushes it, and it stays after burnout.
         /// </summary>
         public static Func<CannonBlueprint, string, float>? Payload;
+
+        /// <summary>
+        /// Extra drag a round with a motor carries, as a multiple of its drag, such as a guided round's fins,
+        /// from its cannon blueprint and id; set by another plugin, which also applies it in flight.
+        /// Only the designer's readouts (<see cref="Speeds"/>, <see cref="Decel"/>) read it.
+        /// </summary>
+        public static Func<CannonBlueprint, string, float>? ExtraDrag;
 
         /// <summary>Cannon blueprint and round id, its launch velocity in m/s, as last worked out for its projectile.</summary>
         internal static readonly Dictionary<(IntPtr, string), float> LaunchSpeeds = new();
@@ -61,11 +69,14 @@ namespace RocketPropelled
             CaseMass = Config.Bind("Rocket", "Case mass", 0.5f, new ConfigDescription(
                 "Motor case and nozzle mass over its propellant's. Dead weight: launched, and still carried after burnout.",
                 new AcceptableValueRange<float>(0f, 3f), new SoftMax(1f), new Step(0.05f)));
+            BodyDrag = Config.Bind("Rocket", "Body drag", 4f, new ConfigDescription(
+                "Drag of a round with a motor over a plain shell's: a long, finned, blunt body slows far more than a shell, so the motor's push only holds it near its cruise speed.",
+                new AcceptableValueRange<float>(1f, 20f), new SoftMax(10f), new Step(0.25f)));
             LogFlights = Config.Bind("Debug", "Log flights", false,
                 "Logs each rocket's speed at launch and burnout, and Dynamic Gun Sight's prediction of them, to compare the two.");
-            foreach (ConfigEntry<float> entry in new[] { Exhaust, PropellantDensity, CaseMass })
+            foreach (ConfigEntry<float> entry in new[] { Exhaust, PropellantDensity, CaseMass, BodyDrag })
                 entry.SettingChanged += (_, _) => Loadout.Invalidate();
-            SettingsTab.AddSection("Rounds", "Rocket", Exhaust, PropellantDensity, CaseMass);
+            SettingsTab.AddSection("Rounds", "Rocket", Exhaust, PropellantDensity, CaseMass, BodyDrag);
             Loadout.Modify(Modify);
             Loadout.AddFields(MotorEditor.Draw);
             Loadout.Launched += Flight.Launch;
@@ -102,8 +113,28 @@ namespace RocketPropelled
         public static bool HasMotor(CannonBlueprint gun, string id) => Loadout.Get<RocketRound>(gun, id)?.Motor != null;
 
         /// <summary>
+        /// Round <paramref name="id"/>'s drag deceleration in <paramref name="gun"/>, m/s² at a speed in m/s:
+        /// a full-bore shell's drag times <c>Body drag</c> and <see cref="ExtraDrag"/>, on the shell's mass,
+        /// as the game slows it in flight; null if the game won't give a shell's drag.
+        /// </summary>
+        public static Func<float, float>? Decel(CannonBlueprint gun, string id)
+        {
+            Func<float, float>? drag = Loadout.FullBoreDrag(gun.Caliber);
+            if (drag == null)
+                return null;
+            // The game slows it by its warhead's mass alone, not the motor's
+            float mass = ShellProperties.GetProjectileMass(gun.Caliber);
+            if (mass <= 0f)
+                return null;
+            float factor = BodyDrag.Value;
+            if (ExtraDrag != null)
+                factor *= ExtraDrag(gun, id);
+            return v => drag(v) * factor / mass;
+        }
+
+        /// <summary>
         /// Round <paramref name="id"/>'s launch and burnout speed in <paramref name="gun"/>, m/s,
-        /// with a full-bore shell as warhead, without drag or gravity; null without a motor.
+        /// with a full-bore shell as warhead, with drag (<see cref="Decel"/>) but without gravity; null without a motor.
         /// </summary>
         public static (float Launch, float Burnout)? Speeds(CannonBlueprint gun, string id)
         {
@@ -114,7 +145,7 @@ namespace RocketPropelled
             // shortcut: assumes a full-bore shell's mass, not the round type's; pass each type's mass through rounds if they mislead
             float shell = ShellProperties.GetProjectileMass(gun.Caliber);
             float launch = gun.MuzzleVelocity * Loadout.VelocityRatio(gun, 1f + burn.Mass / shell, Charge(gun, id));
-            return (launch, launch + burn.DeltaV(shell + burn.Case));
+            return (launch, burn.BurnOutSpeed(launch, shell + burn.Case, Decel(gun, id)));
         }
 
         /// <summary>Share of the gun's charge that launches round <paramref name="id"/>; 1 without a motor.</summary>
@@ -146,7 +177,7 @@ namespace RocketPropelled
 
         /// <summary>
         /// A round with a motor: the charge pushes the motor too, so it leaves
-        /// slower, and the AI leads it by its burnout velocity until it has a target
+        /// slower, its body drags more than a shell (<c>Body drag</c>), and the AI leads it by its burnout velocity until it has a target
         /// (then rounds uses its mean speed to it).
         /// </summary>
         private static bool Modify(ProjectileDefinition game, Cannon cannon, string id, RoundShape shape, List<ProjectileFunctionDefinition> functions)
@@ -158,6 +189,7 @@ namespace RocketPropelled
             if (found == null)
                 return false;
             Burn burn = found.Value;
+            shape.Drag *= BodyDrag.Value;
             // Launch length is mass as a full-bore projectile's length
             shape.LaunchLength += game.Length * burn.Mass / game.Mass;
             float ratio = Loadout.VelocityRatio(gun, shape.LaunchLength / game.Length, Charge(gun, id));
@@ -167,8 +199,8 @@ namespace RocketPropelled
                 shape.LaunchLength = game.Length * LengthFor(gun, ratio, shape.LaunchLength / game.Length);
             LaunchSpeeds[(gun.Pointer, id)] = launch;
             // Burnout speed until the AI has a target: rounds then leads by its mean speed to the target's range
-            shape.AimVelocity = launch + burn.DeltaV(shape.Mass + burn.Case);
             float dry = shape.Mass + burn.Case;
+            shape.AimVelocity = burn.BurnOutSpeed(launch, dry, Decel(gun, id));
             shape.Thrust = t => burn.Acceleration(t, dry);
             return true;
         }
@@ -370,7 +402,7 @@ namespace RocketPropelled
             Burn B() => Plugin.BurnOf(gun, id) ?? default;
             float Shell() => ShellProperties.GetProjectileMass(gun.Caliber);
             float Launch() => Plugin.Speeds(gun, id)?.Launch ?? 0f;
-            const string note = "With a full-bore shell as warhead, without drag or gravity.";
+            const string note = "With a full-bore shell as warhead, with drag (Body drag, and fins on a guided round) but without gravity.";
             StringProperty[] readouts =
             {
                 EditorGui.Readout("Propellant", () => $"{B().Propellant + B().SustainPropellant:0.00} kg", "Fills the motor and sustainer sections."),
@@ -378,7 +410,7 @@ namespace RocketPropelled
                     "The propellant's impulse over the burn time; then the sustainer's, with one."),
                 EditorGui.Readout("Launch velocity", () => $"{Launch():0} m/s", note),
                 EditorGui.Readout("Burnout velocity", () => $"{Plugin.Speeds(gun, id)?.Burnout ?? 0f:0} m/s", note),
-                EditorGui.Readout("Burnout range", () => $"{B().BurnDistance(Launch(), Shell() + B().Case):0} m", note),
+                EditorGui.Readout("Burnout range", () => $"{B().BurnDistance(Launch(), Shell() + B().Case, Plugin.Decel(gun, id)):0} m", note),
                 EditorGui.Readout("Launch weight", () => $"{Shell() + B().Mass:0.00} kg", note),
             };
             FloatProperty Field(string name, Func<Motor, float> get, Action<Motor, float> set, string tooltip, float min, float softMax, float max, float step) =>
