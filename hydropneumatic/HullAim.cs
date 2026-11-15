@@ -6,6 +6,7 @@ using System;
 using System.Text.RegularExpressions;
 using Properties;
 using HarmonyLib;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MadiLib;
 using Sprocket.ContinuousTracks;
 using Sprocket.Gameplay.VehicleControl;
@@ -277,6 +278,7 @@ namespace Hydropneumatic
         {
             if (failed || !PlayerVehicle.Contains(__instance.Transform))
                 return;
+            using var _ = MadiLib.Profile.Measure("hydropneumatic: hull laying drive");
             try
             {
                 bool contact = __instance.InContact && !__instance.broken;
@@ -284,13 +286,27 @@ namespace Hydropneumatic
                     rightContact = contact;
                 else
                     leftContact = contact;
-                // Aim stale past 0.1 s: the player isn't in control, so nothing to lay
-                if (!Enabled || float.IsNaN(layError) || Time.realtimeSinceStartup - aimed > 0.1f || !leftContact || !rightContact
-                    || PlayerVehicle.Root is not { } hull || hull.GetComponent<Rigidbody>() is not { } body
-                    || __instance.suspensionArmTransforms is not { Length: > 0 } arms)
+                if (!Laying())
                 {
-                    layIntegral = 0f;
-                    layCapped = false;
+                    ReleaseLay();
+                    return;
+                }
+                Transform? hull = PlayerVehicle.Root;
+                if (hull == null)
+                {
+                    ReleaseLay();
+                    return;
+                }
+                Rigidbody? body = hull.GetComponent<Rigidbody>();
+                if (body == null)
+                {
+                    ReleaseLay();
+                    return;
+                }
+                Il2CppReferenceArray<Transform>? arms = __instance.suspensionArmTransforms;
+                if (arms == null || arms.Length == 0)
+                {
+                    ReleaseLay();
                     return;
                 }
                 Vector3 at = Vector3.zero;
@@ -327,6 +343,30 @@ namespace Hydropneumatic
                 Enabled = false;
                 Stop();
             }
+        }
+
+        /// <summary>Whether the laying drive should push: hull aiming on, a fresh aim, and both tracks on the ground.</summary>
+        private static bool Laying()
+        {
+            if (!Enabled)
+                return false;
+            if (float.IsNaN(layError))
+                return false;
+            // Aim stale past 0.1 s: the player isn't in control, so nothing to lay
+            if (Time.realtimeSinceStartup - aimed > 0.1f)
+                return false;
+            if (!leftContact)
+                return false;
+            if (!rightContact)
+                return false;
+            return true;
+        }
+
+        /// <summary>Stops the laying drive's push and clears its built-up correction.</summary>
+        private static void ReleaseLay()
+        {
+            layIntegral = 0f;
+            layCapped = false;
         }
 
         /// <summary>Feeds the steer to the player's controls while they aren't steering.</summary>

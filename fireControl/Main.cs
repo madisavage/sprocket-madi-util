@@ -290,7 +290,15 @@ namespace FireControl
         [HarmonyPrefix, HarmonyPatch(typeof(LayingDriveBehaviour), nameof(LayingDriveBehaviour.AimAtDirection))]
         private static void Raise(LayingDriveBehaviour __instance, ref Vector3 worldDirection)
         {
-            if (PlayerVehicle.Root is not { } root || __instance.trunnions is not { } trunnions || !trunnions.IsChildOf(root))
+            using var _ = Profile.Measure("fireControl: raise laying");
+            Transform? root = PlayerVehicle.Root;
+            if (root == null)
+                return;
+            Transform? trunnions = __instance.trunnions;
+            if (trunnions == null)
+                return;
+            // Another vehicle's drive
+            if (!trunnions.IsChildOf(root))
                 return;
             if (!laid.TryGetValue(__instance.Pointer, out Cannon? cannon))
                 laid[__instance.Pointer] = cannon = trunnions.GetComponentInChildren<Cannon>();

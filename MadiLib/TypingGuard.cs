@@ -14,10 +14,20 @@ namespace MadiLib
     {
         /// <summary>Space: leaving the designer for driving.</summary>
         [HarmonyPrefix, HarmonyPatch(typeof(VehicleDesignerPlayerState), nameof(VehicleDesignerPlayerState.TryExitEditor))]
-        private static bool ExitEditor(ref bool __result) => __result = !Keybinds.Typing();
+        private static bool ExitEditor(ref bool __result)
+        {
+            // While typing, the game's exit is skipped and reports it didn't leave
+            __result = !Keybinds.Typing();
+            return __result;
+        }
 
         /// <summary>Every other designer hotkey: delete, duplicate, select all, transform and so on.</summary>
         [HarmonyPrefix, HarmonyPatch(typeof(VehicleEditorInputHandler), nameof(VehicleEditorInputHandler.Update))]
-        private static bool EditorInput() => !Keybinds.Typing();
+        private static bool EditorInput()
+        {
+            using var _ = Profile.Measure("MadiLib: typing guard");
+            // While typing, the game's hotkey handling is skipped for this frame
+            return !Keybinds.Typing();
+        }
     }
 }

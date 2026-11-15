@@ -7,6 +7,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MadiLib;
 using Properties;
 using Rounds;
@@ -247,6 +248,7 @@ namespace RocketPropelled
         {
             if (burns.Count == 0)
                 return;
+            using var _ = Profile.Measure("rocketPropelled: flight step");
             if (size == 0)
             {
                 idOffset = Native.StructOffset<ProjectileInstance>("ID");
@@ -254,9 +256,11 @@ namespace RocketPropelled
                 positionOffset = Native.StructOffset<ProjectileInstance>("position");
                 size = Native.ValueSize<ProjectileInstance>();
             }
-            var pool = __instance.pool;
-            var active = __instance.activeIdMap;
-            if (pool == null || active == null)
+            Il2CppReferenceArray<ProjectileInstance> pool = __instance.pool;
+            Il2CppSystem.Collections.Generic.Dictionary<int, int> active = __instance.activeIdMap;
+            if (pool == null)
+                return;
+            if (active == null)
                 return;
             float now = Time.time, dt = Time.fixedDeltaTime;
             for (int i = burns.Count - 1; i >= 0; i--)
@@ -269,9 +273,14 @@ namespace RocketPropelled
                         burns.RemoveAt(i);
                     continue;
                 }
-                bool live = active.TryGetValue(burn.Id, out int index) && index >= 0 && index < pool.Length;
+                bool live = active.TryGetValue(burn.Id, out int index);
+                if (index < 0 || index >= pool.Length)
+                    live = false;
                 byte* projectile = (byte*)Native.Element(pool.Pointer, index, size);
-                if (!live || *(int*)(projectile + idOffset) != burn.Id)
+                // Its pool slot now holds another projectile
+                if (live && *(int*)(projectile + idOffset) != burn.Id)
+                    live = false;
+                if (!live)
                 {
                     // Hit something or ran out of time
                     burns.RemoveAt(i);

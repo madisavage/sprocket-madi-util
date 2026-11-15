@@ -235,6 +235,7 @@ namespace MadiUtil
     {
         private static void Postfix(VehicleDesignerCore __instance)
         {
+            using var _ = MadiLib.Profile.Measure("madiUtil: era row sync");
             EraYears.Designer = __instance;
             EraYears.Sync();
         }
